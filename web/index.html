@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Container Census</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🐳 Container Census</h1>
+            <div class="header-actions">
+                <button id="refreshBtn" class="btn btn-primary">Refresh</button>
+                <button id="scanBtn" class="btn btn-secondary">Trigger Scan</button>
+                <button id="reloadConfigBtn" class="btn btn-warning">Reload Config</button>
+                <label class="auto-refresh">
+                    <input type="checkbox" id="autoRefresh" checked>
+                    Auto-refresh (30s)
+                </label>
+            </div>
+        </header>
+
+        <nav class="tabs">
+            <button class="tab-btn active" data-tab="containers">Containers</button>
+            <button class="tab-btn" data-tab="images">Images</button>
+            <button class="tab-btn" data-tab="scans">Scan Results</button>
+        </nav>
+
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-value" id="totalHosts">-</div>
+                <div class="stat-label">Hosts</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="totalContainers">-</div>
+                <div class="stat-label">Total Containers</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="runningContainers">-</div>
+                <div class="stat-label">Running</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="lastScan">-</div>
+                <div class="stat-label">Last Scan</div>
+            </div>
+        </div>
+
+        <div class="filters">
+            <input type="text" id="searchInput" placeholder="Search containers..." class="search-input">
+            <select id="hostFilter" class="filter-select">
+                <option value="">All Hosts</option>
+            </select>
+            <select id="stateFilter" class="filter-select">
+                <option value="">All States</option>
+                <option value="running">Running</option>
+                <option value="exited">Exited</option>
+                <option value="paused">Paused</option>
+            </select>
+        </div>
+
+        <div id="containersTab" class="tab-content active">
+            <div class="containers-section">
+                <h2>Containers</h2>
+                <div id="containersTable" class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Host</th>
+                                <th>Name</th>
+                                <th>Image</th>
+                                <th>State</th>
+                                <th>Status</th>
+                                <th>Ports</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="containersBody">
+                            <tr>
+                                <td colspan="8" class="loading">Loading...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="imagesTab" class="tab-content">
+            <div class="images-section">
+                <h2>Images</h2>
+                <div id="imagesTable" class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Host</th>
+                                <th>Repository</th>
+                                <th>Tag</th>
+                                <th>Image ID</th>
+                                <th>Size</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="imagesBody">
+                            <tr>
+                                <td colspan="7" class="loading">Loading...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="scansTab" class="tab-content">
+            <div class="scan-results-section">
+                <h2>Recent Scans</h2>
+                <div id="scanResultsTable" class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Host</th>
+                                <th>Started</th>
+                                <th>Duration</th>
+                                <th>Status</th>
+                                <th>Containers Found</th>
+                            </tr>
+                        </thead>
+                        <tbody id="scanResultsBody">
+                            <tr>
+                                <td colspan="5" class="loading">Loading...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Log Viewer Modal -->
+    <div id="logModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Container Logs: <span id="logContainerName"></span></h3>
+                <button class="close-btn" onclick="closeLogModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <pre id="logContent" class="log-content">Loading...</pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirmation Modal -->
+    <div id="confirmModal" class="modal">
+        <div class="modal-content modal-small">
+            <div class="modal-header">
+                <h3 id="confirmTitle">Confirm Action</h3>
+            </div>
+            <div class="modal-body">
+                <p id="confirmMessage"></p>
+            </div>
+            <div class="modal-footer">
+                <button id="confirmCancelBtn" class="btn btn-secondary">Cancel</button>
+                <button id="confirmOkBtn" class="btn btn-danger">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

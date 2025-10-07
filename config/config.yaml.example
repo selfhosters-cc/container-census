@@ -1,0 +1,33 @@
+# Container Census Configuration
+
+database:
+  path: ./data/census.db
+
+server:
+  host: 0.0.0.0
+  port: 8080
+
+scanner:
+  interval_seconds: 300  # Scan every 5 minutes
+  timeout_seconds: 30    # Timeout for each scan operation
+
+hosts:
+  # Local Docker daemon via Unix socket
+  - name: local
+    address: unix:///var/run/docker.sock
+    description: Local Docker daemon
+
+  # Remote Docker host via TCP (requires Docker API exposed)
+  # - name: remote-host-1
+  #   address: tcp://192.168.1.100:2376
+  #   description: Remote Docker host
+
+  # Remote Docker host via SSH
+  # - name: remote-host-2
+  #   address: ssh://user@192.168.1.101
+  #   description: Remote host over SSH
+
+  # Another remote host
+  # - name: production-server
+  #   address: tcp://prod.example.com:2376
+  #   description: Production Docker host

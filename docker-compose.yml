@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  container-census:
+    build:
+      context: .
+      args:
+        # Pass host's docker group GID to container
+        # Get it with: stat -c '%g' /var/run/docker.sock
+        DOCKER_GID: ${DOCKER_GID:-999}
+    container_name: container-census
+    ports:
+      - "8080:8080"
+    volumes:
+      # Mount Docker socket for local scanning
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Mount configuration
+      - ./config/config.yaml:/app/config/config.yaml:ro
+      # Persist database
+      - ./data:/app/data
+    environment:
+      - CONFIG_PATH=/app/config/config.yaml
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
