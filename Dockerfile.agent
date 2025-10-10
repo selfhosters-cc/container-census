@@ -47,6 +47,9 @@ WORKDIR /app
 # Copy binary from builder
 COPY --from=builder /build/census-agent .
 
+# Copy version file
+COPY --from=builder /build/.version ./.version
+
 # Switch to non-root user
 USER census
 

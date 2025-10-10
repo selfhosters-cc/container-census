@@ -113,7 +113,7 @@ function initCharts() {
 
 async function loadVersion() {
     try {
-        const response = await fetch('/api/health');
+        const response = await fetch('/health');
         const data = await response.json();
         if (data.version) {
             document.getElementById('versionBadge').textContent = 'v' + data.version;

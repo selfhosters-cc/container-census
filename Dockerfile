@@ -49,6 +49,9 @@ WORKDIR /app
 # Copy binary from builder
 COPY --from=builder /build/census .
 
+# Copy version file
+COPY --from=builder /build/.version ./.version
+
 # Copy web frontend
 COPY --from=builder /build/web ./web
 
