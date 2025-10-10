@@ -16,10 +16,12 @@ import (
 	"github.com/container-census/container-census/internal/models"
 	"github.com/container-census/container-census/internal/scanner"
 	"github.com/container-census/container-census/internal/storage"
+	"github.com/container-census/container-census/internal/telemetry"
+	"github.com/container-census/container-census/internal/version"
 )
 
 func main() {
-	log.Println("Starting Container Census...")
+	log.Printf("Starting Container Census v%s...", version.Get())
 
 	// Load configuration
 	configPath := os.Getenv("CONFIG_PATH")
@@ -71,6 +73,17 @@ func main() {
 
 	go runPeriodicScans(ctx, db, scan, cfg.Scanner.IntervalSeconds)
 
+	// Start telemetry scheduler if enabled
+	if cfg.Telemetry.Enabled {
+		telemetryScheduler, err := telemetry.NewScheduler(db, scan, cfg.Telemetry, cfg.Scanner.IntervalSeconds)
+		if err != nil {
+			log.Printf("Warning: Failed to initialize telemetry: %v", err)
+		} else {
+			apiServer.SetTelemetryScheduler(telemetryScheduler)
+			go telemetryScheduler.Start(ctx)
+		}
+	}
+
 	// Start HTTP server
 	go func() {
 		log.Printf("Server listening on http://%s", addr)
@@ -117,6 +130,7 @@ func initializeHosts(db *storage.DB, hostsConfig []models.HostConfig) error {
 			Name:        hc.Name,
 			Address:     hc.Address,
 			Description: hc.Description,
+			HostType:    detectHostType(hc.Address),
 			Enabled:     true,
 		}
 
@@ -125,10 +139,32 @@ func initializeHosts(db *storage.DB, hostsConfig []models.HostConfig) error {
 			log.Printf("Failed to add host %s: %v", hc.Name, err)
 			continue
 		}
-		log.Printf("Added host: %s (ID: %d)", hc.Name, id)
+		log.Printf("Added host: %s (ID: %d, Type: %s)", hc.Name, id, host.HostType)
 	}
 
 	return nil
+}
+
+// detectHostType determines the host type from its address
+func detectHostType(address string) string {
+	switch {
+	case address == "" || address == "local":
+		return "unix"
+	case len(address) >= 7 && address[:7] == "agent://":
+		return "agent"
+	case len(address) >= 7 && address[:7] == "http://":
+		return "agent"
+	case len(address) >= 8 && address[:8] == "https://":
+		return "agent"
+	case len(address) >= 7 && address[:7] == "unix://":
+		return "unix"
+	case len(address) >= 6 && address[:6] == "tcp://":
+		return "tcp"
+	case len(address) >= 6 && address[:6] == "ssh://":
+		return "ssh"
+	default:
+		return "unknown"
+	}
 }
 
 // runPeriodicScans runs scans at regular intervals

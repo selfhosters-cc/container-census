@@ -9,10 +9,15 @@
 <body>
     <div class="container">
         <header>
-            <h1>🐳 Container Census</h1>
+            <div class="header-title">
+                <h1>🐳 Container Census</h1>
+                <span id="versionBadge" class="version-badge">v0.0.0</span>
+            </div>
             <div class="header-actions">
+                <button id="addAgentBtn" class="btn btn-success">+ Add Agent Host</button>
                 <button id="refreshBtn" class="btn btn-primary">Refresh</button>
                 <button id="scanBtn" class="btn btn-secondary">Trigger Scan</button>
+                <button id="submitTelemetryBtn" class="btn btn-info">Submit Telemetry</button>
                 <button id="reloadConfigBtn" class="btn btn-warning">Reload Config</button>
                 <label class="auto-refresh">
                     <input type="checkbox" id="autoRefresh" checked>
@@ -24,6 +29,7 @@
         <nav class="tabs">
             <button class="tab-btn active" data-tab="containers">Containers</button>
             <button class="tab-btn" data-tab="images">Images</button>
+            <button class="tab-btn" data-tab="hosts">Hosts</button>
             <button class="tab-btn" data-tab="scans">Scan Results</button>
         </nav>
 
@@ -112,6 +118,32 @@
             </div>
         </div>
 
+        <div id="hostsTab" class="tab-content">
+            <div class="hosts-section">
+                <h2>Configured Hosts</h2>
+                <div id="hostsTable" class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Type</th>
+                                <th>Address</th>
+                                <th>Status</th>
+                                <th>Description</th>
+                                <th>Last Seen</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="hostsBody">
+                            <tr>
+                                <td colspan="7" class="loading">Loading...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
         <div id="scansTab" class="tab-content">
             <div class="scan-results-section">
                 <h2>Recent Scans</h2>
@@ -166,6 +198,47 @@
         </div>
     </div>
 
-    <script src="app.js"></script>
+    <!-- Add Agent Host Modal -->
+    <div id="addAgentModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Add Agent Host</h2>
+                <span class="modal-close" id="closeAddAgent">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="addAgentForm">
+                    <div class="form-group">
+                        <label for="agentName">Host Name *</label>
+                        <input type="text" id="agentName" required placeholder="e.g., production-server">
+                    </div>
+                    <div class="form-group">
+                        <label for="agentAddress">Agent URL *</label>
+                        <input type="text" id="agentAddress" required
+                               pattern="^(https?|agent)://[a-zA-Z0-9\.\-]+(:[0-9]+)?$"
+                               placeholder="e.g., http://192.168.1.100:9876 or agent://host:9876"
+                               title="Must be in format: http://host:port, https://host:port, or agent://host:port">
+                        <small>The URL where the agent is running (with port). Formats: http://, https://, or agent://</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="agentToken">Agent Token *</label>
+                        <input type="text" id="agentToken" required placeholder="Agent API token">
+                        <small>The API token generated when starting the agent</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="agentDescription">Description</label>
+                        <input type="text" id="agentDescription" placeholder="Optional description">
+                    </div>
+                    <div id="agentTestResult" class="alert" style="display: none;"></div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" id="testAgentBtn" class="btn btn-secondary">Test Connection</button>
+                <button type="button" id="cancelAgentBtn" class="btn btn-secondary">Cancel</button>
+                <button type="submit" form="addAgentForm" id="saveAgentBtn" class="btn btn-primary">Add Agent</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js?v=3"></script>
 </body>
 </html>

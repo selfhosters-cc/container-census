@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"strings"
 	"time"
 
@@ -32,6 +33,11 @@ func (s *Scanner) ScanHost(ctx context.Context, host models.Host) ([]models.Cont
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
+
+	// Check if this is an agent host
+	if isAgentHost(host.Address) {
+		return s.scanAgentHost(ctx, host)
+	}
 
 	// Create Docker client
 	dockerClient, err := s.createClient(host.Address)
@@ -159,6 +165,11 @@ func (s *Scanner) VerifyConnection(ctx context.Context, address string) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
+	// Check if this is an agent host
+	if isAgentHost(address) {
+		return s.verifyAgentConnection(ctx, address)
+	}
+
 	dockerClient, err := s.createClient(address)
 	if err != nil {
 		return err
@@ -169,10 +180,47 @@ func (s *Scanner) VerifyConnection(ctx context.Context, address string) error {
 	return err
 }
 
+// verifyAgentConnection checks if an agent is reachable via HTTP
+func (s *Scanner) verifyAgentConnection(ctx context.Context, address string) error {
+	agentURL := normalizeAgentURL(address) + "/health"
+
+	req, err := http.NewRequestWithContext(ctx, "GET", agentURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to connect to agent: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("agent health check failed with status: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
 // Container Management Operations
 
 // StartContainer starts a container on a specific host
 func (s *Scanner) StartContainer(ctx context.Context, host models.Host, containerID string) error {
+	if isAgentHost(host.Address) {
+		resp, err := s.agentRequest(ctx, host, "POST", "/api/containers/"+containerID+"/start", nil)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("agent returned status %d: %s", resp.StatusCode, string(body))
+		}
+		return nil
+	}
+
 	dockerClient, err := s.createClient(host.Address)
 	if err != nil {
 		return fmt.Errorf("failed to create docker client: %w", err)
@@ -184,6 +232,10 @@ func (s *Scanner) StartContainer(ctx context.Context, host models.Host, containe
 
 // StopContainer stops a container on a specific host
 func (s *Scanner) StopContainer(ctx context.Context, host models.Host, containerID string, timeout int) error {
+	if isAgentHost(host.Address) {
+		return s.stopAgentContainer(ctx, host, containerID, timeout)
+	}
+
 	dockerClient, err := s.createClient(host.Address)
 	if err != nil {
 		return fmt.Errorf("failed to create docker client: %w", err)
@@ -198,6 +250,10 @@ func (s *Scanner) StopContainer(ctx context.Context, host models.Host, container
 
 // RestartContainer restarts a container on a specific host
 func (s *Scanner) RestartContainer(ctx context.Context, host models.Host, containerID string, timeout int) error {
+	if isAgentHost(host.Address) {
+		return s.restartAgentContainer(ctx, host, containerID, timeout)
+	}
+
 	dockerClient, err := s.createClient(host.Address)
 	if err != nil {
 		return fmt.Errorf("failed to create docker client: %w", err)
@@ -212,6 +268,10 @@ func (s *Scanner) RestartContainer(ctx context.Context, host models.Host, contai
 
 // RemoveContainer removes a container on a specific host
 func (s *Scanner) RemoveContainer(ctx context.Context, host models.Host, containerID string, force bool) error {
+	if isAgentHost(host.Address) {
+		return s.removeAgentContainer(ctx, host, containerID, force)
+	}
+
 	dockerClient, err := s.createClient(host.Address)
 	if err != nil {
 		return fmt.Errorf("failed to create docker client: %w", err)
@@ -225,6 +285,10 @@ func (s *Scanner) RemoveContainer(ctx context.Context, host models.Host, contain
 
 // GetContainerLogs retrieves logs from a container
 func (s *Scanner) GetContainerLogs(ctx context.Context, host models.Host, containerID string, tail string) (string, error) {
+	if isAgentHost(host.Address) {
+		return s.getAgentContainerLogs(ctx, host, containerID, tail)
+	}
+
 	dockerClient, err := s.createClient(host.Address)
 	if err != nil {
 		return "", fmt.Errorf("failed to create docker client: %w", err)
@@ -256,6 +320,10 @@ func (s *Scanner) GetContainerLogs(ctx context.Context, host models.Host, contai
 
 // ListImages lists all images on a specific host
 func (s *Scanner) ListImages(ctx context.Context, host models.Host) ([]types.ImageSummary, error) {
+	if isAgentHost(host.Address) {
+		return s.listAgentImages(ctx, host)
+	}
+
 	dockerClient, err := s.createClient(host.Address)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create docker client: %w", err)
@@ -272,6 +340,10 @@ func (s *Scanner) ListImages(ctx context.Context, host models.Host) ([]types.Ima
 
 // RemoveImage removes an image from a specific host
 func (s *Scanner) RemoveImage(ctx context.Context, host models.Host, imageID string, force bool) error {
+	if isAgentHost(host.Address) {
+		return s.removeAgentImage(ctx, host, imageID, force)
+	}
+
 	dockerClient, err := s.createClient(host.Address)
 	if err != nil {
 		return fmt.Errorf("failed to create docker client: %w", err)
@@ -286,6 +358,10 @@ func (s *Scanner) RemoveImage(ctx context.Context, host models.Host, imageID str
 
 // PruneImages removes unused images from a specific host
 func (s *Scanner) PruneImages(ctx context.Context, host models.Host) (uint64, error) {
+	if isAgentHost(host.Address) {
+		return s.pruneAgentImages(ctx, host)
+	}
+
 	dockerClient, err := s.createClient(host.Address)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create docker client: %w", err)
@@ -298,4 +374,13 @@ func (s *Scanner) PruneImages(ctx context.Context, host models.Host) (uint64, er
 	}
 
 	return report.SpaceReclaimed, nil
+}
+
+// GetAgentInfo retrieves agent information for telemetry
+func (s *Scanner) GetAgentInfo(ctx context.Context, host models.Host) (*models.AgentInfo, error) {
+	if !isAgentHost(host.Address) {
+		return nil, fmt.Errorf("host is not an agent")
+	}
+
+	return s.getAgentInfo(ctx, host)
 }

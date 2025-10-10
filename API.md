@@ -28,6 +28,51 @@ List all configured hosts.
 ### GET /hosts/{id}
 Get a specific host by ID.
 
+### POST /hosts/agent
+Add a new agent-based host.
+
+**Request:**
+```json
+{
+  "name": "production-server",
+  "address": "http://192.168.1.100:9876",
+  "description": "Production Docker host",
+  "agent_token": "abc123def456..."
+}
+```
+
+**Response:**
+```json
+{
+  "id": 2,
+  "name": "production-server",
+  "address": "http://192.168.1.100:9876",
+  "description": "Production Docker host",
+  "host_type": "agent",
+  "agent_status": "online",
+  "enabled": true
+}
+```
+
+### POST /hosts/agent/test
+Test connection to an agent.
+
+**Request:**
+```json
+{
+  "address": "http://192.168.1.100:9876",
+  "agent_token": "abc123def456..."
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Agent is reachable"
+}
+```
+
 ---
 
 ## Container Endpoints

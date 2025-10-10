@@ -15,9 +15,13 @@ census
 # Data directory
 data/
 *.db
+.installation_id
 
 # Configuration (keep example)
 config/config.yaml
+
+# Environment variables (keep .env.example)
+.env
 
 # IDE
 .vscode
@@ -31,3 +35,6 @@ Thumbs.db
 
 # Dependencies
 vendor/
+
+# Local things
+local/

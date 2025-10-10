@@ -5,69 +5,95 @@ A Go-based tool that scans configured Docker hosts and tracks all running contai
 ## Features
 
 - **Multi-host scanning**: Monitor multiple Docker hosts from a single dashboard
+- **Lightweight Agent**: Deploy agents on remote hosts for easy, secure connectivity
+- **Simple UI-based setup**: Add remote hosts by just entering IP/URL and token
 - **Automatic scanning**: Configurable periodic scans (default: every 5 minutes)
 - **Historical tracking**: All container states are timestamped and stored
 - **Web UI**: Clean, responsive web interface with real-time updates
 - **REST API**: Full API access to all container and host data
+- **Container management**: Start, stop, restart, remove containers, and view logs
+- **Image management**: List, remove, and prune images across all hosts
 - **Single container deployment**: Everything runs in one lightweight container
-- **Multiple connection types**: Unix socket, TCP, and SSH connections
+- **Multiple connection types**: Agent (recommended), Unix socket, TCP, and SSH connections
+- **Anonymous telemetry** (optional): Track container usage trends with privacy-first design
 
 ## Quick Start
 
-### Using Docker
+### Using Docker Compose (Recommended)
 
-1. **Create a configuration file:**
+The easiest way to get started:
 
 ```bash
-mkdir -p config
+# 1. Create .env file with Docker socket GID
+echo "DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)" > .env
+
+# 2. Create config file
 cp config/config.yaml.example config/config.yaml
-# Edit config/config.yaml to add your Docker hosts
+
+# 3. Start the server
+docker-compose up -d
+
+# 4. Access the UI
+open http://localhost:8080
 ```
 
-2. **Run with Docker:**
+### Using Docker CLI
 
 ```bash
+# 1. Build the image
 docker build -t container-census .
 
+# 2. Get Docker socket GID
+DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
+
+# 3. Run with proper permissions
 docker run -d \
   --name container-census \
+  --group-add ${DOCKER_GID} \
   -p 8080:8080 \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -v $(pwd)/config/config.yaml:/app/config/config.yaml \
+  -v $(pwd)/config/config.yaml.example:/app/config/config.yaml \
   -v $(pwd)/data:/app/data \
   container-census
+
+# 4. Access the UI
+open http://localhost:8080
 ```
 
-3. **Access the web UI:**
-
-Open your browser to http://localhost:8080
-
-### Using Docker Compose
-
-Create a `docker-compose.yml`:
-
-```yaml
-version: '3.8'
-
-services:
-  container-census:
-    build: .
-    ports:
-      - "8080:8080"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./config/config.yaml:/app/config/config.yaml
-      - ./data:/app/data
-    restart: unless-stopped
-```
-
-Run:
-
-```bash
-docker-compose up -d
-```
+> **💡 Tip**: Docker Compose automatically handles the Docker socket GID using `group_add`, making it more portable across different hosts.
 
 ## Configuration
+
+### Option 1: Agent-Based Hosts (Recommended)
+
+The easiest way to add remote hosts is using the **lightweight agent**:
+
+1. **Deploy agent on remote host:**
+
+   ```bash
+   docker run -d \
+     --name census-agent \
+     -p 9876:9876 \
+     -v /var/run/docker.sock:/var/run/docker.sock \
+     census-agent:latest
+   ```
+
+2. **Get the API token from logs:**
+
+   ```bash
+   docker logs census-agent | grep "API Token"
+   ```
+
+3. **Add in the UI:**
+   - Click **"+ Add Agent Host"** button
+   - Enter host name, agent URL (`http://host-ip:9876`), and token
+   - Click **"Test Connection"** then **"Add Agent"**
+
+📖 **Full Guide**: See [AGENT_SETUP.md](AGENT_SETUP.md) for complete agent setup instructions.
+
+---
+
+### Option 2: Configuration File
 
 Edit [config/config.yaml](config/config.yaml):
 
@@ -89,23 +115,30 @@ hosts:
     address: unix:///var/run/docker.sock
     description: Local Docker daemon
 
+  # Remote host via agent (can also be added through UI)
+  # - name: production-server
+  #   address: agent://192.168.1.100:9876
+  #   description: Production server via agent
+
   # Remote Docker host via TCP
-  - name: remote-host
-    address: tcp://192.168.1.100:2376
-    description: Remote Docker host
+  # - name: remote-host
+  #   address: tcp://192.168.1.100:2376
+  #   description: Remote Docker host
 
   # Remote Docker host via SSH
-  - name: ssh-host
-    address: ssh://user@192.168.1.101
-    description: Remote host over SSH
+  # - name: ssh-host
+  #   address: ssh://user@192.168.1.101
+  #   description: Remote host over SSH
 ```
 
 ### Connection Types
 
+- **Agent** (Recommended): `agent://hostname:9876` or `http://hostname:9876` - Lightweight agent with token auth
 - **Unix Socket**: `unix:///var/run/docker.sock` (local Docker daemon)
 - **TCP**: `tcp://hostname:2376` (requires Docker API exposed)
 - **SSH**: `ssh://user@hostname` (requires SSH access and Docker installed)
-- **Local**: Use empty string or `"local"` for local daemon with default settings
+
+**Why use agents?** No SSH keys, no TLS certificates, no Docker daemon exposure - just a simple URL and token!
 
 ## API Endpoints
 
@@ -204,14 +237,37 @@ For SSH connections:
 
 ## Development
 
+### Building Images
+
+See [BUILD.md](BUILD.md) for comprehensive build instructions, including:
+- Interactive build script usage
+- Publishing to GitHub Container Registry
+- Version tagging strategies
+- Multi-architecture builds
+- CI/CD integration examples
+
+**Quick build:**
+```bash
+# Interactive script (easiest)
+./scripts/build-and-publish.sh
+
+# Manual build with Docker
+DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
+docker build --build-arg DOCKER_GID=$DOCKER_GID -t container-census .
+docker build -f Dockerfile.agent --build-arg DOCKER_GID=$DOCKER_GID -t census-agent .
+```
+
 ### Project Structure
 
-- `cmd/server/main.go` - Application entry point with initialization and periodic scanning
+- `cmd/server/main.go` - Server application entry point
+- `cmd/agent/main.go` - Agent application entry point
 - `internal/scanner/` - Docker host connection and container discovery
+- `internal/agent/` - Agent server implementation
 - `internal/storage/` - SQLite database operations with full CRUD
 - `internal/api/` - HTTP handlers and routing
 - `internal/models/` - Data structures shared across packages
 - `web/` - Static frontend files served by the Go application
+- `scripts/` - Utility scripts for building and deployment
 
 ### Adding New Features
 
@@ -219,6 +275,49 @@ For SSH connections:
 2. Add database operations in `internal/storage/db.go`
 3. Implement API handlers in `internal/api/handlers.go`
 4. Update frontend in `web/` directory
+
+## Telemetry & Analytics
+
+Container Census includes an optional telemetry system to track anonymous container usage statistics. This helps understand trends and allows you to monitor your own infrastructure.
+
+### Key Features
+
+- 📊 **Anonymous data collection** - No personal information collected
+- 🔄 **Multi-endpoint support** - Send to public and/or private analytics servers
+- 🏢 **Self-hosted analytics** - Run your own telemetry collector
+- 📈 **Visual dashboards** - Charts showing popular images, growth trends
+- 🔒 **Opt-in by default** - Disabled unless explicitly enabled
+- 🌐 **Server aggregation** - Server collects stats from all agents before submission
+
+### Quick Start
+
+Enable in `config/config.yaml`:
+
+```yaml
+telemetry:
+  enabled: true
+  interval_hours: 168  # Weekly
+  endpoints:
+    - name: public
+      url: https://telemetry.container-census.io/api/ingest
+      enabled: true
+    - name: private
+      url: http://my-analytics:8081/api/ingest
+      enabled: true
+      api_key: "your-key"
+```
+
+### Run Your Own Analytics Server
+
+```bash
+# Start telemetry collector with dashboard
+docker-compose -f docker-compose.telemetry.yml up -d
+
+# Access dashboard
+open http://localhost:8081
+```
+
+📖 **Full Documentation**: See [TELEMETRY.md](TELEMETRY.md) for complete guide on setup, privacy, API reference, and self-hosting.
 
 ## Troubleshooting
 

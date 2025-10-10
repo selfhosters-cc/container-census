@@ -5,12 +5,19 @@ services:
     build:
       context: .
       args:
-        # Pass host's docker group GID to container
-        # Get it with: stat -c '%g' /var/run/docker.sock
+        # Build with default GID (can be overridden at runtime)
         DOCKER_GID: ${DOCKER_GID:-999}
     container_name: container-census
+    restart: unless-stopped
+
+    # Add Docker socket GID at runtime (portable across hosts)
+    # This allows the same image to work on different hosts
+    group_add:
+      - "${DOCKER_GID:-999}"
+
     ports:
       - "8080:8080"
+
     volumes:
       # Mount Docker socket for local scanning
       - /var/run/docker.sock:/var/run/docker.sock
@@ -18,12 +25,32 @@ services:
       - ./config/config.yaml:/app/config/config.yaml:ro
       # Persist database
       - ./data:/app/data
+
     environment:
-      - CONFIG_PATH=/app/config/config.yaml
-    restart: unless-stopped
+      CONFIG_PATH: /app/config/config.yaml
+      TZ: ${TZ:-UTC}
+
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/health"]
       interval: 30s
       timeout: 3s
       retries: 3
       start_period: 10s
+
+# ==============================================================================
+# Quick Start
+# ==============================================================================
+#
+# 1. Create .env file with Docker socket GID:
+#    echo "DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)" > .env
+#
+# 2. Create config file:
+#    cp config/config.yaml.example config/config.yaml
+#
+# 3. Start the server:
+#    docker-compose up -d
+#
+# 4. Access the UI:
+#    Open http://localhost:8080
+#
+# ==============================================================================

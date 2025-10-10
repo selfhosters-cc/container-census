@@ -1,0 +1,85 @@
+.PHONY: build-agent run-agent build-agent-docker clean help
+
+# Detect Docker socket GID
+DOCKER_GID := $(shell stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 999)
+
+# Build the agent binary
+build-agent:
+	@echo "Building Census Agent..."
+	CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o bin/census-agent ./cmd/agent
+	@echo "Agent built successfully: bin/census-agent"
+
+# Build agent Docker image with correct GID
+build-agent-docker:
+	@echo "Building Census Agent Docker image..."
+	@echo "Detected Docker socket GID: $(DOCKER_GID)"
+	docker build -f Dockerfile.agent --build-arg DOCKER_GID=$(DOCKER_GID) -t census-agent:latest .
+	@echo "Docker image built: census-agent:latest"
+
+# Run the agent (binary)
+run-agent:
+	@echo "Starting Census Agent on port 9876..."
+	@if [ ! -f bin/census-agent ]; then $(MAKE) build-agent; fi
+	./bin/census-agent --port=9876
+
+# Run agent in Docker
+run-agent-docker:
+	@echo "Starting Census Agent in Docker..."
+	@if ! docker images | grep -q census-agent; then $(MAKE) build-agent-docker; fi
+	docker run -d \
+		--name census-agent \
+		--restart unless-stopped \
+		-p 9876:9876 \
+		-v /var/run/docker.sock:/var/run/docker.sock \
+		census-agent:latest
+	@echo "Agent started. Get token with: docker logs census-agent | grep 'API Token'"
+
+# Stop Docker agent
+stop-agent-docker:
+	@echo "Stopping Census Agent..."
+	docker stop census-agent || true
+	docker rm census-agent || true
+
+# Clean build artifacts
+clean:
+	@echo "Cleaning build artifacts..."
+	rm -rf bin/census-agent
+	@echo "Cleaned"
+
+# Docker Compose shortcuts
+compose-up:
+	@echo "Starting agent with docker-compose..."
+	@echo "Detected Docker socket GID: $(DOCKER_GID)"
+	@if [ ! -f .env ]; then \
+		echo "Creating .env file with DOCKER_GID..."; \
+		echo "DOCKER_GID=$(DOCKER_GID)" > .env; \
+		echo "# Add your API token below (or it will be auto-generated):" >> .env; \
+		echo "#API_TOKEN=your-token-here" >> .env; \
+	fi
+	DOCKER_GID=$(DOCKER_GID) docker-compose -f docker-compose.agent.yml up -d --build
+	@echo "Agent started! Get token with: docker-compose -f docker-compose.agent.yml logs | grep 'API Token'"
+
+compose-down:
+	@echo "Stopping agent..."
+	docker-compose -f docker-compose.agent.yml down
+
+compose-logs:
+	docker-compose -f docker-compose.agent.yml logs -f
+
+# Display help
+help:
+	@echo "Census Agent Makefile"
+	@echo ""
+	@echo "Detected Docker Socket GID: $(DOCKER_GID)"
+	@echo ""
+	@echo "Usage:"
+	@echo "  make build-agent          - Build agent binary"
+	@echo "  make build-agent-docker   - Build agent Docker image (with correct GID)"
+	@echo "  make run-agent            - Run agent binary"
+	@echo "  make run-agent-docker     - Run agent in Docker"
+	@echo "  make stop-agent-docker    - Stop Docker agent"
+	@echo "  make compose-up           - Start agent with docker-compose (recommended)"
+	@echo "  make compose-down         - Stop agent started with docker-compose"
+	@echo "  make compose-logs         - View agent logs"
+	@echo "  make clean                - Remove build artifacts"
+	@echo "  make help                 - Show this help"

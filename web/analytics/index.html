@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Container Census Analytics</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-content">
+                <div>
+                    <h1>📊 Container Census Analytics</h1>
+                    <p class="subtitle">Global container usage statistics (anonymous data)</p>
+                </div>
+                <span id="versionBadge" class="version-badge">v0.0.0</span>
+            </div>
+        </header>
+
+        <div class="summary-cards">
+            <div class="card">
+                <div class="card-value" id="totalInstallations">-</div>
+                <div class="card-label">Active Installations</div>
+            </div>
+            <div class="card">
+                <div class="card-value" id="totalContainers">-</div>
+                <div class="card-label">Total Containers</div>
+            </div>
+            <div class="card">
+                <div class="card-value" id="totalHosts">-</div>
+                <div class="card-label">Total Hosts</div>
+            </div>
+            <div class="card">
+                <div class="card-value" id="uniqueImages">-</div>
+                <div class="card-label">Unique Images</div>
+            </div>
+        </div>
+
+        <div class="filters">
+            <label>
+                Time Range:
+                <select id="timeRange">
+                    <option value="7">Last 7 days</option>
+                    <option value="30" selected>Last 30 days</option>
+                    <option value="90">Last 90 days</option>
+                    <option value="365">Last year</option>
+                </select>
+            </label>
+            <button onclick="refreshData()">🔄 Refresh</button>
+        </div>
+
+        <div class="chart-container">
+            <h2>Top 20 Most Popular Container Images</h2>
+            <canvas id="topImagesChart"></canvas>
+        </div>
+
+        <div class="chart-container">
+            <h2>Installation Growth Over Time</h2>
+            <canvas id="growthChart"></canvas>
+        </div>
+
+        <footer>
+            <p>Data is collected anonymously from installations that opt-in to telemetry.</p>
+            <p>No personally identifiable information is collected.</p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

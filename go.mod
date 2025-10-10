@@ -7,7 +7,9 @@ require (
 	github.com/docker/distribution v2.8.3+incompatible
 	github.com/docker/docker v24.0.9+incompatible
 	github.com/docker/go-connections v0.4.0
+	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
+	github.com/lib/pq v1.10.9
 	github.com/mattn/go-sqlite3 v1.14.24
 	github.com/moby/term v0.5.0
 	github.com/opencontainers/go-digest v1.0.0

@@ -11,6 +11,22 @@ scanner:
   interval_seconds: 300  # Scan every 5 minutes
   timeout_seconds: 30    # Timeout for each scan operation
 
+telemetry:
+  enabled: false  # Set to true to enable anonymous telemetry
+  interval_hours: 168  # Submit telemetry weekly (7 days)
+  endpoints:
+    # Public telemetry endpoint (helps improve container-census)
+    # - name: public
+    #   url: https://telemetry.container-census.io/api/ingest
+    #   enabled: true
+    #   api_key: ""  # Optional authentication
+
+    # Private telemetry endpoint (your own analytics server)
+    # - name: private
+    #   url: http://my-analytics.local:8081/api/ingest
+    #   enabled: true
+    #   api_key: "your-secret-key"  # Optional authentication
+
 hosts:
   # Local Docker daemon via Unix socket
   - name: local

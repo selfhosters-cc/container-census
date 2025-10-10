@@ -10,14 +10,17 @@ RUN apk add --no-cache git gcc musl-dev sqlite-dev
 # Set working directory
 WORKDIR /build
 
-# Copy go mod
-COPY go.mod ./
+# Copy dependency files first (better caching)
+COPY go.mod go.sum* ./
+
+# Download dependencies (cached unless go.mod/go.sum changes)
+RUN go mod download
 
 # Copy source code
 COPY . .
 
-# Generate go.sum and download dependencies
-RUN go mod tidy -e && go mod download
+# Tidy if needed (rarely changes cache)
+RUN go mod tidy -e
 
 # Build the binary with proper tags for Alpine
 RUN CGO_ENABLED=1 GOOS=linux go build -tags "sqlite_omit_load_extension" -o census ./cmd/server
@@ -25,13 +28,14 @@ RUN CGO_ENABLED=1 GOOS=linux go build -tags "sqlite_omit_load_extension" -o cens
 # Stage 2: Create minimal runtime image
 FROM alpine:latest
 
-# Build arg for docker group GID (defaults to 999)
+# Build arg for docker group GID (defaults to 999, can be overridden at runtime)
 ARG DOCKER_GID=999
 
 # Install ca-certificates for HTTPS and timezone data
 RUN apk --no-cache add ca-certificates tzdata
 
-# Create docker group with host's GID and census user
+# Create docker group with default GID and census user
+# Note: The actual GID can be added at runtime using docker-compose group_add
 # Delete existing group with same GID if it exists
 RUN (getent group ${DOCKER_GID} && delgroup $(getent group ${DOCKER_GID} | cut -d: -f1)) || true && \
     addgroup -g ${DOCKER_GID} docker && \

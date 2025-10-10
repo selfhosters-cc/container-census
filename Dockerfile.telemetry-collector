@@ -1,0 +1,60 @@
+# Multi-stage build for Telemetry Collector
+
+# Stage 1: Build the Go binary
+FROM golang:1.21-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git gcc musl-dev
+
+# Set working directory
+WORKDIR /build
+
+# Copy dependency files first (better caching)
+COPY go.mod go.sum* ./
+
+# Download dependencies (cached unless go.mod/go.sum changes)
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Tidy if needed (rarely changes cache)
+RUN go mod tidy -e
+
+# Build the telemetry collector binary
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o telemetry-collector ./cmd/telemetry-collector
+
+# Stage 2: Create minimal runtime image
+FROM alpine:latest
+
+# Install ca-certificates for HTTPS and timezone data
+RUN apk --no-cache add ca-certificates tzdata
+
+# Create non-root user
+RUN addgroup -g 1000 telemetry && \
+    adduser -D -u 1000 -G telemetry telemetry
+
+# Set working directory
+WORKDIR /app
+
+# Copy binary from builder
+COPY --from=builder /build/telemetry-collector .
+
+# Copy analytics web UI
+COPY --from=builder /build/web/analytics ./web/analytics
+
+# Change ownership
+RUN chown -R telemetry:telemetry /app
+
+# Switch to non-root user
+USER telemetry
+
+# Expose port
+EXPOSE 8081
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8081/health || exit 1
+
+# Run the telemetry collector
+CMD ["./telemetry-collector"]

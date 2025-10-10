@@ -12,15 +12,22 @@ import (
 	"github.com/container-census/container-census/internal/models"
 	"github.com/container-census/container-census/internal/scanner"
 	"github.com/container-census/container-census/internal/storage"
+	"github.com/container-census/container-census/internal/version"
 	"github.com/gorilla/mux"
 )
 
 // Server handles HTTP requests
 type Server struct {
-	db         *storage.DB
-	scanner    *scanner.Scanner
-	router     *mux.Router
-	configPath string
+	db                 *storage.DB
+	scanner            *scanner.Scanner
+	router             *mux.Router
+	configPath         string
+	telemetryScheduler TelemetryScheduler
+}
+
+// TelemetryScheduler interface for submitting telemetry on demand
+type TelemetryScheduler interface {
+	SubmitNow(ctx context.Context) error
 }
 
 // New creates a new API server
@@ -36,6 +43,11 @@ func New(db *storage.DB, scanner *scanner.Scanner, configPath string) *Server {
 	return s
 }
 
+// SetTelemetryScheduler sets the telemetry scheduler for on-demand submissions
+func (s *Server) SetTelemetryScheduler(scheduler TelemetryScheduler) {
+	s.telemetryScheduler = scheduler
+}
+
 // setupRoutes configures all API routes
 func (s *Server) setupRoutes() {
 	// API routes
@@ -44,6 +56,11 @@ func (s *Server) setupRoutes() {
 	// Host endpoints
 	api.HandleFunc("/hosts", s.handleGetHosts).Methods("GET")
 	api.HandleFunc("/hosts/{id}", s.handleGetHost).Methods("GET")
+	api.HandleFunc("/hosts/{id}", s.handleUpdateHost).Methods("PUT")
+	api.HandleFunc("/hosts/{id}", s.handleDeleteHost).Methods("DELETE")
+	api.HandleFunc("/hosts/agent", s.handleAddAgentHost).Methods("POST")
+	api.HandleFunc("/hosts/agent/test", s.handleTestAgentConnection).Methods("POST")
+	api.HandleFunc("/hosts/agent/{id}/info", s.handleGetAgentInfo).Methods("GET")
 
 	// Container endpoints
 	api.HandleFunc("/containers", s.handleGetContainers).Methods("GET")
@@ -68,6 +85,9 @@ func (s *Server) setupRoutes() {
 
 	// Config endpoints
 	api.HandleFunc("/config/reload", s.handleReloadConfig).Methods("POST")
+
+	// Telemetry endpoints
+	api.HandleFunc("/telemetry/submit", s.handleSubmitTelemetry).Methods("POST")
 
 	// Serve static files (embedded web frontend)
 	s.router.PathPrefix("/").Handler(http.FileServer(http.Dir("./web")))
@@ -105,6 +125,45 @@ func (s *Server) handleGetHost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, host)
+}
+
+func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id, err := strconv.ParseInt(vars["id"], 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid host ID")
+		return
+	}
+
+	var host models.Host
+	if err := json.NewDecoder(r.Body).Decode(&host); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	host.ID = id
+	if err := s.db.UpdateHost(host); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to update host: "+err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"message": "Host updated successfully"})
+}
+
+func (s *Server) handleDeleteHost(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id, err := strconv.ParseInt(vars["id"], 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid host ID")
+		return
+	}
+
+	if err := s.db.DeleteHost(id); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to delete host: "+err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"message": "Host deleted successfully"})
 }
 
 func (s *Server) handleGetContainers(w http.ResponseWriter, r *http.Request) {
@@ -242,8 +301,9 @@ func (s *Server) handleGetScanResults(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]string{
-		"status": "healthy",
-		"time":   time.Now().Format(time.RFC3339),
+		"status":  "healthy",
+		"version": version.Get(),
+		"time":    time.Now().Format(time.RFC3339),
 	})
 }
 
@@ -597,4 +657,22 @@ func (s *Server) handleReloadConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, result)
+}
+
+// handleSubmitTelemetry triggers an immediate telemetry submission
+func (s *Server) handleSubmitTelemetry(w http.ResponseWriter, r *http.Request) {
+	if s.telemetryScheduler == nil {
+		respondError(w, http.StatusServiceUnavailable, "Telemetry is not configured")
+		return
+	}
+
+	ctx := r.Context()
+	if err := s.telemetryScheduler.SubmitNow(ctx); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to submit telemetry: "+err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusAccepted, map[string]string{
+		"message": "Telemetry submission triggered successfully",
+	})
 }

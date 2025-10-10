@@ -9,6 +9,7 @@ let currentTab = 'containers';
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
+    loadVersion();
     loadData();
     startAutoRefresh();
 });
@@ -17,6 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
 function setupEventListeners() {
     document.getElementById('refreshBtn').addEventListener('click', loadData);
     document.getElementById('scanBtn').addEventListener('click', triggerScan);
+    document.getElementById('submitTelemetryBtn').addEventListener('click', submitTelemetry);
     document.getElementById('reloadConfigBtn').addEventListener('click', reloadConfig);
     document.getElementById('autoRefresh').addEventListener('change', handleAutoRefreshToggle);
     document.getElementById('searchInput').addEventListener('input', filterContainers);
@@ -36,6 +38,25 @@ function setupEventListeners() {
         if (e.target.classList.contains('modal')) closeConfirmModal();
     });
     document.getElementById('confirmCancelBtn').addEventListener('click', closeConfirmModal);
+
+    // Add Agent modal handlers
+    const addAgentBtn = document.getElementById('addAgentBtn');
+    const closeAddAgent = document.getElementById('closeAddAgent');
+    const cancelAgentBtn = document.getElementById('cancelAgentBtn');
+    const testAgentBtn = document.getElementById('testAgentBtn');
+    const addAgentForm = document.getElementById('addAgentForm');
+    const addAgentModal = document.getElementById('addAgentModal');
+
+    if (addAgentBtn) addAgentBtn.addEventListener('click', openAddAgentModal);
+    if (closeAddAgent) closeAddAgent.addEventListener('click', closeAddAgentModal);
+    if (cancelAgentBtn) cancelAgentBtn.addEventListener('click', closeAddAgentModal);
+    if (testAgentBtn) testAgentBtn.addEventListener('click', testAgentConnection);
+    if (addAgentForm) addAgentForm.addEventListener('submit', handleAddAgent);
+    if (addAgentModal) {
+        addAgentModal.addEventListener('click', (e) => {
+            if (e.target.classList.contains('modal')) closeAddAgentModal();
+        });
+    }
 }
 
 // Tab Management
@@ -56,6 +77,21 @@ function switchTab(tab) {
     // Load data for the tab
     if (tab === 'images' && Object.keys(images).length === 0) {
         loadImages();
+    } else if (tab === 'hosts') {
+        renderHosts(hosts);
+    }
+}
+
+// Load version from API
+async function loadVersion() {
+    try {
+        const response = await fetch('/api/health');
+        const data = await response.json();
+        if (data.version) {
+            document.getElementById('versionBadge').textContent = 'v' + data.version;
+        }
+    } catch (error) {
+        console.error('Error loading version:', error);
     }
 }
 
@@ -179,6 +215,29 @@ async function triggerScan() {
         console.error('Error triggering scan:', error);
         btn.disabled = false;
         btn.textContent = 'Trigger Scan';
+    }
+}
+
+async function submitTelemetry() {
+    const btn = document.getElementById('submitTelemetryBtn');
+    btn.disabled = true;
+    btn.textContent = 'Submitting...';
+
+    try {
+        const response = await fetch('/api/telemetry/submit', { method: 'POST' });
+        if (response.ok) {
+            const data = await response.json();
+            showNotification(data.message || 'Telemetry submitted successfully', 'success');
+        } else {
+            const error = await response.json();
+            showNotification('Failed to submit telemetry: ' + (error.error || 'Unknown error'), 'error');
+        }
+    } catch (error) {
+        console.error('Error submitting telemetry:', error);
+        showNotification('Failed to submit telemetry: ' + error.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Submit Telemetry';
     }
 }
 
@@ -527,6 +586,96 @@ function renderScanResults(results) {
     }).join('');
 }
 
+function renderHosts(hostsData) {
+    const tbody = document.getElementById('hostsBody');
+
+    if (!hostsData || hostsData.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="loading">No hosts configured</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = hostsData.map(host => {
+        const statusBadge = host.enabled
+            ? (host.host_type === 'agent'
+                ? (host.agent_status === 'online' ? '<span class="badge badge-success">Online</span>' : '<span class="badge badge-warning">Offline</span>')
+                : '<span class="badge badge-success">Enabled</span>')
+            : '<span class="badge badge-secondary">Disabled</span>';
+
+        const lastSeen = host.last_seen ? formatDate(host.last_seen) : '-';
+        const hostType = host.host_type || 'unknown';
+        const typeIcon = {
+            'agent': '🤖',
+            'unix': '🐳',
+            'tcp': '🌐',
+            'ssh': '🔐',
+            'unknown': '❓'
+        }[hostType] || '❓';
+
+        return `
+        <tr>
+            <td><strong>${escapeHtml(host.name)}</strong></td>
+            <td>${typeIcon} ${escapeHtml(hostType)}</td>
+            <td><code>${escapeHtml(host.address)}</code></td>
+            <td>${statusBadge}</td>
+            <td>${escapeHtml(host.description || '-')}</td>
+            <td class="time-ago">${lastSeen}</td>
+            <td class="actions">
+                ${host.enabled
+                    ? `<button class="btn-icon btn-warning" onclick="toggleHost(${host.id}, false)" title="Disable">⏸</button>`
+                    : `<button class="btn-icon btn-success" onclick="toggleHost(${host.id}, true)" title="Enable">▶</button>`
+                }
+                <button class="btn-icon btn-delete" onclick="deleteHost(${host.id}, '${escapeAttr(host.name)}')" title="Delete">🗑</button>
+            </td>
+        </tr>
+        `;
+    }).join('');
+}
+
+async function toggleHost(hostId, enable) {
+    try {
+        const host = hosts.find(h => h.id === hostId);
+        if (!host) return;
+
+        const response = await fetch(`/api/hosts/${hostId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...host, enabled: enable })
+        });
+
+        if (response.ok) {
+            showNotification(`Host ${enable ? 'enabled' : 'disabled'} successfully`, 'success');
+            loadData();
+        } else {
+            const error = await response.json();
+            showNotification('Error: ' + (error.error || 'Failed to update host'), 'error');
+        }
+    } catch (error) {
+        showNotification('Error: ' + error.message, 'error');
+    }
+}
+
+async function deleteHost(hostId, hostName) {
+    if (!confirm(`Are you sure you want to delete host "${hostName}"?\n\nThis will remove all associated container history.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/hosts/${hostId}`, {
+            method: 'DELETE'
+        });
+
+        if (response.ok) {
+            showNotification(`Host "${hostName}" deleted successfully`, 'success');
+            loadData();
+        } else {
+            const error = await response.json();
+            showNotification('Error: ' + (error.error || 'Failed to delete host'), 'error');
+        }
+    } catch (error) {
+        showNotification('Error: ' + error.message, 'error');
+    }
+}
+
 function updateStats() {
     document.getElementById('totalHosts').textContent = hosts.length;
     document.getElementById('totalContainers').textContent = containers.length;
@@ -671,4 +820,130 @@ function escapeHtml(text) {
 
 function escapeAttr(text) {
     return text.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+}
+
+// Add Agent Host Modal Functions
+
+function openAddAgentModal() {
+    console.log('Opening add agent modal...');
+    const modal = document.getElementById('addAgentModal');
+    const form = document.getElementById('addAgentForm');
+    const result = document.getElementById('agentTestResult');
+
+    if (!modal) {
+        console.error('Modal element not found!');
+        return;
+    }
+
+    modal.classList.add('show');
+    form.reset();
+    result.style.display = 'none';
+    console.log('Modal opened');
+}
+
+function closeAddAgentModal() {
+    const modal = document.getElementById('addAgentModal');
+    if (modal) {
+        modal.classList.remove('show');
+    }
+}
+
+async function testAgentConnection() {
+    const address = document.getElementById('agentAddress').value;
+    const token = document.getElementById('agentToken').value;
+    const testBtn = document.getElementById('testAgentBtn');
+    const result = document.getElementById('agentTestResult');
+
+    if (!address || !token) {
+        result.className = 'alert alert-error';
+        result.textContent = 'Please enter both address and token';
+        result.style.display = 'block';
+        return;
+    }
+
+    testBtn.disabled = true;
+    testBtn.textContent = 'Testing...';
+
+    try {
+        const response = await fetch('/api/hosts/agent/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ address, agent_token: token })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            result.className = 'alert alert-success';
+            result.textContent = '✓ Connection successful! Agent is reachable.';
+        } else {
+            result.className = 'alert alert-error';
+            result.textContent = '✗ Connection failed: ' + (data.error || 'Unknown error');
+        }
+        result.style.display = 'block';
+    } catch (error) {
+        result.className = 'alert alert-error';
+        result.textContent = '✗ Error: ' + error.message;
+        result.style.display = 'block';
+    } finally {
+        testBtn.disabled = false;
+        testBtn.textContent = 'Test Connection';
+    }
+}
+
+async function handleAddAgent(e) {
+    e.preventDefault();
+
+    const addressInput = document.getElementById('agentAddress');
+    const address = addressInput.value.trim();
+
+    // Validate address format
+    const validProtocols = /^(https?|agent):\/\/.+/;
+    if (!validProtocols.test(address)) {
+        const result = document.getElementById('agentTestResult');
+        result.className = 'alert alert-error';
+        result.textContent = 'Invalid address format. Must start with http://, https://, or agent:// followed by hostname/IP and optional port (e.g., http://192.168.1.100:9876)';
+        result.style.display = 'block';
+        addressInput.focus();
+        return;
+    }
+
+    const data = {
+        name: document.getElementById('agentName').value,
+        address: address,
+        agent_token: document.getElementById('agentToken').value,
+        description: document.getElementById('agentDescription').value
+    };
+
+    const saveBtn = document.getElementById('saveAgentBtn');
+    const result = document.getElementById('agentTestResult');
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Adding...';
+
+    try {
+        const response = await fetch('/api/hosts/agent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+
+        if (response.ok) {
+            showNotification('Agent host added successfully!', 'success');
+            closeAddAgentModal();
+            loadData(); // Refresh the data
+        } else {
+            const error = await response.json();
+            result.className = 'alert alert-error';
+            result.textContent = 'Error: ' + (error.error || 'Failed to add agent');
+            result.style.display = 'block';
+        }
+    } catch (error) {
+        result.className = 'alert alert-error';
+        result.textContent = 'Error: ' + error.message;
+        result.style.display = 'block';
+    } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Add Agent';
+    }
 }
