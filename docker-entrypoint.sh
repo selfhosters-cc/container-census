@@ -1,3 +1,23 @@
+#!/bin/sh
+set -e
+
+# Ensure data directory exists with correct permissions
+# This handles both fresh installs and mounted volumes
+if [ "$(id -u)" = "0" ]; then
+    echo "Setting up data directory..."
+
+    # Create directory if it doesn't exist
+    mkdir -p /app/data
+    mkdir -p /app/config
+
+    # Always set correct ownership for mounted volumes
+    # This is idempotent - safe to run even if already correct
+    chown -R census:census /app/data
+
+    # Create default config.yaml if it doesn't exist
+    if [ ! -f /app/config/config.yaml ]; then
+        echo "Creating default config.yaml..."
+        cat > /app/config/config.yaml <<'EOF'
 # Container Census Configuration
 #
 # Environment variables can override these settings:
@@ -29,29 +49,21 @@ telemetry:
       enabled: false  # Set to true to participate
       api_key: ""  # No authentication required for community endpoint
 
-    # Private telemetry endpoint (your own analytics server)
-    # - name: private
-    #   url: http://my-analytics.local:8081/api/ingest
-    #   enabled: true
-    #   api_key: "your-secret-key"  # Optional authentication
-
 hosts:
   # Local Docker daemon via Unix socket
   - name: local
     address: unix:///var/run/docker.sock
     description: Local Docker daemon
+EOF
+        chown census:census /app/config/config.yaml
+        echo "Default config.yaml created"
+    fi
 
-  # Remote Docker host via TCP (requires Docker API exposed)
-  # - name: remote-host-1
-  #   address: tcp://192.168.1.100:2376
-  #   description: Remote Docker host
-
-  # Remote Docker host via SSH
-  # - name: remote-host-2
-  #   address: ssh://user@192.168.1.101
-  #   description: Remote host over SSH
-
-  # Another remote host
-  # - name: production-server
-  #   address: tcp://prod.example.com:2376
-  #   description: Production Docker host
+    echo "Starting as census user..."
+    exec su-exec census "$@"
+else
+    # Already running as census user, just create dirs if needed
+    mkdir -p /app/data
+    mkdir -p /app/config
+    exec "$@"
+fi

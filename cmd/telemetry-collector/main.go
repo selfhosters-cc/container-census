@@ -189,40 +189,111 @@ func (s *Server) saveTelemetry(report models.TelemetryReport) error {
 		return fmt.Errorf("failed to marshal agent versions: %w", err)
 	}
 
-	// Insert into database
-	query := `
-		INSERT INTO telemetry_reports (
-			installation_id, version, timestamp, host_count, agent_count,
-			total_containers, scan_interval, image_stats, agent_versions
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	// Start a transaction to ensure atomicity
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Check if a report exists for this installation in the current week
+	// Week is defined as the 7-day period starting from the most recent report
+	checkQuery := `
+		SELECT id, timestamp
+		FROM telemetry_reports
+		WHERE installation_id = $1
+		  AND timestamp >= NOW() - INTERVAL '7 days'
+		ORDER BY timestamp DESC
+		LIMIT 1
 	`
 
-	_, err = s.db.Exec(query,
-		report.InstallationID,
-		report.Version,
-		report.Timestamp,
-		report.HostCount,
-		report.AgentCount,
-		report.TotalContainers,
-		report.ScanInterval,
-		string(imageStatsJSON),
-		string(agentVersionsJSON),
-	)
+	var existingID int
+	var existingTimestamp time.Time
+	err = tx.QueryRow(checkQuery, report.InstallationID).Scan(&existingID, &existingTimestamp)
 
-	if err != nil {
-		return fmt.Errorf("failed to insert telemetry: %w", err)
+	if err == nil {
+		// Record exists within the last 7 days - UPDATE it
+		updateQuery := `
+			UPDATE telemetry_reports
+			SET version = $2,
+			    timestamp = $3,
+			    host_count = $4,
+			    agent_count = $5,
+			    total_containers = $6,
+			    scan_interval = $7,
+			    image_stats = $8,
+			    agent_versions = $9
+			WHERE id = $1
+		`
+		_, err = tx.Exec(updateQuery,
+			existingID,
+			report.Version,
+			report.Timestamp,
+			report.HostCount,
+			report.AgentCount,
+			report.TotalContainers,
+			report.ScanInterval,
+			string(imageStatsJSON),
+			string(agentVersionsJSON),
+		)
+		if err != nil {
+			return fmt.Errorf("failed to update telemetry: %w", err)
+		}
+
+		// Delete old image stats for this installation from the current week
+		deleteImagesQuery := `
+			DELETE FROM image_stats
+			WHERE installation_id = $1
+			  AND timestamp >= $2
+		`
+		_, err = tx.Exec(deleteImagesQuery, report.InstallationID, existingTimestamp)
+		if err != nil {
+			log.Printf("Warning: Failed to delete old image stats: %v", err)
+		}
+
+		log.Printf("Updated existing telemetry report for installation %s (within 7-day window)", report.InstallationID)
+	} else {
+		// No record in the last 7 days - INSERT new one
+		insertQuery := `
+			INSERT INTO telemetry_reports (
+				installation_id, version, timestamp, host_count, agent_count,
+				total_containers, scan_interval, image_stats, agent_versions
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		`
+		_, err = tx.Exec(insertQuery,
+			report.InstallationID,
+			report.Version,
+			report.Timestamp,
+			report.HostCount,
+			report.AgentCount,
+			report.TotalContainers,
+			report.ScanInterval,
+			string(imageStatsJSON),
+			string(agentVersionsJSON),
+		)
+		if err != nil {
+			return fmt.Errorf("failed to insert telemetry: %w", err)
+		}
+
+		log.Printf("Inserted new telemetry report for installation %s", report.InstallationID)
 	}
 
-	// Also save individual image stats for easier querying
+	// Insert fresh image stats with normalized names
 	for _, imageStat := range report.ImageStats {
-		query := `
+		insertImageQuery := `
 			INSERT INTO image_stats (installation_id, timestamp, image, count)
 			VALUES ($1, $2, $3, $4)
 		`
-		_, err := s.db.Exec(query, report.InstallationID, report.Timestamp, imageStat.Image, imageStat.Count)
+		normalizedImage := normalizeImageName(imageStat.Image)
+		_, err := tx.Exec(insertImageQuery, report.InstallationID, report.Timestamp, normalizedImage, imageStat.Count)
 		if err != nil {
 			log.Printf("Warning: Failed to insert image stat: %v", err)
 		}
+	}
+
+	// Commit the transaction
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	return nil
@@ -235,10 +306,19 @@ func (s *Server) handleTopImages(w http.ResponseWriter, r *http.Request) {
 
 	since := time.Now().AddDate(0, 0, -days)
 
+	// Deduplicate by using only the most recent image stats per installation
+	// This prevents counting the same installation multiple times
 	query := `
 		SELECT image, SUM(count) as total_count
-		FROM image_stats
-		WHERE timestamp >= $1
+		FROM (
+			SELECT DISTINCT ON (installation_id, image)
+				installation_id,
+				image,
+				count
+			FROM image_stats
+			WHERE timestamp >= $1
+			ORDER BY installation_id, image, timestamp DESC
+		) latest_stats
 		GROUP BY image
 		ORDER BY total_count DESC
 		LIMIT $2
@@ -335,24 +415,31 @@ func (s *Server) handleInstallations(w http.ResponseWriter, r *http.Request) {
 
 // Get summary stats
 func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
-	query := `
+	// Get installation stats
+	installQuery := `
 		SELECT
 			COUNT(DISTINCT installation_id) as installations,
 			SUM(total_containers) as total_containers,
 			SUM(host_count) as total_hosts,
-			SUM(agent_count) as total_agents,
-			COUNT(DISTINCT image) as unique_images
+			SUM(agent_count) as total_agents
 		FROM (
 			SELECT DISTINCT ON (installation_id)
 				installation_id, total_containers, host_count, agent_count
 			FROM telemetry_reports
 			ORDER BY installation_id, timestamp DESC
 		) recent_installations
-		CROSS JOIN (
-			SELECT COUNT(DISTINCT image) as image
+	`
+
+	// Get unique images count separately using deduplication
+	imagesQuery := `
+		SELECT COUNT(DISTINCT image) as unique_images
+		FROM (
+			SELECT DISTINCT ON (installation_id, image)
+				image
 			FROM image_stats
 			WHERE timestamp >= NOW() - INTERVAL '30 days'
-		) recent_images
+			ORDER BY installation_id, image, timestamp DESC
+		) latest_images
 	`
 
 	type Summary struct {
@@ -364,15 +451,23 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var summary Summary
-	err := s.db.QueryRow(query).Scan(
+
+	// Get installation stats
+	err := s.db.QueryRow(installQuery).Scan(
 		&summary.Installations,
 		&summary.TotalContainers,
 		&summary.TotalHosts,
 		&summary.TotalAgents,
-		&summary.UniqueImages,
 	)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Query failed: "+err.Error())
+		respondError(w, http.StatusInternalServerError, "Failed to query installation stats: "+err.Error())
+		return
+	}
+
+	// Get unique images count
+	err = s.db.QueryRow(imagesQuery).Scan(&summary.UniqueImages)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to query unique images: "+err.Error())
 		return
 	}
 
@@ -380,6 +475,34 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 }
 
 // Helper functions
+
+// normalizeImageName removes registry prefixes to group images by project/name
+// Examples:
+//   ghcr.io/project/image:tag -> project/image:tag
+//   docker.io/project/image:tag -> project/image:tag
+//   hub.docker.com/project/image:tag -> project/image:tag
+//   project/image:tag -> project/image:tag
+//   image:tag -> image:tag
+func normalizeImageName(image string) string {
+	// Common registry prefixes to remove
+	registries := []string{
+		"ghcr.io/",
+		"docker.io/",
+		"hub.docker.com/",
+		"registry.hub.docker.com/",
+		"quay.io/",
+		"gcr.io/",
+		"mcr.microsoft.com/",
+	}
+
+	for _, registry := range registries {
+		if len(image) > len(registry) && image[:len(registry)] == registry {
+			return image[len(registry):]
+		}
+	}
+
+	return image
+}
 
 func respondJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
@@ -437,6 +560,7 @@ func initSchema(db *sql.DB) error {
 
 	CREATE INDEX IF NOT EXISTS idx_telemetry_installation_id ON telemetry_reports(installation_id);
 	CREATE INDEX IF NOT EXISTS idx_telemetry_timestamp ON telemetry_reports(timestamp);
+	CREATE INDEX IF NOT EXISTS idx_telemetry_installation_timestamp ON telemetry_reports(installation_id, timestamp DESC);
 
 	CREATE TABLE IF NOT EXISTS image_stats (
 		id SERIAL PRIMARY KEY,

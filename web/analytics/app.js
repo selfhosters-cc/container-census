@@ -66,7 +66,10 @@ function initCharts() {
                 borderColor: 'rgba(102, 126, 234, 1)',
                 backgroundColor: 'rgba(102, 126, 234, 0.1)',
                 tension: 0.4,
-                fill: true
+                fill: true,
+                pointRadius: 5,
+                pointHoverRadius: 7,
+                pointBackgroundColor: 'rgba(102, 126, 234, 1)'
             }, {
                 label: 'Avg Containers per Installation',
                 data: [],
@@ -74,7 +77,10 @@ function initCharts() {
                 backgroundColor: 'rgba(118, 75, 162, 0.1)',
                 tension: 0.4,
                 fill: true,
-                yAxisID: 'y1'
+                yAxisID: 'y1',
+                pointRadius: 5,
+                pointHoverRadius: 7,
+                pointBackgroundColor: 'rgba(118, 75, 162, 1)'
             }]
         },
         options: {
@@ -93,6 +99,9 @@ function initCharts() {
                     title: {
                         display: true,
                         text: 'Installations'
+                    },
+                    ticks: {
+                        stepSize: 1
                     }
                 },
                 y1: {

@@ -31,8 +31,8 @@ FROM alpine:latest
 # Build arg for docker group GID (defaults to 999, can be overridden at runtime)
 ARG DOCKER_GID=999
 
-# Install ca-certificates for HTTPS and timezone data
-RUN apk --no-cache add ca-certificates tzdata
+# Install ca-certificates for HTTPS, timezone data, and su-exec for user switching
+RUN apk --no-cache add ca-certificates tzdata su-exec
 
 # Create docker group with default GID and census user
 # Note: The actual GID can be added at runtime using docker-compose group_add
@@ -58,11 +58,15 @@ COPY --from=builder /build/web ./web
 # Copy example config
 COPY --from=builder /build/config/config.yaml.example ./config/config.yaml.example
 
+# Copy entrypoint script
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # Create data directory with correct permissions
 RUN mkdir -p ./data && chown -R census:census /app
 
-# Switch to non-root user
-USER census
+# Note: We start as root so the entrypoint can fix volume permissions
+# The entrypoint will switch to census user after fixing permissions
 
 # Expose HTTP port
 EXPOSE 8080
@@ -73,6 +77,9 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 # Set environment variables
 ENV CONFIG_PATH=/app/config/config.yaml
+
+# Set entrypoint
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 # Run the application
 CMD ["./census"]
