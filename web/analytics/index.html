@@ -25,12 +25,20 @@
                 <div class="card-label">Active Installations</div>
             </div>
             <div class="card">
+                <div class="card-value" id="totalSubmissions">-</div>
+                <div class="card-label">Total Submissions</div>
+            </div>
+            <div class="card">
                 <div class="card-value" id="totalContainers">-</div>
                 <div class="card-label">Total Containers</div>
             </div>
             <div class="card">
                 <div class="card-value" id="totalHosts">-</div>
                 <div class="card-label">Total Hosts</div>
+            </div>
+            <div class="card">
+                <div class="card-value" id="totalAgents">-</div>
+                <div class="card-label">Total Agents</div>
             </div>
             <div class="card">
                 <div class="card-value" id="uniqueImages">-</div>
@@ -59,6 +67,33 @@
         <div class="chart-container">
             <h2>Installation Growth Over Time</h2>
             <canvas id="growthChart"></canvas>
+        </div>
+
+        <div class="chart-row">
+            <div class="chart-container half-width">
+                <h2>Registry Distribution</h2>
+                <canvas id="registriesChart"></canvas>
+            </div>
+            <div class="chart-container half-width">
+                <h2>Version Adoption</h2>
+                <canvas id="versionsChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-row">
+            <div class="chart-container half-width">
+                <h2>Scan Interval Configuration</h2>
+                <canvas id="scanIntervalsChart"></canvas>
+            </div>
+            <div class="chart-container half-width activity-heatmap-container">
+                <h2>Activity Pattern (UTC)</h2>
+                <canvas id="activityHeatmapChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <h2>🌍 Geographic Distribution (by Timezone)</h2>
+            <canvas id="geographyChart"></canvas>
         </div>
 
         <footer>

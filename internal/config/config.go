@@ -67,6 +67,20 @@ func applyEnvOverrides(cfg *models.Config) {
 		}
 	}
 
+	// Server authentication overrides
+	if authEnabled := os.Getenv("AUTH_ENABLED"); authEnabled != "" {
+		cfg.Server.Auth.Enabled = authEnabled == "true" || authEnabled == "1" || authEnabled == "yes"
+		fmt.Printf("DEBUG: AUTH_ENABLED env var: %s, setting Enabled to: %v\n", authEnabled, cfg.Server.Auth.Enabled)
+	}
+	if authUsername := os.Getenv("AUTH_USERNAME"); authUsername != "" {
+		cfg.Server.Auth.Username = authUsername
+		fmt.Printf("DEBUG: AUTH_USERNAME env var set to: %s\n", authUsername)
+	}
+	if authPassword := os.Getenv("AUTH_PASSWORD"); authPassword != "" {
+		cfg.Server.Auth.Password = authPassword
+		fmt.Printf("DEBUG: AUTH_PASSWORD env var set (len=%d)\n", len(authPassword))
+	}
+
 	// Scanner interval override
 	if intervalStr := os.Getenv("SCANNER_INTERVAL_SECONDS"); intervalStr != "" {
 		var interval int
@@ -93,8 +107,8 @@ func applyEnvOverrides(cfg *models.Config) {
 func LoadOrDefault(path string) *models.Config {
 	cfg, err := Load(path)
 	if err != nil {
-		// Return default config
-		return &models.Config{
+		// Return default config with environment overrides applied
+		defaultCfg := &models.Config{
 			Database: models.DatabaseConfig{
 				Path: "./data/census.db",
 			},
@@ -114,6 +128,9 @@ func LoadOrDefault(path string) *models.Config {
 				},
 			},
 		}
+		// Apply environment variable overrides to default config
+		applyEnvOverrides(defaultCfg)
+		return defaultCfg
 	}
 	return cfg
 }

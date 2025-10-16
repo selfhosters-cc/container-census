@@ -139,6 +139,8 @@ async function loadData() {
 
         if (currentTab === 'images') {
             await loadImages();
+        } else if (currentTab === 'hosts') {
+            renderHosts(hosts);
         }
     } catch (error) {
         console.error('Error loading data:', error);

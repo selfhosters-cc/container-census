@@ -66,20 +66,30 @@ func (c *Collector) CollectReport(ctx context.Context, agentStats map[string]*mo
 		return nil, fmt.Errorf("failed to get containers: %w", err)
 	}
 
-	// Aggregate image statistics (anonymized)
-	imageMap := make(map[string]int)
+	// Aggregate image statistics and collect sizes
+	imageMap := make(map[string]*models.ImageStat)
 	for _, container := range containers {
-		// Anonymize image name but keep it useful for statistics
-		imageMap[container.Image]++
+		if stat, exists := imageMap[container.Image]; exists {
+			stat.Count++
+			// Add size if not already counted for this image
+			if container.ImageSize > 0 && stat.SizeBytes == 0 {
+				stat.SizeBytes = container.ImageSize
+			}
+		} else {
+			imageMap[container.Image] = &models.ImageStat{
+				Image:     container.Image,
+				Count:     1,
+				SizeBytes: container.ImageSize,
+			}
+		}
 	}
 
 	// Convert to slice
 	imageStats := make([]models.ImageStat, 0, len(imageMap))
-	for image, count := range imageMap {
-		imageStats = append(imageStats, models.ImageStat{
-			Image: image,
-			Count: count,
-		})
+	totalImageSize := int64(0)
+	for _, stat := range imageMap {
+		imageStats = append(imageStats, *stat)
+		totalImageSize += stat.SizeBytes
 	}
 
 	// Collect agent versions
@@ -88,6 +98,68 @@ func (c *Collector) CollectReport(ctx context.Context, agentStats map[string]*mo
 		if info.Version != "" {
 			agentVersions[info.Version]++
 		}
+	}
+
+	// Aggregate container states
+	containersRunning := 0
+	containersStopped := 0
+	containersPaused := 0
+	containersOther := 0
+
+	// Aggregate resource usage (for running containers)
+	var totalCPU float64
+	var totalMemory int64
+	var totalMemoryLimit int64
+	runningContainersCount := 0
+
+	// Aggregate restart statistics
+	var totalRestarts int
+	highRestartContainers := 0
+
+	for _, container := range containers {
+		// Count states
+		switch container.State {
+		case "running":
+			containersRunning++
+			// Collect resource stats for running containers
+			if container.CPUPercent > 0 || container.MemoryUsage > 0 {
+				totalCPU += container.CPUPercent
+				totalMemory += container.MemoryUsage
+				totalMemoryLimit += container.MemoryLimit
+				runningContainersCount++
+			}
+		case "exited":
+			containersStopped++
+		case "paused":
+			containersPaused++
+		default:
+			containersOther++
+		}
+
+		// Collect restart stats
+		totalRestarts += container.RestartCount
+		if container.RestartCount > 10 {
+			highRestartContainers++
+		}
+	}
+
+	// Calculate averages
+	avgCPU := 0.0
+	avgMemory := int64(0)
+	if runningContainersCount > 0 {
+		avgCPU = totalCPU / float64(runningContainersCount)
+		avgMemory = totalMemory / int64(runningContainersCount)
+	}
+
+	avgRestarts := 0.0
+	if len(containers) > 0 {
+		avgRestarts = float64(totalRestarts) / float64(len(containers))
+	}
+
+	// Get system timezone
+	timezone := "UTC"
+	if tz := os.Getenv("TZ"); tz != "" {
+		timezone = tz
 	}
 
 	report := &models.TelemetryReport{
@@ -100,6 +172,19 @@ func (c *Collector) CollectReport(ctx context.Context, agentStats map[string]*mo
 		ScanInterval:    c.scanInterval,
 		ImageStats:      imageStats,
 		AgentVersions:   agentVersions,
+		// New fields
+		ContainersRunning:     containersRunning,
+		ContainersStopped:     containersStopped,
+		ContainersPaused:      containersPaused,
+		ContainersOther:       containersOther,
+		AvgCPUPercent:         avgCPU,
+		AvgMemoryBytes:        avgMemory,
+		TotalMemoryLimit:      totalMemoryLimit,
+		AvgRestarts:           avgRestarts,
+		HighRestartContainers: highRestartContainers,
+		TotalImageSize:        totalImageSize,
+		UniqueImages:          len(imageMap),
+		Timezone:              timezone,
 	}
 
 	return report, nil

@@ -20,9 +20,11 @@ import (
 )
 
 type Config struct {
-	DatabaseURL string
-	Port        int
-	APIKey      string // Optional API key for authentication
+	DatabaseURL  string
+	Port         int
+	AuthEnabled  bool
+	AuthUsername string
+	AuthPassword string
 }
 
 type Server struct {
@@ -36,9 +38,17 @@ func main() {
 
 	// Load configuration from environment
 	config := Config{
-		DatabaseURL: getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/telemetry?sslmode=disable"),
-		Port:        getEnvInt("PORT", 8081),
-		APIKey:      getEnv("API_KEY", ""), // Optional authentication
+		DatabaseURL:  getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/telemetry?sslmode=disable"),
+		Port:         getEnvInt("PORT", 8081),
+		AuthEnabled:  getEnv("COLLECTOR_AUTH_ENABLED", "") == "true",
+		AuthUsername: getEnv("COLLECTOR_AUTH_USERNAME", ""),
+		AuthPassword: getEnv("COLLECTOR_AUTH_PASSWORD", ""),
+	}
+
+	if config.AuthEnabled {
+		log.Printf("Authentication enabled for telemetry collector (user: %s)", config.AuthUsername)
+	} else {
+		log.Println("Authentication disabled - telemetry collector is publicly accessible")
 	}
 
 	// Connect to database
@@ -105,18 +115,47 @@ func main() {
 }
 
 func (s *Server) setupRoutes() {
-	// Public routes
+	// Health endpoint - always public (for monitoring)
 	s.router.HandleFunc("/health", s.handleHealth).Methods("GET")
+
+	// Ingest endpoint - always public (anonymous telemetry submission)
 	s.router.HandleFunc("/api/ingest", s.handleIngest).Methods("POST")
 
-	// Stats API (read-only, no auth required for public dashboard)
+	// Stats API - always public (read-only analytics data)
 	s.router.HandleFunc("/api/stats/top-images", s.handleTopImages).Methods("GET")
 	s.router.HandleFunc("/api/stats/growth", s.handleGrowth).Methods("GET")
 	s.router.HandleFunc("/api/stats/installations", s.handleInstallations).Methods("GET")
 	s.router.HandleFunc("/api/stats/summary", s.handleSummary).Methods("GET")
+	s.router.HandleFunc("/api/stats/registries", s.handleRegistries).Methods("GET")
+	s.router.HandleFunc("/api/stats/versions", s.handleVersions).Methods("GET")
+	s.router.HandleFunc("/api/stats/activity-heatmap", s.handleActivityHeatmap).Methods("GET")
+	s.router.HandleFunc("/api/stats/scan-intervals", s.handleScanIntervals).Methods("GET")
+	s.router.HandleFunc("/api/stats/geography", s.handleGeography).Methods("GET")
 
-	// Serve static files for analytics dashboard
-	s.router.PathPrefix("/").Handler(http.FileServer(http.Dir("./web/analytics")))
+	// Static files for analytics dashboard - protected if auth is enabled
+	if s.config.AuthEnabled {
+		authMiddleware := s.basicAuthMiddleware()
+		s.router.PathPrefix("/").Handler(authMiddleware(http.FileServer(http.Dir("./web/analytics"))))
+	} else {
+		s.router.PathPrefix("/").Handler(http.FileServer(http.Dir("./web/analytics")))
+	}
+}
+
+// basicAuthMiddleware creates HTTP Basic Auth middleware
+func (s *Server) basicAuthMiddleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			username, password, ok := r.BasicAuth()
+
+			if !ok || username != s.config.AuthUsername || password != s.config.AuthPassword {
+				w.Header().Set("WWW-Authenticate", `Basic realm="Telemetry Collector", charset="UTF-8"`)
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // Health check
@@ -138,15 +177,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 // Ingest telemetry data
 func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
-	// Optional API key authentication
-	if s.config.APIKey != "" {
-		authHeader := r.Header.Get("Authorization")
-		if authHeader != "Bearer "+s.config.APIKey {
-			respondError(w, http.StatusUnauthorized, "Invalid or missing API key")
-			return
-		}
-	}
-
 	// Parse request
 	var report models.TelemetryReport
 	if err := json.NewDecoder(r.Body).Decode(&report); err != nil {
@@ -222,7 +252,19 @@ func (s *Server) saveTelemetry(report models.TelemetryReport) error {
 			    total_containers = $6,
 			    scan_interval = $7,
 			    image_stats = $8,
-			    agent_versions = $9
+			    agent_versions = $9,
+			    containers_running = $10,
+			    containers_stopped = $11,
+			    containers_paused = $12,
+			    containers_other = $13,
+			    avg_cpu_percent = $14,
+			    avg_memory_bytes = $15,
+			    total_memory_limit = $16,
+			    avg_restarts = $17,
+			    high_restart_containers = $18,
+			    total_image_size = $19,
+			    unique_images = $20,
+			    timezone = $21
 			WHERE id = $1
 		`
 		_, err = tx.Exec(updateQuery,
@@ -235,6 +277,18 @@ func (s *Server) saveTelemetry(report models.TelemetryReport) error {
 			report.ScanInterval,
 			string(imageStatsJSON),
 			string(agentVersionsJSON),
+			report.ContainersRunning,
+			report.ContainersStopped,
+			report.ContainersPaused,
+			report.ContainersOther,
+			report.AvgCPUPercent,
+			report.AvgMemoryBytes,
+			report.TotalMemoryLimit,
+			report.AvgRestarts,
+			report.HighRestartContainers,
+			report.TotalImageSize,
+			report.UniqueImages,
+			report.Timezone,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to update telemetry: %w", err)
@@ -257,8 +311,12 @@ func (s *Server) saveTelemetry(report models.TelemetryReport) error {
 		insertQuery := `
 			INSERT INTO telemetry_reports (
 				installation_id, version, timestamp, host_count, agent_count,
-				total_containers, scan_interval, image_stats, agent_versions
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+				total_containers, scan_interval, image_stats, agent_versions,
+				containers_running, containers_stopped, containers_paused, containers_other,
+				avg_cpu_percent, avg_memory_bytes, total_memory_limit,
+				avg_restarts, high_restart_containers,
+				total_image_size, unique_images, timezone
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
 		`
 		_, err = tx.Exec(insertQuery,
 			report.InstallationID,
@@ -270,6 +328,18 @@ func (s *Server) saveTelemetry(report models.TelemetryReport) error {
 			report.ScanInterval,
 			string(imageStatsJSON),
 			string(agentVersionsJSON),
+			report.ContainersRunning,
+			report.ContainersStopped,
+			report.ContainersPaused,
+			report.ContainersOther,
+			report.AvgCPUPercent,
+			report.AvgMemoryBytes,
+			report.TotalMemoryLimit,
+			report.AvgRestarts,
+			report.HighRestartContainers,
+			report.TotalImageSize,
+			report.UniqueImages,
+			report.Timezone,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to insert telemetry: %w", err)
@@ -278,14 +348,14 @@ func (s *Server) saveTelemetry(report models.TelemetryReport) error {
 		log.Printf("Inserted new telemetry report for installation %s", report.InstallationID)
 	}
 
-	// Insert fresh image stats with normalized names
+	// Insert fresh image stats with normalized names and sizes
 	for _, imageStat := range report.ImageStats {
 		insertImageQuery := `
-			INSERT INTO image_stats (installation_id, timestamp, image, count)
-			VALUES ($1, $2, $3, $4)
+			INSERT INTO image_stats (installation_id, timestamp, image, count, size_bytes)
+			VALUES ($1, $2, $3, $4, $5)
 		`
 		normalizedImage := normalizeImageName(imageStat.Image)
-		_, err := tx.Exec(insertImageQuery, report.InstallationID, report.Timestamp, normalizedImage, imageStat.Count)
+		_, err := tx.Exec(insertImageQuery, report.InstallationID, report.Timestamp, normalizedImage, imageStat.Count, imageStat.SizeBytes)
 		if err != nil {
 			log.Printf("Warning: Failed to insert image stat: %v", err)
 		}
@@ -442,12 +512,19 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 		) latest_images
 	`
 
+	// Get total submissions count
+	submissionsQuery := `
+		SELECT COUNT(*) as total_submissions
+		FROM telemetry_reports
+	`
+
 	type Summary struct {
-		Installations  int `json:"installations"`
-		TotalContainers int `json:"total_containers"`
-		TotalHosts     int `json:"total_hosts"`
-		TotalAgents    int `json:"total_agents"`
-		UniqueImages   int `json:"unique_images"`
+		Installations    int `json:"installations"`
+		TotalSubmissions int `json:"total_submissions"`
+		TotalContainers  int `json:"total_containers"`
+		TotalHosts       int `json:"total_hosts"`
+		TotalAgents      int `json:"total_agents"`
+		UniqueImages     int `json:"unique_images"`
 	}
 
 	var summary Summary
@@ -471,10 +548,273 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get total submissions
+	err = s.db.QueryRow(submissionsQuery).Scan(&summary.TotalSubmissions)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to query total submissions: "+err.Error())
+		return
+	}
+
 	respondJSON(w, http.StatusOK, summary)
 }
 
+// Get registry distribution stats
+func (s *Server) handleRegistries(w http.ResponseWriter, r *http.Request) {
+	days := getQueryInt(r, "days", 30)
+	since := time.Now().AddDate(0, 0, -days)
+
+	query := `
+		SELECT
+			CASE
+				WHEN image LIKE 'ghcr.io/%' THEN 'GitHub Container Registry'
+				WHEN image LIKE 'docker.io/%' OR image LIKE 'hub.docker.com/%' THEN 'Docker Hub'
+				WHEN image LIKE 'quay.io/%' THEN 'Quay.io'
+				WHEN image LIKE 'gcr.io/%' THEN 'Google Container Registry'
+				WHEN image LIKE 'mcr.microsoft.com/%' THEN 'Microsoft Container Registry'
+				WHEN image LIKE '%/%.%/%' THEN 'Other Private Registry'
+				ELSE 'Docker Hub (default)'
+			END as registry,
+			SUM(count) as total_count
+		FROM (
+			SELECT DISTINCT ON (installation_id, image)
+				image,
+				count
+			FROM image_stats
+			WHERE timestamp >= $1
+			ORDER BY installation_id, image, timestamp DESC
+		) latest_stats
+		GROUP BY registry
+		ORDER BY total_count DESC
+	`
+
+	rows, err := s.db.Query(query, since)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Query failed: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	type RegistryCount struct {
+		Registry string `json:"registry"`
+		Count    int    `json:"count"`
+	}
+
+	var results []RegistryCount
+	for rows.Next() {
+		var rc RegistryCount
+		if err := rows.Scan(&rc.Registry, &rc.Count); err != nil {
+			log.Printf("Scan error: %v", err)
+			continue
+		}
+		results = append(results, rc)
+	}
+
+	respondJSON(w, http.StatusOK, results)
+}
+
+// Get agent version distribution
+func (s *Server) handleVersions(w http.ResponseWriter, r *http.Request) {
+	query := `
+		SELECT version, COUNT(DISTINCT installation_id) as installations
+		FROM (
+			SELECT DISTINCT ON (installation_id)
+				installation_id,
+				version
+			FROM telemetry_reports
+			WHERE timestamp >= NOW() - INTERVAL '30 days'
+			ORDER BY installation_id, timestamp DESC
+		) latest_reports
+		WHERE version IS NOT NULL AND version != ''
+		GROUP BY version
+		ORDER BY installations DESC
+		LIMIT 10
+	`
+
+	rows, err := s.db.Query(query)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Query failed: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	type VersionCount struct {
+		Version       string `json:"version"`
+		Installations int    `json:"installations"`
+	}
+
+	var results []VersionCount
+	for rows.Next() {
+		var vc VersionCount
+		if err := rows.Scan(&vc.Version, &vc.Installations); err != nil {
+			log.Printf("Scan error: %v", err)
+			continue
+		}
+		results = append(results, vc)
+	}
+
+	respondJSON(w, http.StatusOK, results)
+}
+
+// Get activity heatmap data (reports by hour of day and day of week)
+func (s *Server) handleActivityHeatmap(w http.ResponseWriter, r *http.Request) {
+	days := getQueryInt(r, "days", 30)
+	since := time.Now().AddDate(0, 0, -days)
+
+	query := `
+		SELECT
+			EXTRACT(DOW FROM timestamp) as day_of_week,
+			EXTRACT(HOUR FROM timestamp) as hour_of_day,
+			COUNT(*) as report_count
+		FROM telemetry_reports
+		WHERE timestamp >= $1
+		GROUP BY day_of_week, hour_of_day
+		ORDER BY day_of_week, hour_of_day
+	`
+
+	rows, err := s.db.Query(query, since)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Query failed: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	type HeatmapData struct {
+		DayOfWeek   int `json:"day_of_week"`   // 0=Sunday, 6=Saturday
+		HourOfDay   int `json:"hour_of_day"`   // 0-23
+		ReportCount int `json:"report_count"`
+	}
+
+	var results []HeatmapData
+	for rows.Next() {
+		var hd HeatmapData
+		if err := rows.Scan(&hd.DayOfWeek, &hd.HourOfDay, &hd.ReportCount); err != nil {
+			log.Printf("Scan error: %v", err)
+			continue
+		}
+		results = append(results, hd)
+	}
+
+	respondJSON(w, http.StatusOK, results)
+}
+
+// Get scan interval distribution
+func (s *Server) handleScanIntervals(w http.ResponseWriter, r *http.Request) {
+	query := `
+		SELECT
+			scan_interval,
+			COUNT(DISTINCT installation_id) as installations
+		FROM (
+			SELECT DISTINCT ON (installation_id)
+				installation_id,
+				scan_interval
+			FROM telemetry_reports
+			WHERE timestamp >= NOW() - INTERVAL '30 days'
+			ORDER BY installation_id, timestamp DESC
+		) latest_reports
+		WHERE scan_interval > 0
+		GROUP BY scan_interval
+		ORDER BY installations DESC
+	`
+
+	rows, err := s.db.Query(query)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Query failed: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	type IntervalCount struct {
+		Interval      int `json:"interval"`      // seconds
+		Installations int `json:"installations"`
+	}
+
+	var results []IntervalCount
+	for rows.Next() {
+		var ic IntervalCount
+		if err := rows.Scan(&ic.Interval, &ic.Installations); err != nil {
+			log.Printf("Scan error: %v", err)
+			continue
+		}
+		results = append(results, ic)
+	}
+
+	respondJSON(w, http.StatusOK, results)
+}
+
+// Get geographic distribution based on timezone data
+func (s *Server) handleGeography(w http.ResponseWriter, r *http.Request) {
+	query := `
+		SELECT
+			COALESCE(timezone, 'Unknown') as timezone,
+			COUNT(DISTINCT installation_id) as installations
+		FROM (
+			SELECT DISTINCT ON (installation_id)
+				installation_id,
+				timezone
+			FROM telemetry_reports
+			WHERE timestamp >= NOW() - INTERVAL '30 days'
+			ORDER BY installation_id, timestamp DESC
+		) latest_reports
+		GROUP BY timezone
+		ORDER BY installations DESC
+	`
+
+	rows, err := s.db.Query(query)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Query failed: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	type GeographyData struct {
+		Timezone      string `json:"timezone"`
+		Installations int    `json:"installations"`
+		Region        string `json:"region"` // Derived from timezone
+	}
+
+	var results []GeographyData
+	for rows.Next() {
+		var gd GeographyData
+		if err := rows.Scan(&gd.Timezone, &gd.Installations); err != nil {
+			log.Printf("Scan error: %v", err)
+			continue
+		}
+		// Derive region from timezone
+		gd.Region = getRegionFromTimezone(gd.Timezone)
+		results = append(results, gd)
+	}
+
+	respondJSON(w, http.StatusOK, results)
+}
+
 // Helper functions
+
+// getRegionFromTimezone maps timezone to a general region for visualization
+func getRegionFromTimezone(tz string) string {
+	if tz == "" || tz == "Unknown" || tz == "UTC" {
+		return "Unknown"
+	}
+
+	// Map common timezone prefixes to regions
+	switch {
+	case len(tz) >= 7 && tz[:7] == "America":
+		return "Americas"
+	case len(tz) >= 6 && tz[:6] == "Europe":
+		return "Europe"
+	case len(tz) >= 4 && tz[:4] == "Asia":
+		return "Asia"
+	case len(tz) >= 6 && tz[:6] == "Africa":
+		return "Africa"
+	case len(tz) >= 7 && tz[:7] == "Pacific":
+		return "Pacific"
+	case len(tz) >= 9 && tz[:9] == "Australia":
+		return "Oceania"
+	case len(tz) >= 10 && tz[:10] == "Antarctica":
+		return "Antarctica"
+	default:
+		return "Other"
+	}
+}
 
 // normalizeImageName removes registry prefixes to group images by project/name
 // Examples:
@@ -555,6 +895,19 @@ func initSchema(db *sql.DB) error {
 		scan_interval INTEGER NOT NULL DEFAULT 0,
 		image_stats JSONB,
 		agent_versions JSONB,
+		-- Enhanced metrics fields
+		containers_running INTEGER DEFAULT 0,
+		containers_stopped INTEGER DEFAULT 0,
+		containers_paused INTEGER DEFAULT 0,
+		containers_other INTEGER DEFAULT 0,
+		avg_cpu_percent REAL DEFAULT 0.0,
+		avg_memory_bytes BIGINT DEFAULT 0,
+		total_memory_limit BIGINT DEFAULT 0,
+		avg_restarts REAL DEFAULT 0.0,
+		high_restart_containers INTEGER DEFAULT 0,
+		total_image_size BIGINT DEFAULT 0,
+		unique_images INTEGER DEFAULT 0,
+		timezone VARCHAR(100),
 		created_at TIMESTAMPTZ DEFAULT NOW()
 	);
 
@@ -568,6 +921,7 @@ func initSchema(db *sql.DB) error {
 		timestamp TIMESTAMPTZ NOT NULL,
 		image VARCHAR(500) NOT NULL,
 		count INTEGER NOT NULL DEFAULT 0,
+		size_bytes BIGINT DEFAULT 0,
 		created_at TIMESTAMPTZ DEFAULT NOW()
 	);
 
@@ -577,5 +931,32 @@ func initSchema(db *sql.DB) error {
 	`
 
 	_, err := db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Migration: Add new columns if they don't exist (for existing databases)
+	migrations := []string{
+		`ALTER TABLE telemetry_reports ADD COLUMN IF NOT EXISTS containers_running INTEGER DEFAULT 0`,
+		`ALTER TABLE telemetry_reports ADD COLUMN IF NOT EXISTS containers_stopped INTEGER DEFAULT 0`,
+		`ALTER TABLE telemetry_reports ADD COLUMN IF NOT EXISTS containers_paused INTEGER DEFAULT 0`,
+		`ALTER TABLE telemetry_reports ADD COLUMN IF NOT EXISTS containers_other INTEGER DEFAULT 0`,
+		`ALTER TABLE telemetry_reports ADD COLUMN IF NOT EXISTS avg_cpu_percent REAL DEFAULT 0.0`,
+		`ALTER TABLE telemetry_reports ADD COLUMN IF NOT EXISTS avg_memory_bytes BIGINT DEFAULT 0`,
+		`ALTER TABLE telemetry_reports ADD COLUMN IF NOT EXISTS total_memory_limit BIGINT DEFAULT 0`,
+		`ALTER TABLE telemetry_reports ADD COLUMN IF NOT EXISTS avg_restarts REAL DEFAULT 0.0`,
+		`ALTER TABLE telemetry_reports ADD COLUMN IF NOT EXISTS high_restart_containers INTEGER DEFAULT 0`,
+		`ALTER TABLE telemetry_reports ADD COLUMN IF NOT EXISTS total_image_size BIGINT DEFAULT 0`,
+		`ALTER TABLE telemetry_reports ADD COLUMN IF NOT EXISTS unique_images INTEGER DEFAULT 0`,
+		`ALTER TABLE telemetry_reports ADD COLUMN IF NOT EXISTS timezone VARCHAR(100)`,
+		`ALTER TABLE image_stats ADD COLUMN IF NOT EXISTS size_bytes BIGINT DEFAULT 0`,
+	}
+
+	for _, migration := range migrations {
+		if _, err := db.Exec(migration); err != nil {
+			log.Printf("Migration warning (may be expected): %v", err)
+		}
+	}
+
+	return nil
 }

@@ -244,6 +244,7 @@ header h1 {
 table {
     width: 100%;
     border-collapse: collapse;
+    table-layout: fixed;
 }
 
 thead {
@@ -261,6 +262,147 @@ th {
 td {
     padding: 12px 15px;
     border-bottom: 1px solid #dee2e6;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Containers table column widths */
+#containersTable th:nth-child(1),
+#containersTable td:nth-child(1) {
+    width: 10%;
+    min-width: 80px;
+}
+
+#containersTable th:nth-child(2),
+#containersTable td:nth-child(2) {
+    width: 15%;
+    min-width: 120px;
+}
+
+#containersTable th:nth-child(3),
+#containersTable td:nth-child(3) {
+    width: 20%;
+    min-width: 150px;
+}
+
+#containersTable th:nth-child(4),
+#containersTable td:nth-child(4) {
+    width: 8%;
+    min-width: 70px;
+}
+
+#containersTable th:nth-child(5),
+#containersTable td:nth-child(5) {
+    width: 15%;
+    min-width: 100px;
+}
+
+#containersTable th:nth-child(6),
+#containersTable td:nth-child(6) {
+    width: 10%;
+    min-width: 80px;
+}
+
+#containersTable th:nth-child(7),
+#containersTable td:nth-child(7) {
+    width: 10%;
+    min-width: 80px;
+}
+
+#containersTable th:nth-child(8),
+#containersTable td:nth-child(8) {
+    width: 12%;
+    min-width: 140px;
+    white-space: normal;
+}
+
+/* Hosts table column widths */
+#hostsTable th:nth-child(1),
+#hostsTable td:nth-child(1) {
+    width: 12%;
+    min-width: 100px;
+}
+
+#hostsTable th:nth-child(2),
+#hostsTable td:nth-child(2) {
+    width: 10%;
+    min-width: 80px;
+}
+
+#hostsTable th:nth-child(3),
+#hostsTable td:nth-child(3) {
+    width: 20%;
+    min-width: 150px;
+}
+
+#hostsTable th:nth-child(4),
+#hostsTable td:nth-child(4) {
+    width: 10%;
+    min-width: 80px;
+}
+
+#hostsTable th:nth-child(5),
+#hostsTable td:nth-child(5) {
+    width: 20%;
+    min-width: 120px;
+}
+
+#hostsTable th:nth-child(6),
+#hostsTable td:nth-child(6) {
+    width: 12%;
+    min-width: 90px;
+}
+
+#hostsTable th:nth-child(7),
+#hostsTable td:nth-child(7) {
+    width: 16%;
+    min-width: 140px;
+    white-space: normal;
+}
+
+/* Images table column widths */
+#imagesTable th:nth-child(1),
+#imagesTable td:nth-child(1) {
+    width: 12%;
+    min-width: 90px;
+}
+
+#imagesTable th:nth-child(2),
+#imagesTable td:nth-child(2) {
+    width: 25%;
+    min-width: 150px;
+}
+
+#imagesTable th:nth-child(3),
+#imagesTable td:nth-child(3) {
+    width: 12%;
+    min-width: 80px;
+}
+
+#imagesTable th:nth-child(4),
+#imagesTable td:nth-child(4) {
+    width: 15%;
+    min-width: 100px;
+}
+
+#imagesTable th:nth-child(5),
+#imagesTable td:nth-child(5) {
+    width: 10%;
+    min-width: 70px;
+}
+
+#imagesTable th:nth-child(6),
+#imagesTable td:nth-child(6) {
+    width: 12%;
+    min-width: 90px;
+}
+
+#imagesTable th:nth-child(7),
+#imagesTable td:nth-child(7) {
+    width: 14%;
+    min-width: 120px;
+    white-space: normal;
 }
 
 tbody tr:hover {

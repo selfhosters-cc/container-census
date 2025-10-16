@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/container-census/container-census/internal/api"
+	"github.com/container-census/container-census/internal/auth"
 	"github.com/container-census/container-census/internal/config"
 	"github.com/container-census/container-census/internal/models"
 	"github.com/container-census/container-census/internal/scanner"
@@ -55,8 +56,15 @@ func main() {
 	scan := scanner.New(cfg.Scanner.TimeoutSeconds)
 	log.Println("Scanner initialized")
 
-	// Initialize API server
-	apiServer := api.New(db, scan, configPath)
+	// Initialize API server with authentication config
+	authConfig := convertAuthConfig(cfg.Server.Auth)
+	if authConfig.Enabled {
+		log.Printf("Authentication enabled for user: %s", authConfig.Username)
+	} else {
+		log.Println("Authentication disabled - UI and API are publicly accessible")
+	}
+
+	apiServer := api.New(db, scan, configPath, authConfig)
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 
 	server := &http.Server{
@@ -110,6 +118,15 @@ func main() {
 	}
 
 	log.Println("Server stopped")
+}
+
+// convertAuthConfig converts models.AuthConfig to auth.Config
+func convertAuthConfig(cfg models.AuthConfig) auth.Config {
+	return auth.Config{
+		Enabled:  cfg.Enabled,
+		Username: cfg.Username,
+		Password: cfg.Password,
+	}
 }
 
 // initializeHosts adds hosts from config to database if they don't exist

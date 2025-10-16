@@ -24,6 +24,9 @@ if [ "$(id -u)" = "0" ]; then
 #   DATABASE_PATH - Override database path
 #   SERVER_HOST - Override server host
 #   SERVER_PORT - Override server port
+#   AUTH_ENABLED - Enable authentication for UI and API (true/false)
+#   AUTH_USERNAME - Username for authentication
+#   AUTH_PASSWORD - Password for authentication
 #   SCANNER_INTERVAL_SECONDS - Override scan interval
 #   TELEMETRY_ENABLED - Override telemetry enabled (true/false)
 #   TELEMETRY_INTERVAL_HOURS - Override telemetry interval
@@ -34,6 +37,10 @@ database:
 server:
   host: 0.0.0.0  # Can be overridden by SERVER_HOST env var
   port: 8080     # Can be overridden by SERVER_PORT env var
+  auth:
+    enabled: false  # Set to true to enable authentication (override with AUTH_ENABLED)
+    username: ""    # Username for authentication (override with AUTH_USERNAME)
+    password: ""    # Password for authentication (override with AUTH_PASSWORD)
 
 scanner:
   interval_seconds: 300  # Scan every 5 minutes (override with SCANNER_INTERVAL_SECONDS)

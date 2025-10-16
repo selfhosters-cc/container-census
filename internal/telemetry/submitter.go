@@ -123,7 +123,7 @@ func (s *Submitter) sendRequest(ctx context.Context, endpoint models.TelemetryEn
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "container-census-telemetry/1.0")
 
-	// Add API key if configured
+	// Add API key if configured (optional, for authenticated endpoints)
 	if endpoint.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+endpoint.APIKey)
 	}

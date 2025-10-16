@@ -19,18 +19,25 @@ type Host struct {
 
 // Container represents a Docker container found on a host
 type Container struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Image       string            `json:"image"`
-	ImageID     string            `json:"image_id"`
-	State       string            `json:"state"`       // running, exited, etc.
-	Status      string            `json:"status"`      // detailed status
-	Ports       []PortMapping     `json:"ports"`
-	Labels      map[string]string `json:"labels"`
-	Created     time.Time         `json:"created"`
-	HostID      int64             `json:"host_id"`
-	HostName    string            `json:"host_name"`
-	ScannedAt   time.Time         `json:"scanned_at"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Image        string            `json:"image"`
+	ImageID      string            `json:"image_id"`
+	ImageSize    int64             `json:"image_size"`    // bytes
+	State        string            `json:"state"`         // running, exited, paused, etc.
+	Status       string            `json:"status"`        // detailed status
+	RestartCount int               `json:"restart_count"` // number of restarts
+	Ports        []PortMapping     `json:"ports"`
+	Labels       map[string]string `json:"labels"`
+	Created      time.Time         `json:"created"`
+	HostID       int64             `json:"host_id"`
+	HostName     string            `json:"host_name"`
+	ScannedAt    time.Time         `json:"scanned_at"`
+	// Resource usage stats (optional, may be zero if not collected)
+	CPUPercent    float64 `json:"cpu_percent,omitempty"`
+	MemoryUsage   int64   `json:"memory_usage,omitempty"`   // bytes
+	MemoryLimit   int64   `json:"memory_limit,omitempty"`   // bytes
+	MemoryPercent float64 `json:"memory_percent,omitempty"`
 }
 
 // PortMapping represents a container port mapping
@@ -69,8 +76,16 @@ type DatabaseConfig struct {
 
 // ServerConfig contains HTTP server settings
 type ServerConfig struct {
-	Host string `yaml:"host"`
-	Port int    `yaml:"port"`
+	Host     string     `yaml:"host"`
+	Port     int        `yaml:"port"`
+	Auth     AuthConfig `yaml:"auth"`
+}
+
+// AuthConfig contains authentication settings
+type AuthConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
 }
 
 // ScannerConfig contains scanner settings
@@ -121,26 +136,44 @@ type TelemetryEndpoint struct {
 	Name    string `yaml:"name"`
 	URL     string `yaml:"url"`
 	Enabled bool   `yaml:"enabled"`
-	APIKey  string `yaml:"api_key,omitempty"`
+	APIKey  string `yaml:"api_key,omitempty"` // Optional API key for authenticated endpoints
 }
 
 // TelemetryReport contains anonymous usage statistics
 type TelemetryReport struct {
-	InstallationID string                   `json:"installation_id"`
-	Version        string                   `json:"version"`
-	Timestamp      time.Time                `json:"timestamp"`
-	HostCount      int                      `json:"host_count"`
-	AgentCount     int                      `json:"agent_count"`
-	TotalContainers int                     `json:"total_containers"`
-	ScanInterval   int                      `json:"scan_interval_seconds"`
-	ImageStats     []ImageStat              `json:"image_stats"`
-	AgentVersions  map[string]int           `json:"agent_versions"` // version -> count
+	InstallationID  string                   `json:"installation_id"`
+	Version         string                   `json:"version"`
+	Timestamp       time.Time                `json:"timestamp"`
+	HostCount       int                      `json:"host_count"`
+	AgentCount      int                      `json:"agent_count"`
+	TotalContainers int                      `json:"total_containers"`
+	ScanInterval    int                      `json:"scan_interval_seconds"`
+	ImageStats      []ImageStat              `json:"image_stats"`
+	AgentVersions   map[string]int           `json:"agent_versions"` // version -> count
+	// Container state breakdown
+	ContainersRunning int `json:"containers_running"`
+	ContainersStopped int `json:"containers_stopped"`
+	ContainersPaused  int `json:"containers_paused"`
+	ContainersOther   int `json:"containers_other"`
+	// Resource usage aggregates (averages across all running containers)
+	AvgCPUPercent     float64 `json:"avg_cpu_percent,omitempty"`
+	AvgMemoryBytes    int64   `json:"avg_memory_bytes,omitempty"`
+	TotalMemoryLimit  int64   `json:"total_memory_limit,omitempty"`
+	// Restart statistics
+	AvgRestarts           float64 `json:"avg_restarts,omitempty"`
+	HighRestartContainers int     `json:"high_restart_containers,omitempty"` // containers with >10 restarts
+	// Image statistics
+	TotalImageSize int64 `json:"total_image_size,omitempty"` // total bytes of all images
+	UniqueImages   int   `json:"unique_images,omitempty"`
+	// System information (optional)
+	Timezone string `json:"timezone,omitempty"` // e.g., "America/New_York"
 }
 
 // ImageStat contains statistics for a container image
 type ImageStat struct {
-	Image string `json:"image"`
-	Count int    `json:"count"`
+	Image     string `json:"image"`
+	Count     int    `json:"count"`
+	SizeBytes int64  `json:"size_bytes,omitempty"` // total size in bytes
 }
 
 // TelemetryStats represents aggregated telemetry data stored in the collector

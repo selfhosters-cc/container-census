@@ -54,6 +54,15 @@ func (s *Scanner) ScanHost(ctx context.Context, host models.Host) ([]models.Cont
 		return nil, fmt.Errorf("failed to list containers: %w", err)
 	}
 
+	// Get image information for size data
+	imageMap := make(map[string]int64) // imageID -> size
+	images, err := dockerClient.ImageList(ctx, types.ImageListOptions{})
+	if err == nil {
+		for _, img := range images {
+			imageMap[img.ID] = img.Size
+		}
+	}
+
 	// Convert to our model
 	result := make([]models.Container, 0, len(containers))
 	now := time.Now()
@@ -76,20 +85,62 @@ func (s *Scanner) ScanHost(ctx context.Context, host models.Host) ([]models.Cont
 			name = strings.TrimPrefix(c.Names[0], "/")
 		}
 
-		result = append(result, models.Container{
-			ID:        c.ID,
-			Name:      name,
-			Image:     c.Image,
-			ImageID:   c.ImageID,
-			State:     c.State,
-			Status:    c.Status,
-			Ports:     ports,
-			Labels:    c.Labels,
-			Created:   time.Unix(c.Created, 0),
-			HostID:    host.ID,
-			HostName:  host.Name,
-			ScannedAt: now,
-		})
+		// Get image size
+		imageSize := imageMap[c.ImageID]
+
+		// Inspect container for detailed info (restart count, etc.)
+		var restartCount int
+		containerJSON, err := dockerClient.ContainerInspect(ctx, c.ID)
+		if err == nil {
+			restartCount = containerJSON.RestartCount
+		}
+
+		container := models.Container{
+			ID:           c.ID,
+			Name:         name,
+			Image:        c.Image,
+			ImageID:      c.ImageID,
+			ImageSize:    imageSize,
+			State:        c.State,
+			Status:       c.Status,
+			RestartCount: restartCount,
+			Ports:        ports,
+			Labels:       c.Labels,
+			Created:      time.Unix(c.Created, 0),
+			HostID:       host.ID,
+			HostName:     host.Name,
+			ScannedAt:    now,
+		}
+
+		// Optionally collect resource stats for running containers
+		// This is commented out by default as it adds overhead
+		// Uncomment if you want to collect resource usage
+		/*
+		if c.State == "running" {
+			stats, err := dockerClient.ContainerStats(ctx, c.ID, false)
+			if err == nil {
+				defer stats.Body.Close()
+				var v types.StatsJSON
+				if err := json.NewDecoder(stats.Body).Decode(&v); err == nil {
+					// Calculate CPU percentage
+					cpuDelta := float64(v.CPUStats.CPUUsage.TotalUsage - v.PreCPUStats.CPUUsage.TotalUsage)
+					systemDelta := float64(v.CPUStats.SystemUsage - v.PreCPUStats.SystemUsage)
+					if systemDelta > 0 && cpuDelta > 0 {
+						container.CPUPercent = (cpuDelta / systemDelta) * float64(len(v.CPUStats.CPUUsage.PercpuUsage)) * 100.0
+					}
+
+					// Memory stats
+					container.MemoryUsage = int64(v.MemoryStats.Usage)
+					container.MemoryLimit = int64(v.MemoryStats.Limit)
+					if v.MemoryStats.Limit > 0 {
+						container.MemoryPercent = float64(v.MemoryStats.Usage) / float64(v.MemoryStats.Limit) * 100.0
+					}
+				}
+			}
+		}
+		*/
+
+		result = append(result, container)
 	}
 
 	return result, nil

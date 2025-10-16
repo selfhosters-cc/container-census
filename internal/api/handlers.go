@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/container-census/container-census/internal/auth"
 	"github.com/container-census/container-census/internal/config"
 	"github.com/container-census/container-census/internal/models"
 	"github.com/container-census/container-census/internal/scanner"
@@ -23,6 +24,7 @@ type Server struct {
 	router             *mux.Router
 	configPath         string
 	telemetryScheduler TelemetryScheduler
+	authConfig         auth.Config
 }
 
 // TelemetryScheduler interface for submitting telemetry on demand
@@ -31,12 +33,13 @@ type TelemetryScheduler interface {
 }
 
 // New creates a new API server
-func New(db *storage.DB, scanner *scanner.Scanner, configPath string) *Server {
+func New(db *storage.DB, scanner *scanner.Scanner, configPath string, authConfig auth.Config) *Server {
 	s := &Server{
 		db:         db,
 		scanner:    scanner,
 		router:     mux.NewRouter(),
 		configPath: configPath,
+		authConfig: authConfig,
 	}
 
 	s.setupRoutes()
@@ -50,8 +53,15 @@ func (s *Server) SetTelemetryScheduler(scheduler TelemetryScheduler) {
 
 // setupRoutes configures all API routes
 func (s *Server) setupRoutes() {
-	// API routes
+	// Apply authentication middleware to all routes
+	authMiddleware := auth.BasicAuthMiddleware(s.authConfig)
+
+	// Health endpoint without authentication (for monitoring)
+	s.router.HandleFunc("/api/health", s.handleHealth).Methods("GET")
+
+	// Protected API routes
 	api := s.router.PathPrefix("/api").Subrouter()
+	api.Use(authMiddleware)
 
 	// Host endpoints
 	api.HandleFunc("/hosts", s.handleGetHosts).Methods("GET")
@@ -81,7 +91,6 @@ func (s *Server) setupRoutes() {
 	// Scan endpoints
 	api.HandleFunc("/scan", s.handleTriggerScan).Methods("POST")
 	api.HandleFunc("/scan/results", s.handleGetScanResults).Methods("GET")
-	api.HandleFunc("/health", s.handleHealth).Methods("GET")
 
 	// Config endpoints
 	api.HandleFunc("/config/reload", s.handleReloadConfig).Methods("POST")
@@ -89,8 +98,8 @@ func (s *Server) setupRoutes() {
 	// Telemetry endpoints
 	api.HandleFunc("/telemetry/submit", s.handleSubmitTelemetry).Methods("POST")
 
-	// Serve static files (embedded web frontend)
-	s.router.PathPrefix("/").Handler(http.FileServer(http.Dir("./web")))
+	// Serve static files (embedded web frontend) - also protected
+	s.router.PathPrefix("/").Handler(authMiddleware(http.FileServer(http.Dir("./web"))))
 }
 
 // Router returns the configured router
