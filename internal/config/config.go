@@ -101,10 +101,36 @@ func applyEnvOverrides(cfg *models.Config) {
 			cfg.Telemetry.IntervalHours = interval
 		}
 	}
+
+	// Telemetry endpoint configuration from environment
+	// Format: TELEMETRY_ENDPOINT_URL=http://example.com:8081/api/ingest
+	if endpointURL := os.Getenv("TELEMETRY_ENDPOINT_URL"); endpointURL != "" {
+		endpoint := models.TelemetryEndpoint{
+			Name:    os.Getenv("TELEMETRY_ENDPOINT_NAME"),
+			URL:     endpointURL,
+			Enabled: true,
+		}
+		if endpoint.Name == "" {
+			endpoint.Name = "default"
+		}
+		// Optional API key
+		if apiKey := os.Getenv("TELEMETRY_ENDPOINT_API_KEY"); apiKey != "" {
+			endpoint.APIKey = apiKey
+		}
+
+		// Replace or append endpoint
+		if len(cfg.Telemetry.Endpoints) == 0 {
+			cfg.Telemetry.Endpoints = []models.TelemetryEndpoint{endpoint}
+		} else {
+			// Replace first endpoint if exists
+			cfg.Telemetry.Endpoints[0] = endpoint
+		}
+	}
 }
 
 // LoadOrDefault loads config from file or returns default config
-func LoadOrDefault(path string) *models.Config {
+// Returns a tuple of (config, wasLoadedFromFile)
+func LoadOrDefault(path string) (*models.Config, bool) {
 	cfg, err := Load(path)
 	if err != nil {
 		// Return default config with environment overrides applied
@@ -130,7 +156,21 @@ func LoadOrDefault(path string) *models.Config {
 		}
 		// Apply environment variable overrides to default config
 		applyEnvOverrides(defaultCfg)
-		return defaultCfg
+		return defaultCfg, false
 	}
-	return cfg
+	return cfg, true
+}
+
+// Save writes configuration to a YAML file
+func Save(path string, cfg *models.Config) error {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	return nil
 }

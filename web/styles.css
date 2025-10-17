@@ -819,3 +819,486 @@ tbody tr:hover {
 .btn-warning:hover {
     background-color: #e0a800;
 }
+
+/* Settings Page */
+.settings-section {
+    background: white;
+    padding: 25px;
+    border-radius: 10px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.settings-section h2 {
+    margin-bottom: 25px;
+    color: #333;
+    font-size: 1.8rem;
+}
+
+.settings-card {
+    background: #f8f9fa;
+    padding: 25px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    border: 1px solid #dee2e6;
+}
+
+.settings-card h3 {
+    margin-bottom: 15px;
+    color: #667eea;
+    font-size: 1.4rem;
+}
+
+.settings-description {
+    color: #666;
+    line-height: 1.6;
+    margin-bottom: 20px;
+}
+
+/* Settings Page - Telemetry Section */
+.telemetry-controls {
+    margin-top: 20px;
+}
+
+.checkbox-group {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    font-weight: 500;
+    color: #333;
+}
+
+.checkbox-input {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+    accent-color: #667eea;
+}
+
+.checkbox-text {
+    font-size: 1rem;
+    user-select: none;
+}
+
+.save-status-inline {
+    font-size: 14px;
+    font-weight: 500;
+    padding: 4px 12px;
+    border-radius: 4px;
+    transition: opacity 0.3s ease;
+}
+
+.save-status-inline.success {
+    color: #155724;
+    background: #d4edda;
+}
+
+.save-status-inline.error {
+    color: #721c24;
+    background: #f8d7da;
+}
+
+.save-status-inline.saving {
+    color: #856404;
+    background: #fff3cd;
+}
+
+.telemetry-options {
+    margin-top: 15px;
+}
+
+.frequency-group {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+    padding: 15px;
+    background: white;
+    border-radius: 6px;
+    border: 1px solid #dee2e6;
+}
+
+.frequency-label {
+    font-weight: 500;
+    color: #555;
+    white-space: nowrap;
+}
+
+.frequency-select {
+    flex: 1;
+    max-width: 250px;
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    font-size: 14px;
+    background-color: white;
+    cursor: pointer;
+}
+
+.frequency-select:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.telemetry-info {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    padding: 20px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    border: 1px solid #dee2e6;
+    margin-bottom: 15px;
+}
+
+.info-column h4 {
+    color: #333;
+    font-size: 0.95rem;
+    margin-bottom: 12px;
+    font-weight: 600;
+}
+
+.info-column ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.info-column li {
+    padding: 6px 0;
+    color: #555;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.telemetry-endpoint {
+    margin-top: 0;
+    padding: 12px;
+    background: white;
+    border-radius: 6px;
+    border: 1px solid #dee2e6;
+}
+
+.telemetry-endpoint code {
+    background: #f8f9fa;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #667eea;
+    border: 1px solid #dee2e6;
+}
+
+@media (max-width: 768px) {
+    .telemetry-info {
+        grid-template-columns: 1fr;
+        gap: 15px;
+    }
+
+    .checkbox-group {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+
+    .frequency-group {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .frequency-select {
+        max-width: 100%;
+        width: 100%;
+    }
+}
+
+.hosts-section {
+    background: white;
+    padding: 25px;
+    border-radius: 10px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.hosts-section h2 {
+    margin-bottom: 20px;
+    color: #333;
+    font-size: 1.5rem;
+}
+
+/* Settings Page - Updated Telemetry Section */
+.telemetry-controls {
+    margin-top: 20px;
+}
+
+.checkbox-group {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    font-weight: 500;
+    color: #333;
+}
+
+.checkbox-input {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+    accent-color: #667eea;
+}
+
+.checkbox-text {
+    font-size: 1rem;
+    user-select: none;
+}
+
+.save-status-inline {
+    font-size: 14px;
+    font-weight: 500;
+    padding: 4px 12px;
+    border-radius: 4px;
+    transition: opacity 0.3s ease;
+}
+
+.save-status-inline.success {
+    color: #155724;
+    background: #d4edda;
+}
+
+.save-status-inline.error {
+    color: #721c24;
+    background: #f8d7da;
+}
+
+.save-status-inline.saving {
+    color: #856404;
+    background: #fff3cd;
+}
+
+.frequency-group {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+    padding: 15px;
+    background: white;
+    border-radius: 6px;
+    border: 1px solid #dee2e6;
+}
+
+.frequency-label {
+    font-weight: 500;
+    color: #555;
+    white-space: nowrap;
+}
+
+.frequency-select {
+    flex: 1;
+    max-width: 250px;
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    font-size: 14px;
+    background-color: white;
+    cursor: pointer;
+}
+
+.frequency-select:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.telemetry-info {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    padding: 20px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    border: 1px solid #dee2e6;
+    margin-bottom: 15px;
+}
+
+.info-column h4 {
+    color: #333;
+    font-size: 0.95rem;
+    margin-bottom: 12px;
+    font-weight: 600;
+}
+
+.info-column ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.info-column li {
+    padding: 6px 0;
+    color: #555;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+@media (max-width: 768px) {
+    .telemetry-info {
+        grid-template-columns: 1fr;
+        gap: 15px;
+    }
+
+    .checkbox-group {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+
+    .frequency-group {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .frequency-select {
+        max-width: 100%;
+        width: 100%;
+    }
+}
+
+/* Custom Collectors Styles */
+.custom-collectors {
+    margin-top: 20px;
+}
+
+.add-collector-form {
+    padding: 20px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border: 1px solid #dee2e6;
+}
+
+.add-collector-form h4 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    color: #333;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+    margin-bottom: 15px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.form-group label {
+    margin-bottom: 5px;
+    font-weight: 500;
+    color: #495057;
+}
+
+.form-input {
+    padding: 8px 12px;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.form-input:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+}
+
+.collector-item {
+    padding: 15px;
+    background: white;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.collector-info {
+    flex: 1;
+}
+
+.collector-name {
+    font-weight: 600;
+    font-size: 16px;
+    color: #333;
+    margin-bottom: 5px;
+}
+
+.collector-url {
+    font-size: 14px;
+    color: #666;
+    font-family: monospace;
+}
+
+.collector-status {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+    margin-left: 10px;
+}
+
+.collector-status.enabled {
+    background: #d4edda;
+    color: #155724;
+}
+
+.collector-status.disabled {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+.collector-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.collector-actions button {
+    padding: 6px 12px;
+    font-size: 13px;
+}
+
+@media (max-width: 768px) {
+    .form-row {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+
+    .collector-item {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .collector-actions {
+        margin-top: 10px;
+        width: 100%;
+    }
+
+    .collector-actions button {
+        flex: 1;
+    }
+}

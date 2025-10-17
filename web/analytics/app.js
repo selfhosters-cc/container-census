@@ -776,3 +776,114 @@ function formatScanInterval(seconds) {
         return days + 'd';
     }
 }
+
+// Live Submission Tracking
+let lastEventID = 0;
+let pollInterval = null;
+let sessionEventCount = 0;
+
+async function pollRecentEvents() {
+    try {
+        const response = await fetch(`/api/stats/recent-events?since=${lastEventID}&limit=10`);
+        if (!response.ok) {
+            console.error('Failed to fetch recent events');
+            return;
+        }
+
+        const events = await response.json();
+
+        if (events.length > 0) {
+            // Update lastEventID to the highest ID received
+            const maxID = Math.max(...events.map(e => e.id));
+            if (maxID > lastEventID) {
+                lastEventID = maxID;
+
+                // Process the most recent event (they come in DESC order, so first is newest)
+                const newestEvent = events[0];
+                showSubmissionIndicator(newestEvent);
+
+                // Increment session counter
+                sessionEventCount += events.length;
+                updateEventCounter();
+
+                // Also refresh summary stats when new submissions arrive
+                loadSummary();
+            }
+        }
+    } catch (error) {
+        console.error('Error polling events:', error);
+    }
+}
+
+function updateEventCounter() {
+    const counter = document.getElementById('eventCounter');
+    const indicator = document.getElementById('liveIndicator');
+
+    if (sessionEventCount > 0) {
+        counter.textContent = sessionEventCount;
+        counter.style.display = 'inline-block';
+        indicator.classList.add('has-events');
+
+        // Highlight briefly
+        counter.classList.add('highlight');
+        setTimeout(() => counter.classList.remove('highlight'), 500);
+    }
+}
+
+function showSubmissionIndicator(event) {
+    const indicator = document.getElementById('liveIndicator');
+    const status = document.getElementById('liveStatus');
+    const dot = indicator.querySelector('.pulse-dot');
+    
+    // Remove existing classes
+    dot.classList.remove('new', 'update');
+    status.classList.remove('new', 'update');
+    
+    // Add appropriate class based on event type
+    const eventClass = event.event_type; // "new" or "update"
+    dot.classList.add(eventClass);
+    status.classList.add(eventClass);
+    
+    // Update status text
+    const eventLabel = event.event_type === 'new' ? 'New Install' : 'Update';
+    const installID = event.installation_id.substring(0, 8);
+    status.textContent = `${eventLabel}: ${installID}... (${event.containers} containers, ${event.hosts} hosts)`;
+    
+    // Clear the animation class after it completes (1s)
+    setTimeout(() => {
+        dot.classList.remove('new', 'update');
+        status.classList.remove('new', 'update');
+        status.textContent = 'Waiting...';
+    }, 3000);
+}
+
+function startLiveTracking() {
+    // Initial load to get the latest event ID
+    fetch('/api/stats/recent-events?limit=1')
+        .then(res => res.json())
+        .then(events => {
+            if (events.length > 0) {
+                lastEventID = events[0].id;
+            }
+            // Start polling every 5 seconds
+            pollInterval = setInterval(pollRecentEvents, 5000);
+        })
+        .catch(err => console.error('Failed to initialize live tracking:', err));
+}
+
+function stopLiveTracking() {
+    if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+    }
+}
+
+// Start live tracking when page loads
+document.addEventListener('DOMContentLoaded', () => {
+    startLiveTracking();
+});
+
+// Stop tracking when page unloads
+window.addEventListener('beforeunload', () => {
+    stopLiveTracking();
+});

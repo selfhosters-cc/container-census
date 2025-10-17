@@ -370,12 +370,15 @@ if [ "$PUSH_TO_REGISTRY" = true ]; then
     echo -e "Registry:  ${CYAN}$REGISTRY${NC}"
 fi
 echo ""
-read -p "Proceed with build? (y/N): " confirm
+read -p "Proceed with build? (Y/n): " confirm
 
-if [[ ! $confirm =~ ^[Yy]$ ]]; then
+if [[ $confirm =~ ^[Nn]$ ]]; then
     print_warning "Build cancelled"
     exit 0
 fi
+
+# Save version BEFORE building so it gets embedded in the image
+save_version "$NEW_VERSION"
 
 # Start building
 print_header "Starting Build Process"
@@ -415,10 +418,8 @@ if [ "$BUILD_TELEMETRY" = true ]; then
     fi
 fi
 
-# Save version if build succeeded
+# Wrap up build results
 if [ "$BUILD_SUCCESS" = true ]; then
-    save_version "$NEW_VERSION"
-
     print_header "Build Complete! 🎉"
 
     # Show built images (only visible for single-platform builds)

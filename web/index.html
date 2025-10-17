@@ -18,7 +18,6 @@
                 <button id="refreshBtn" class="btn btn-primary">Refresh</button>
                 <button id="scanBtn" class="btn btn-secondary">Trigger Scan</button>
                 <button id="submitTelemetryBtn" class="btn btn-info">Submit Telemetry</button>
-                <button id="reloadConfigBtn" class="btn btn-warning">Reload Config</button>
                 <label class="auto-refresh">
                     <input type="checkbox" id="autoRefresh" checked>
                     Auto-refresh (30s)
@@ -31,6 +30,7 @@
             <button class="tab-btn" data-tab="images">Images</button>
             <button class="tab-btn" data-tab="hosts">Hosts</button>
             <button class="tab-btn" data-tab="scans">Scan Results</button>
+            <button class="tab-btn" data-tab="settings">Settings</button>
         </nav>
 
         <div class="stats">
@@ -164,6 +164,112 @@
                             </tr>
                         </tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="settingsTab" class="tab-content">
+            <div class="settings-section">
+                <h2>Settings</h2>
+
+                <div class="settings-card">
+                    <h3>📊 Community Telemetry</h3>
+                    <p class="settings-description">
+                        Help improve Container Census by sharing anonymous usage statistics.
+                        No personal information, host names, or container names are collected.
+                        Only aggregate data like popular container images and version distribution.
+                    </p>
+                    <div class="alert alert-info" style="margin-bottom: 15px; padding: 12px; background: #e3f2fd; border: 1px solid #90caf9; border-radius: 4px; font-size: 14px;">
+                        <strong>ℹ️ Note:</strong> Ensure <code>./config</code> volume is mounted in docker-compose.yml for settings to persist across restarts.
+                    </div>
+
+                    <div class="telemetry-controls">
+                        <div class="checkbox-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="telemetryEnabled" class="checkbox-input">
+                                <span class="checkbox-text">Enable Community Telemetry</span>
+                            </label>
+                            <span id="telemetrySaveStatus" class="save-status-inline"></span>
+                        </div>
+
+                        <div id="telemetryOptions" class="telemetry-options" style="display: none;">
+                            <div class="frequency-group">
+                                <label for="telemetryFrequency" class="frequency-label">Submission Frequency:</label>
+                                <select id="telemetryFrequency" class="frequency-select">
+                                    <option value="24">Daily</option>
+                                    <option value="168" selected>Weekly (recommended)</option>
+                                    <option value="336">Every 2 weeks</option>
+                                    <option value="720">Monthly</option>
+                                </select>
+                            </div>
+
+                            <div class="telemetry-info">
+                                <div class="info-column">
+                                    <h4>✓ What gets shared:</h4>
+                                    <ul>
+                                        <li>Container Census version</li>
+                                        <li>Number of containers and hosts</li>
+                                        <li>Popular container images (names only)</li>
+                                        <li>Container registry distribution</li>
+                                        <li>Geographic region (timezone-based)</li>
+                                    </ul>
+                                </div>
+                                <div class="info-column">
+                                    <h4>✗ What is NOT shared:</h4>
+                                    <ul>
+                                        <li>Host names or IP addresses</li>
+                                        <li>Container names or env variables</li>
+                                        <li>Any credentials or secrets</li>
+                                        <li>Personal information</li>
+                                    </ul>
+                                </div>
+                            </div>
+
+                            <p class="telemetry-endpoint">
+                                <strong>Endpoint:</strong> <code>http://cc-telemetry.selfhosters.cc:9876/api/ingest</code>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-card">
+                    <h3>🔧 Custom Telemetry Collectors</h3>
+                    <p class="settings-description">
+                        Configure your own private telemetry collectors. These can be self-hosted instances
+                        or internal monitoring systems. Changes take effect immediately.
+                    </p>
+
+                    <div class="custom-collectors">
+                        <div id="collectorsList"></div>
+
+                        <div class="add-collector-form" style="margin-top: 20px;">
+                            <h4>Add New Collector</h4>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="collectorName">Name:</label>
+                                    <input type="text" id="collectorName" placeholder="e.g., My Private Collector" class="form-input">
+                                </div>
+                                <div class="form-group">
+                                    <label for="collectorURL">URL:</label>
+                                    <input type="url" id="collectorURL" placeholder="https://telemetry.example.com/api/ingest" class="form-input">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="collectorAPIKey">API Key (optional):</label>
+                                    <input type="text" id="collectorAPIKey" placeholder="Optional authentication key" class="form-input">
+                                </div>
+                                <div class="form-group checkbox-group" style="margin-top: 28px;">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="collectorEnabled" class="checkbox-input" checked>
+                                        <span class="checkbox-text">Enabled</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <button onclick="addCollector()" class="btn btn-primary">Add Collector</button>
+                            <span id="collectorSaveStatus" class="save-status-inline"></span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

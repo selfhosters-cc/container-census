@@ -19,7 +19,6 @@ function setupEventListeners() {
     document.getElementById('refreshBtn').addEventListener('click', loadData);
     document.getElementById('scanBtn').addEventListener('click', triggerScan);
     document.getElementById('submitTelemetryBtn').addEventListener('click', submitTelemetry);
-    document.getElementById('reloadConfigBtn').addEventListener('click', reloadConfig);
     document.getElementById('autoRefresh').addEventListener('change', handleAutoRefreshToggle);
     document.getElementById('searchInput').addEventListener('input', filterContainers);
     document.getElementById('hostFilter').addEventListener('change', filterContainers);
@@ -240,40 +239,6 @@ async function submitTelemetry() {
     } finally {
         btn.disabled = false;
         btn.textContent = 'Submit Telemetry';
-    }
-}
-
-async function reloadConfig() {
-    const btn = document.getElementById('reloadConfigBtn');
-    btn.disabled = true;
-    btn.textContent = 'Reloading...';
-
-    try {
-        const response = await fetch('/api/config/reload', { method: 'POST' });
-        if (response.ok) {
-            const data = await response.json();
-            let message = data.message;
-            if (data.added > 0 || data.updated > 0) {
-                message += ` - Added: ${data.added}, Updated: ${data.updated}`;
-            }
-            if (data.errors && data.errors.length > 0) {
-                showNotification(message + ' (with errors)', 'error');
-                console.error('Config reload errors:', data.errors);
-            } else {
-                showNotification(message, 'success');
-            }
-            // Refresh data after config reload
-            setTimeout(() => loadData(), 1000);
-        } else {
-            const error = await response.json();
-            showNotification('Failed to reload config: ' + error.error, 'error');
-        }
-    } catch (error) {
-        console.error('Error reloading config:', error);
-        showNotification('Failed to reload config', 'error');
-    } finally {
-        btn.disabled = false;
-        btn.textContent = 'Reload Config';
     }
 }
 
@@ -947,5 +912,282 @@ async function handleAddAgent(e) {
     } finally {
         saveBtn.disabled = false;
         saveBtn.textContent = 'Add Agent';
+    }
+}
+
+// Settings Management
+async function loadTelemetrySettings() {
+    try {
+        // Get current config to check telemetry status
+        const response = await fetch('/api/config');
+        const config = await response.json();
+
+        const enabled = config.telemetry?.enabled || false;
+        const intervalHours = config.telemetry?.interval_hours || 168;
+
+        // Check if community endpoint is enabled
+        const communityEndpoint = config.telemetry?.endpoints?.find(e => 
+            e.url === 'http://cc-telemetry.selfhosters.cc:9876/api/ingest'
+        );
+        const isCommunityEnabled = communityEndpoint && communityEndpoint.enabled;
+
+        document.getElementById('telemetryEnabled').checked = enabled && isCommunityEnabled;
+        document.getElementById('telemetryFrequency').value = intervalHours.toString();
+
+        // Show/hide options based on checkbox
+        toggleTelemetryOptions();
+    } catch (error) {
+        console.error('Failed to load telemetry settings:', error);
+    }
+}
+
+function toggleTelemetryOptions() {
+    const enabled = document.getElementById('telemetryEnabled').checked;
+    const options = document.getElementById('telemetryOptions');
+    options.style.display = enabled ? 'block' : 'none';
+}
+
+async function saveTelemetrySettings() {
+    const status = document.getElementById('telemetrySaveStatus');
+
+    const enabled = document.getElementById('telemetryEnabled').checked;
+    const intervalHours = parseInt(document.getElementById('telemetryFrequency').value);
+
+    // Show saving status
+    status.textContent = 'Saving...';
+    status.className = 'save-status-inline saving';
+
+    try {
+        const response = await fetch('/api/config/telemetry', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                enabled,
+                interval_hours: intervalHours,
+                community_endpoint: enabled
+            })
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            status.textContent = '✓ Saved';
+            status.className = 'save-status-inline success';
+
+            // Show notification
+            showNotification('Telemetry settings updated successfully', 'success');
+        } else{
+            const error = await response.json();
+            status.textContent = '✗ Failed: ' + (error.error || 'Unknown error');
+            status.className = 'save-status-inline error';
+        }
+    } catch (error) {
+        status.textContent = '✗ Error: ' + error.message;
+        status.className = 'save-status-inline error';
+    }
+
+    // Clear status after 5 seconds (longer to see the restart message)
+    setTimeout(() => {
+        status.textContent = '';
+        status.className = 'save-status-inline';
+    }, 5000);
+}
+
+// Initialize settings when switching to settings tab
+document.addEventListener('DOMContentLoaded', () => {
+    // Telemetry checkbox listener - toggle options display and auto-save
+    const telemetryCheckbox = document.getElementById('telemetryEnabled');
+    if (telemetryCheckbox) {
+        telemetryCheckbox.addEventListener('change', () => {
+            toggleTelemetryOptions();
+            saveTelemetrySettings();
+        });
+    }
+
+    // Telemetry frequency dropdown listener - auto-save on change
+    const telemetryFrequency = document.getElementById('telemetryFrequency');
+    if (telemetryFrequency) {
+        telemetryFrequency.addEventListener('change', saveTelemetrySettings);
+    }
+
+    // Load settings when settings tab is clicked
+    const settingsTab = document.querySelector('[data-tab="settings"]');
+    if (settingsTab) {
+        settingsTab.addEventListener('click', () => {
+            setTimeout(() => {
+                loadTelemetrySettings();
+                loadCollectors();
+            }, 100);
+        });
+    }
+});
+
+// Custom Collectors Management
+
+async function loadCollectors() {
+    try {
+        const response = await fetch('/api/config/telemetry/endpoints');
+        if (!response.ok) {
+            console.error('Failed to fetch collectors, status:', response.status);
+            throw new Error('Failed to load collectors');
+        }
+        const collectors = await response.json();
+        console.log('Loaded collectors:', collectors);
+        renderCollectors(collectors);
+    } catch (error) {
+        console.error('Error loading collectors:', error);
+        showNotification('Failed to load collectors', 'error');
+    }
+}
+
+function renderCollectors(collectors) {
+    const collectorsList = document.getElementById('collectorsList');
+
+    // Filter out the community collector
+    const customCollectors = collectors.filter(c => c.name !== 'community');
+
+    if (customCollectors.length === 0) {
+        collectorsList.innerHTML = '<p style="color: #666; font-style: italic;">No custom collectors configured.</p>';
+        return;
+    }
+
+    collectorsList.innerHTML = customCollectors.map(collector => `
+        <div class="collector-item">
+            <div class="collector-info">
+                <div class="collector-name">
+                    ${escapeHtml(collector.name)}
+                    <span class="collector-status ${collector.enabled ? 'enabled' : 'disabled'}">
+                        ${collector.enabled ? 'Enabled' : 'Disabled'}
+                    </span>
+                </div>
+                <div class="collector-url">${escapeHtml(collector.url)}</div>
+                ${collector.api_key ? '<div style="font-size: 12px; color: #999;">🔑 API Key configured</div>' : ''}
+            </div>
+            <div class="collector-actions">
+                <button class="btn btn-sm btn-secondary" onclick="toggleCollector('${escapeAttr(collector.name)}', ${!collector.enabled})">
+                    ${collector.enabled ? 'Disable' : 'Enable'}
+                </button>
+                <button class="btn btn-sm btn-danger" onclick="deleteCollector('${escapeAttr(collector.name)}')">
+                    Delete
+                </button>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function addCollector() {
+    const name = document.getElementById('collectorName').value.trim();
+    const url = document.getElementById('collectorURL').value.trim();
+    const apiKey = document.getElementById('collectorAPIKey').value.trim();
+    const enabled = document.getElementById('collectorEnabled').checked;
+    const status = document.getElementById('collectorSaveStatus');
+
+    // Validate inputs
+    if (!name) {
+        status.textContent = '✗ Name is required';
+        status.className = 'save-status-inline error';
+        setTimeout(() => status.textContent = '', 3000);
+        return;
+    }
+
+    if (!url) {
+        status.textContent = '✗ URL is required';
+        status.className = 'save-status-inline error';
+        setTimeout(() => status.textContent = '', 3000);
+        return;
+    }
+
+    // Show saving status
+    status.textContent = 'Saving...';
+    status.className = 'save-status-inline saving';
+
+    const endpoint = {
+        name,
+        url,
+        enabled
+    };
+
+    if (apiKey) {
+        endpoint.api_key = apiKey;
+    }
+
+    try {
+        const response = await fetch('/api/config/telemetry/endpoints', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(endpoint)
+        });
+
+        if (response.ok) {
+            status.textContent = '✓ Collector added successfully';
+            status.className = 'save-status-inline success';
+
+            // Clear form
+            document.getElementById('collectorName').value = '';
+            document.getElementById('collectorURL').value = '';
+            document.getElementById('collectorAPIKey').value = '';
+            document.getElementById('collectorEnabled').checked = true;
+
+            // Reload collectors list
+            await loadCollectors();
+
+            showNotification('Collector added successfully', 'success');
+        } else {
+            const error = await response.json();
+            status.textContent = '✗ Failed: ' + (error.error || 'Unknown error');
+            status.className = 'save-status-inline error';
+            showNotification('Failed to add collector', 'error');
+        }
+    } catch (error) {
+        status.textContent = '✗ Error: ' + error.message;
+        status.className = 'save-status-inline error';
+        showNotification('Error adding collector', 'error');
+    }
+
+    // Clear status after 3 seconds
+    setTimeout(() => {
+        status.textContent = '';
+        status.className = 'save-status-inline';
+    }, 3000);
+}
+
+async function toggleCollector(name, enabled) {
+    try {
+        const response = await fetch(`/api/config/telemetry/endpoints/${encodeURIComponent(name)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled })
+        });
+
+        if (response.ok) {
+            await loadCollectors();
+            showNotification(`Collector ${enabled ? 'enabled' : 'disabled'} successfully`, 'success');
+        } else {
+            const error = await response.json();
+            showNotification('Failed to update collector: ' + (error.error || 'Unknown error'), 'error');
+        }
+    } catch (error) {
+        showNotification('Error updating collector', 'error');
+    }
+}
+
+async function deleteCollector(name) {
+    if (!confirm(`Are you sure you want to delete the collector "${name}"?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/config/telemetry/endpoints/${encodeURIComponent(name)}`, {
+            method: 'DELETE'
+        });
+
+        if (response.ok) {
+            await loadCollectors();
+            showNotification('Collector deleted successfully', 'success');
+        } else {
+            const error = await response.json();
+            showNotification('Failed to delete collector: ' + (error.error || 'Unknown error'), 'error');
+        }
+    } catch (error) {
+        showNotification('Error deleting collector', 'error');
     }
 }

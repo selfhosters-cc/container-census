@@ -30,8 +30,12 @@ func main() {
 		configPath = "./config/config.yaml"
 	}
 
-	cfg := config.LoadOrDefault(configPath)
-	log.Printf("Configuration loaded (config path: %s)", configPath)
+	cfg, fromFile := config.LoadOrDefault(configPath)
+	if fromFile {
+		log.Printf("Configuration loaded from file: %s", configPath)
+	} else {
+		log.Printf("Using default configuration (config file not found, using environment variables)")
+	}
 
 	// Ensure database directory exists
 	dbDir := filepath.Dir(cfg.Database.Path)
@@ -64,7 +68,7 @@ func main() {
 		log.Println("Authentication disabled - UI and API are publicly accessible")
 	}
 
-	apiServer := api.New(db, scan, configPath, authConfig)
+	apiServer := api.New(db, scan, configPath, cfg.Scanner.IntervalSeconds, authConfig)
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 
 	server := &http.Server{
@@ -87,8 +91,9 @@ func main() {
 		if err != nil {
 			log.Printf("Warning: Failed to initialize telemetry: %v", err)
 		} else {
-			apiServer.SetTelemetryScheduler(telemetryScheduler)
-			go telemetryScheduler.Start(ctx)
+			telemetryCtx, telemetryCancel := context.WithCancel(ctx)
+			apiServer.SetTelemetryScheduler(telemetryScheduler, telemetryCtx, telemetryCancel)
+			go telemetryScheduler.Start(telemetryCtx)
 		}
 	}
 

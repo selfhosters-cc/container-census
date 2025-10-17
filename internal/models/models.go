@@ -133,10 +133,10 @@ type TelemetryConfig struct {
 
 // TelemetryEndpoint represents a telemetry submission endpoint
 type TelemetryEndpoint struct {
-	Name    string `yaml:"name"`
-	URL     string `yaml:"url"`
-	Enabled bool   `yaml:"enabled"`
-	APIKey  string `yaml:"api_key,omitempty"` // Optional API key for authenticated endpoints
+	Name    string `yaml:"name" json:"name"`
+	URL     string `yaml:"url" json:"url"`
+	Enabled bool   `yaml:"enabled" json:"enabled"`
+	APIKey  string `yaml:"api_key,omitempty" json:"api_key,omitempty"` // Optional API key for authenticated endpoints
 }
 
 // TelemetryReport contains anonymous usage statistics

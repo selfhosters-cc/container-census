@@ -262,3 +262,92 @@ footer p {
         font-size: 2em;
     }
 }
+
+/* Live Submission Indicator */
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.live-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 20px;
+    font-size: 13px;
+}
+
+.pulse-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #666;
+    position: relative;
+}
+
+.pulse-dot.new {
+    background: #4CAF50;
+    animation: pulse-new 1s ease-in-out;
+}
+
+.pulse-dot.update {
+    background: #2196F3;
+    animation: pulse-update 1s ease-in-out;
+}
+
+@keyframes pulse-new {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7);
+    }
+    50% {
+        box-shadow: 0 0 0 10px rgba(76, 175, 80, 0);
+    }
+}
+
+@keyframes pulse-update {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(33, 150, 243, 0.7);
+    }
+    50% {
+        box-shadow: 0 0 0 10px rgba(33, 150, 243, 0);
+    }
+}
+
+#liveStatus {
+    color: #ddd;
+    font-weight: 500;
+}
+
+#liveStatus.new {
+    color: #4CAF50;
+}
+
+#liveStatus.update {
+    color: #2196F3;
+}
+
+/* Event Counter Badge */
+.event-counter {
+    background: #667eea;
+    color: white;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 10px;
+    margin-left: 8px;
+    min-width: 18px;
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+.event-counter.highlight {
+    background: #4CAF50;
+    transform: scale(1.1);
+}
+
+.live-indicator.has-events {
+    background: rgba(76, 175, 80, 0.1);
+}

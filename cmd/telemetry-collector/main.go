@@ -33,6 +33,15 @@ type Server struct {
 	config Config
 }
 
+type SubmissionEvent struct {
+	ID             int       `json:"id"`
+	InstallationID string    `json:"installation_id"`
+	EventType      string    `json:"event_type"` // "new" or "update"
+	Timestamp      time.Time `json:"timestamp"`
+	Containers     int       `json:"containers"`
+	Hosts          int       `json:"hosts"`
+}
+
 func main() {
 	log.Printf("Starting Telemetry Collector Service v%s...", version.Get())
 
@@ -131,6 +140,7 @@ func (s *Server) setupRoutes() {
 	s.router.HandleFunc("/api/stats/activity-heatmap", s.handleActivityHeatmap).Methods("GET")
 	s.router.HandleFunc("/api/stats/scan-intervals", s.handleScanIntervals).Methods("GET")
 	s.router.HandleFunc("/api/stats/geography", s.handleGeography).Methods("GET")
+	s.router.HandleFunc("/api/stats/recent-events", s.handleRecentEvents).Methods("GET")
 
 	// Static files for analytics dashboard - protected if auth is enabled
 	if s.config.AuthEnabled {
@@ -208,6 +218,7 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 
 // Save telemetry to database
 func (s *Server) saveTelemetry(report models.TelemetryReport) error {
+	eventType := "new" // Will be set to "update" if we UPDATE existing record
 	// Serialize JSON fields
 	imageStatsJSON, err := json.Marshal(report.ImageStats)
 	if err != nil {
@@ -243,6 +254,7 @@ func (s *Server) saveTelemetry(report models.TelemetryReport) error {
 
 	if err == nil {
 		// Record exists within the last 7 days - UPDATE it
+		eventType = "update"
 		updateQuery := `
 			UPDATE telemetry_reports
 			SET version = $2,
@@ -359,6 +371,17 @@ func (s *Server) saveTelemetry(report models.TelemetryReport) error {
 		if err != nil {
 			log.Printf("Warning: Failed to insert image stat: %v", err)
 		}
+	}
+
+	// Log submission event for live tracking
+	eventQuery := `
+		INSERT INTO submission_events (installation_id, event_type, timestamp, containers, hosts)
+		VALUES ($1, $2, $3, $4, $5)
+	`
+	_, err = tx.Exec(eventQuery, report.InstallationID, eventType, report.Timestamp, report.TotalContainers, report.HostCount)
+	if err != nil {
+		log.Printf("Warning: Failed to log submission event: %v", err)
+		// Don't fail the whole transaction for this
 	}
 
 	// Commit the transaction
@@ -928,6 +951,19 @@ func initSchema(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_image_stats_image ON image_stats(image);
 	CREATE INDEX IF NOT EXISTS idx_image_stats_timestamp ON image_stats(timestamp);
 	CREATE INDEX IF NOT EXISTS idx_image_stats_installation_id ON image_stats(installation_id);
+
+	CREATE TABLE IF NOT EXISTS submission_events (
+		id SERIAL PRIMARY KEY,
+		installation_id VARCHAR(255) NOT NULL,
+		event_type VARCHAR(10) NOT NULL,
+		timestamp TIMESTAMPTZ NOT NULL,
+		containers INTEGER NOT NULL DEFAULT 0,
+		hosts INTEGER NOT NULL DEFAULT 0,
+		created_at TIMESTAMPTZ DEFAULT NOW()
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_submission_events_timestamp ON submission_events(timestamp DESC);
+	CREATE INDEX IF NOT EXISTS idx_submission_events_id ON submission_events(id DESC);
 	`
 
 	_, err := db.Exec(schema)
@@ -959,4 +995,58 @@ func initSchema(db *sql.DB) error {
 	}
 
 	return nil
+}
+
+// Get recent submission events
+func (s *Server) handleRecentEvents(w http.ResponseWriter, r *http.Request) {
+	limit := getQueryInt(r, "limit", 50)
+	since := getQueryInt(r, "since", 0) // ID of last seen event
+
+	var query string
+	var args []interface{}
+
+	if since > 0 {
+		// Get events newer than the specified ID
+		query = `
+			SELECT id, installation_id, event_type, timestamp, containers, hosts
+			FROM submission_events
+			WHERE id > $1
+			ORDER BY id DESC
+			LIMIT $2
+		`
+		args = []interface{}{since, limit}
+	} else {
+		// Get most recent events
+		query = `
+			SELECT id, installation_id, event_type, timestamp, containers, hosts
+			FROM submission_events
+			ORDER BY id DESC
+			LIMIT $1
+		`
+		args = []interface{}{limit}
+	}
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Query failed: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	var events []SubmissionEvent
+	for rows.Next() {
+		var event SubmissionEvent
+		if err := rows.Scan(&event.ID, &event.InstallationID, &event.EventType, &event.Timestamp, &event.Containers, &event.Hosts); err != nil {
+			log.Printf("Scan error: %v", err)
+			continue
+		}
+		events = append(events, event)
+	}
+
+	// Return empty array instead of null if no events
+	if events == nil {
+		events = []SubmissionEvent{}
+	}
+
+	respondJSON(w, http.StatusOK, events)
 }

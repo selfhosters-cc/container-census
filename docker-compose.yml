@@ -21,13 +21,33 @@ services:
     volumes:
       # Mount Docker socket for local scanning
       - /var/run/docker.sock:/var/run/docker.sock
-      # Mount configuration
-      - ./config/config.yaml:/app/config/config.yaml:ro
+      # Persist configuration (required for UI settings to persist)
+      - ./config:/app/config
       # Persist database
       - ./data:/app/data
 
     environment:
+      # Path to config file (used by UI for saving settings)
       CONFIG_PATH: /app/config/config.yaml
+
+      # Configuration via environment variables (config file not required)
+      DATABASE_PATH: /app/data/census.db
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8080
+      SCANNER_INTERVAL_SECONDS: ${SCANNER_INTERVAL_SECONDS:-300}
+
+      # Authentication (optional)
+      AUTH_ENABLED: ${AUTH_ENABLED:-false}
+      AUTH_USERNAME: ${AUTH_USERNAME:-admin}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:-changeme}
+
+      # Telemetry (optional)
+      TELEMETRY_ENABLED: ${TELEMETRY_ENABLED:-false}
+      TELEMETRY_INTERVAL_HOURS: ${TELEMETRY_INTERVAL_HOURS:-168}
+      TELEMETRY_ENDPOINT_NAME: ${TELEMETRY_ENDPOINT_NAME:-private}
+      TELEMETRY_ENDPOINT_URL: ${TELEMETRY_ENDPOINT_URL:-}
+      # TELEMETRY_ENDPOINT_API_KEY: optional-if-needed
+
       TZ: ${TZ:-UTC}
 
     healthcheck:
@@ -38,19 +58,55 @@ services:
       start_period: 10s
 
 # ==============================================================================
-# Quick Start
+# Quick Start (No Config File Required!)
 # ==============================================================================
 #
 # 1. Create .env file with Docker socket GID:
 #    echo "DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)" > .env
 #
-# 2. Create config file:
-#    cp config/config.yaml.example config/config.yaml
-#
-# 3. Start the server:
+# 2. Start the server:
 #    docker-compose up -d
 #
-# 4. Access the UI:
+# 3. Access the UI:
 #    Open http://localhost:8080
+#
+# That's it! The server will:
+#   - Use default configuration
+#   - Scan local Docker socket (unix:///var/run/docker.sock)
+#   - Store data in ./data/census.db
+#   - Run without authentication (use .env to enable)
+#   - You can add remote hosts via the UI
+#
+# ==============================================================================
+# Optional: Enable Authentication
+# ==============================================================================
+#
+# Add to your .env file:
+#   AUTH_ENABLED=true
+#   AUTH_USERNAME=admin
+#   AUTH_PASSWORD=your-secure-password
+#
+# ==============================================================================
+# Optional: Enable Telemetry
+# ==============================================================================
+#
+# Add to your .env file:
+#   TELEMETRY_ENABLED=true
+#   TELEMETRY_ENDPOINT_URL=http://your-collector:8081/api/ingest
+#
+# ==============================================================================
+# Advanced: Using Config File (Optional)
+# ==============================================================================
+#
+# If you prefer YAML configuration:
+#
+# 1. Create config file:
+#    cp config/config.yaml.example config/config.yaml
+#
+# 2. Uncomment the config volume mount in volumes section above
+#
+# 3. Uncomment CONFIG_PATH in environment section above
+#
+# Note: Environment variables override config file settings
 #
 # ==============================================================================
