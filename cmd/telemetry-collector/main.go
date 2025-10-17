@@ -25,6 +25,7 @@ type Config struct {
 	AuthEnabled  bool
 	AuthUsername string
 	AuthPassword string
+	StatsAPIKey  string // API key for stats endpoints
 }
 
 type Server struct {
@@ -52,12 +53,19 @@ func main() {
 		AuthEnabled:  getEnv("COLLECTOR_AUTH_ENABLED", "") == "true",
 		AuthUsername: getEnv("COLLECTOR_AUTH_USERNAME", ""),
 		AuthPassword: getEnv("COLLECTOR_AUTH_PASSWORD", ""),
+		StatsAPIKey:  getEnv("STATS_API_KEY", ""),
 	}
 
 	if config.AuthEnabled {
-		log.Printf("Authentication enabled for telemetry collector (user: %s)", config.AuthUsername)
+		log.Printf("Authentication enabled for telemetry collector dashboard (user: %s)", config.AuthUsername)
 	} else {
-		log.Println("Authentication disabled - telemetry collector is publicly accessible")
+		log.Println("Authentication disabled - telemetry collector dashboard is publicly accessible")
+	}
+
+	if config.StatsAPIKey != "" {
+		log.Println("API key authentication enabled for stats endpoints")
+	} else {
+		log.Println("Warning: No STATS_API_KEY set - stats API endpoints are publicly accessible")
 	}
 
 	// Connect to database
@@ -130,17 +138,17 @@ func (s *Server) setupRoutes() {
 	// Ingest endpoint - always public (anonymous telemetry submission)
 	s.router.HandleFunc("/api/ingest", s.handleIngest).Methods("POST")
 
-	// Stats API - always public (read-only analytics data)
-	s.router.HandleFunc("/api/stats/top-images", s.handleTopImages).Methods("GET")
-	s.router.HandleFunc("/api/stats/growth", s.handleGrowth).Methods("GET")
-	s.router.HandleFunc("/api/stats/installations", s.handleInstallations).Methods("GET")
-	s.router.HandleFunc("/api/stats/summary", s.handleSummary).Methods("GET")
-	s.router.HandleFunc("/api/stats/registries", s.handleRegistries).Methods("GET")
-	s.router.HandleFunc("/api/stats/versions", s.handleVersions).Methods("GET")
-	s.router.HandleFunc("/api/stats/activity-heatmap", s.handleActivityHeatmap).Methods("GET")
-	s.router.HandleFunc("/api/stats/scan-intervals", s.handleScanIntervals).Methods("GET")
-	s.router.HandleFunc("/api/stats/geography", s.handleGeography).Methods("GET")
-	s.router.HandleFunc("/api/stats/recent-events", s.handleRecentEvents).Methods("GET")
+	// Stats API - protected by API key (read-only analytics data)
+	s.router.HandleFunc("/api/stats/top-images", s.apiKeyMiddleware(s.handleTopImages)).Methods("GET", "OPTIONS")
+	s.router.HandleFunc("/api/stats/growth", s.apiKeyMiddleware(s.handleGrowth)).Methods("GET", "OPTIONS")
+	s.router.HandleFunc("/api/stats/installations", s.apiKeyMiddleware(s.handleInstallations)).Methods("GET", "OPTIONS")
+	s.router.HandleFunc("/api/stats/summary", s.apiKeyMiddleware(s.handleSummary)).Methods("GET", "OPTIONS")
+	s.router.HandleFunc("/api/stats/registries", s.apiKeyMiddleware(s.handleRegistries)).Methods("GET", "OPTIONS")
+	s.router.HandleFunc("/api/stats/versions", s.apiKeyMiddleware(s.handleVersions)).Methods("GET", "OPTIONS")
+	s.router.HandleFunc("/api/stats/activity-heatmap", s.apiKeyMiddleware(s.handleActivityHeatmap)).Methods("GET", "OPTIONS")
+	s.router.HandleFunc("/api/stats/scan-intervals", s.apiKeyMiddleware(s.handleScanIntervals)).Methods("GET", "OPTIONS")
+	s.router.HandleFunc("/api/stats/geography", s.apiKeyMiddleware(s.handleGeography)).Methods("GET", "OPTIONS")
+	s.router.HandleFunc("/api/stats/recent-events", s.apiKeyMiddleware(s.handleRecentEvents)).Methods("GET", "OPTIONS")
 
 	// Static files for analytics dashboard - protected if auth is enabled
 	if s.config.AuthEnabled {
@@ -165,6 +173,45 @@ func (s *Server) basicAuthMiddleware() func(http.Handler) http.Handler {
 
 			next.ServeHTTP(w, r)
 		})
+	}
+}
+
+// apiKeyMiddleware creates API key authentication middleware
+func (s *Server) apiKeyMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// If no API key is configured, allow all requests
+		if s.config.StatsAPIKey == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Check for API key in X-API-Key header
+		apiKey := r.Header.Get("X-API-Key")
+		if apiKey == "" {
+			// Also check Authorization header with Bearer token
+			authHeader := r.Header.Get("Authorization")
+			if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+				apiKey = authHeader[7:]
+			}
+		}
+
+		if apiKey != s.config.StatsAPIKey {
+			respondError(w, http.StatusUnauthorized, "Invalid or missing API key")
+			return
+		}
+
+		// Add CORS headers for cross-origin requests
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "X-API-Key, Authorization, Content-Type")
+
+		// Handle preflight requests
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next.ServeHTTP(w, r)
 	}
 }
 
@@ -401,18 +448,32 @@ func (s *Server) handleTopImages(w http.ResponseWriter, r *http.Request) {
 
 	// Deduplicate by using only the most recent image stats per installation
 	// This prevents counting the same installation multiple times
+	// Apply normalization at query time to handle both old and new data
 	query := `
-		SELECT image, SUM(count) as total_count
+		SELECT normalized_image, SUM(count) as total_count
 		FROM (
 			SELECT DISTINCT ON (installation_id, image)
 				installation_id,
-				image,
+				-- Normalize image names by removing registry prefixes
+				REGEXP_REPLACE(
+					REGEXP_REPLACE(
+						REGEXP_REPLACE(
+							REGEXP_REPLACE(
+								REGEXP_REPLACE(
+									REGEXP_REPLACE(
+										REGEXP_REPLACE(image, '^ghcr\.io/', ''),
+									'^docker\.io/', ''),
+								'^hub\.docker\.com/', ''),
+							'^registry\.hub\.docker\.com/', ''),
+						'^quay\.io/', ''),
+					'^gcr\.io/', ''),
+				'^mcr\.microsoft\.com/', '') as normalized_image,
 				count
 			FROM image_stats
 			WHERE timestamp >= $1
 			ORDER BY installation_id, image, timestamp DESC
 		) latest_stats
-		GROUP BY image
+		GROUP BY normalized_image
 		ORDER BY total_count DESC
 		LIMIT $2
 	`

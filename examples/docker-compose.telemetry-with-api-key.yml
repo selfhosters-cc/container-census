@@ -1,0 +1,98 @@
+# Docker Compose example for Container Census Telemetry Collector
+# with API key authentication enabled for stats endpoints
+#
+# This example shows how to deploy the telemetry collector with:
+# - PostgreSQL database
+# - API key protection for stats endpoints
+# - Optional Basic Auth for the web dashboard
+#
+# Usage:
+#   1. Copy this file to your deployment directory
+#   2. Generate a secure API key: openssl rand -hex 32
+#   3. Update the environment variables below
+#   4. Run: docker-compose -f docker-compose.telemetry-with-api-key.yml up -d
+
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: census-telemetry-db
+    environment:
+      POSTGRES_DB: telemetry
+      POSTGRES_USER: telemetry
+      POSTGRES_PASSWORD: change-this-password
+    volumes:
+      - telemetry-db-data:/var/lib/postgresql/data
+    networks:
+      - census-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telemetry"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  telemetry-collector:
+    image: ghcr.io/yourusername/telemetry-collector:latest
+    container_name: census-telemetry-collector
+    ports:
+      - "8081:8081"
+    environment:
+      # Database connection
+      DATABASE_URL: postgres://telemetry:change-this-password@postgres:5432/telemetry?sslmode=disable
+
+      # API settings
+      PORT: 8081
+
+      # IMPORTANT: API key for stats endpoints
+      # Generate with: openssl rand -hex 32
+      # This key will be required for all /api/stats/* requests
+      STATS_API_KEY: your-secure-api-key-here-change-this
+
+      # Optional: Basic Auth for web dashboard (UI only, not API)
+      # Leave blank to make dashboard publicly accessible
+      COLLECTOR_AUTH_ENABLED: "true"
+      COLLECTOR_AUTH_USERNAME: admin
+      COLLECTOR_AUTH_PASSWORD: change-this-password
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - census-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  telemetry-db-data:
+    driver: local
+
+networks:
+  census-network:
+    driver: bridge
+
+# Notes:
+#
+# 1. STATS_API_KEY protects all /api/stats/* endpoints
+#    - Required for Next.js integration and external API access
+#    - Not required for /api/ingest (telemetry submission remains public)
+#
+# 2. COLLECTOR_AUTH_* variables protect the web dashboard UI
+#    - Optional - set COLLECTOR_AUTH_ENABLED=false to disable
+#    - Separate from API key authentication
+#
+# 3. The /api/ingest endpoint is ALWAYS public (for anonymous telemetry)
+#
+# 4. To use with Next.js:
+#    - Set TELEMETRY_API_URL=http://your-server:8081 in Next.js .env.local
+#    - Set TELEMETRY_API_KEY=<same-as-STATS_API_KEY> in Next.js .env.local
+#
+# 5. Security recommendations:
+#    - Use a reverse proxy (nginx, Caddy) with HTTPS in production
+#    - Set firewall rules to limit access if needed
+#    - Rotate API keys periodically
+#    - Use strong passwords for database and Basic Auth
