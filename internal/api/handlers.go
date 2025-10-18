@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -168,6 +169,8 @@ func (s *Server) setupRoutes() {
 	// Telemetry endpoints
 	api.HandleFunc("/telemetry/submit", s.handleSubmitTelemetry).Methods("POST")
 	api.HandleFunc("/telemetry/status", s.handleGetTelemetryStatus).Methods("GET")
+	api.HandleFunc("/telemetry/reset-circuit-breaker/{name}", s.handleResetCircuitBreaker).Methods("POST")
+	api.HandleFunc("/telemetry/debug-enabled", s.handleGetDebugEnabled).Methods("GET")
 
 	// Serve static files (embedded web frontend) - also protected
 	s.router.PathPrefix("/").Handler(authMiddleware(http.FileServer(http.Dir("./web"))))
@@ -819,7 +822,7 @@ func (s *Server) handleUpdateTelemetry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update or add community endpoint
-	communityURL := "http://cc-telemetry.selfhosters.cc/api/ingest"
+	communityURL := "https://cc-telemetry.selfhosters.cc/api/ingest"
 	foundCommunity := false
 
 	for i := range cfg.Telemetry.Endpoints {
@@ -1050,4 +1053,49 @@ func (s *Server) handleGetTelemetryStatus(w http.ResponseWriter, r *http.Request
 	}
 
 	respondJSON(w, http.StatusOK, result)
+}
+
+// handleResetCircuitBreaker clears the failure status for a telemetry endpoint (resets circuit breaker)
+func (s *Server) handleResetCircuitBreaker(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name := vars["name"]
+
+	// Load current config to verify the endpoint exists
+	cfg, _ := config.LoadOrDefault(s.configPath)
+
+	// Check if endpoint exists in config
+	found := false
+	for _, ep := range cfg.Telemetry.Endpoints {
+		if ep.Name == name {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		respondError(w, http.StatusNotFound, "Telemetry endpoint not found")
+		return
+	}
+
+	// Clear the failure status
+	if err := s.db.ClearTelemetryFailure(name); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to reset circuit breaker: "+err.Error())
+		return
+	}
+
+	log.Printf("Circuit breaker reset for telemetry endpoint: %s", name)
+	respondJSON(w, http.StatusOK, map[string]string{
+		"message": "Circuit breaker reset successfully",
+		"endpoint": name,
+	})
+}
+
+// handleGetDebugEnabled checks if debug features are enabled via environment variable
+func (s *Server) handleGetDebugEnabled(w http.ResponseWriter, r *http.Request) {
+	// Check for ENABLE_TELEMETRY_DEBUG or TELEMETRY_DEBUG environment variable
+	debugEnabled := os.Getenv("ENABLE_TELEMETRY_DEBUG") == "true" || os.Getenv("TELEMETRY_DEBUG") == "true"
+
+	respondJSON(w, http.StatusOK, map[string]bool{
+		"debug_enabled": debugEnabled,
+	})
 }

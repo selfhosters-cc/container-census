@@ -555,3 +555,16 @@ func (db *DB) GetAllTelemetryStatuses() (map[string]*models.TelemetryEndpoint, e
 
 	return statuses, rows.Err()
 }
+
+// ClearTelemetryFailure clears the failure status for a telemetry endpoint (resets circuit breaker)
+func (db *DB) ClearTelemetryFailure(endpointName string) error {
+	now := time.Now().UTC()
+	_, err := db.conn.Exec(`
+		UPDATE telemetry_status
+		SET last_failure = NULL,
+		    last_failure_reason = NULL,
+		    updated_at = ?
+		WHERE endpoint_name = ?
+	`, now, endpointName)
+	return err
+}

@@ -651,12 +651,11 @@ func (s *Server) handleRegistries(w http.ResponseWriter, r *http.Request) {
 		SELECT
 			CASE
 				WHEN image LIKE 'ghcr.io/%' THEN 'GitHub Container Registry'
-				WHEN image LIKE 'docker.io/%' OR image LIKE 'hub.docker.com/%' THEN 'Docker Hub'
 				WHEN image LIKE 'quay.io/%' THEN 'Quay.io'
 				WHEN image LIKE 'gcr.io/%' THEN 'Google Container Registry'
 				WHEN image LIKE 'mcr.microsoft.com/%' THEN 'Microsoft Container Registry'
 				WHEN image LIKE '%/%.%/%' THEN 'Other Private Registry'
-				ELSE 'Docker Hub (default)'
+				ELSE 'Docker Hub'
 			END as registry,
 			SUM(count) as total_count
 		FROM (

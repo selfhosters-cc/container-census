@@ -1061,21 +1061,29 @@ document.addEventListener('DOMContentLoaded', () => {
 async function loadCollectors() {
     try {
         // Fetch telemetry status which includes all endpoints with status info
-        const response = await fetch('/api/telemetry/status');
-        if (!response.ok) {
-            console.error('Failed to fetch telemetry status, status:', response.status);
+        const [statusResponse, debugResponse] = await Promise.all([
+            fetch('/api/telemetry/status'),
+            fetch('/api/telemetry/debug-enabled')
+        ]);
+
+        if (!statusResponse.ok) {
+            console.error('Failed to fetch telemetry status, status:', statusResponse.status);
             throw new Error('Failed to load collectors');
         }
-        const collectors = await response.json();
+
+        const collectors = await statusResponse.json();
+        const debugInfo = debugResponse.ok ? await debugResponse.json() : { debug_enabled: false };
+
         console.log('Loaded collectors with status:', collectors);
-        renderCollectors(collectors);
+        console.log('Debug mode:', debugInfo.debug_enabled);
+        renderCollectors(collectors, debugInfo.debug_enabled);
     } catch (error) {
         console.error('Error loading collectors:', error);
         showNotification('Failed to load collectors', 'error');
     }
 }
 
-function renderCollectors(collectors) {
+function renderCollectors(collectors, debugEnabled = false) {
     const collectorsList = document.getElementById('collectorsList');
 
     // Separate community and custom collectors
@@ -1133,6 +1141,12 @@ function renderCollectors(collectors) {
                             `<div class="telemetry-error" title="${escapeHtml(communityCollector.last_failure_reason)}">
                                 ⚠ ${escapeHtml(communityCollector.last_failure_reason.substring(0, 80))}${communityCollector.last_failure_reason.length > 80 ? '...' : ''}
                             </div>` : ''}
+                        ${debugEnabled && lastFailure ?
+                            `<div style="margin-top: 10px;">
+                                <button class="btn btn-sm btn-secondary" onclick="resetCircuitBreaker('${escapeAttr(communityCollector.name)}')" style="font-size: 12px;">
+                                    🔧 Reset Circuit Breaker
+                                </button>
+                            </div>` : ''}
                     </div>
                     <div style="margin-left: 20px;">
                         <button class="btn ${communityCollector.enabled ? 'btn-warning' : 'btn-primary'}"
@@ -1175,6 +1189,12 @@ function renderCollectors(collectors) {
                     ${lastFailure && collector.last_failure_reason ?
                         `<div class="telemetry-error" title="${escapeHtml(collector.last_failure_reason)}">
                             ⚠ ${escapeHtml(collector.last_failure_reason.substring(0, 60))}${collector.last_failure_reason.length > 60 ? '...' : ''}
+                        </div>` : ''}
+                    ${debugEnabled && lastFailure ?
+                        `<div style="margin-top: 8px;">
+                            <button class="btn btn-sm" onclick="resetCircuitBreaker('${escapeAttr(collector.name)}')" style="font-size: 11px; padding: 4px 8px;">
+                                🔧 Reset Circuit Breaker
+                            </button>
                         </div>` : ''}
                 </div>
                 <div class="collector-actions">
@@ -1332,5 +1352,23 @@ async function deleteCollector(name) {
         }
     } catch (error) {
         showNotification('Error deleting collector', 'error');
+    }
+}
+
+async function resetCircuitBreaker(name) {
+    try {
+        const response = await fetch(`/api/telemetry/reset-circuit-breaker/${encodeURIComponent(name)}`, {
+            method: 'POST'
+        });
+
+        if (response.ok) {
+            await loadCollectors();
+            showNotification('Circuit breaker reset successfully - endpoint will retry on next submission', 'success');
+        } else {
+            const error = await response.json();
+            showNotification('Failed to reset circuit breaker: ' + (error.error || 'Unknown error'), 'error');
+        }
+    } catch (error) {
+        showNotification('Error resetting circuit breaker', 'error');
     }
 }
