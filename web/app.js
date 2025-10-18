@@ -349,7 +349,22 @@ async function removeContainer(hostId, containerId, containerName) {
 
                 if (response.ok) {
                     showNotification(`Container "${containerName}" removed successfully`, 'success');
-                    await loadContainers();
+
+                    // Immediately remove from local state
+                    containers = containers.filter(c => !(c.host_id === hostId && c.id === containerId));
+
+                    // Update UI immediately
+                    if (currentTab === 'containers') {
+                        filterContainers(); // This will re-render with current filters
+                    }
+
+                    // Update stats
+                    updateStats();
+
+                    // Trigger a scan in the background to sync the database
+                    fetch('/api/scan', { method: 'POST' }).catch(err =>
+                        console.log('Background scan triggered:', err)
+                    );
                 } else {
                     const error = await response.json();
                     showNotification(`Failed to remove container: ${error.error}`, 'error');
@@ -397,7 +412,24 @@ async function removeImage(hostId, imageId, imageName) {
 
                 if (response.ok) {
                     showNotification(`Image "${imageName}" removed successfully`, 'success');
-                    await loadImages();
+
+                    // Immediately remove from local state
+                    for (const [hostName, hostData] of Object.entries(images)) {
+                        if (hostData.host_id === hostId) {
+                            images[hostName].images = (hostData.images || []).filter(img => img.Id !== imageId);
+                            break;
+                        }
+                    }
+
+                    // Update UI immediately
+                    if (currentTab === 'images') {
+                        renderImages(images);
+                    }
+
+                    // Trigger a scan in the background to sync the database
+                    fetch('/api/scan', { method: 'POST' }).catch(err =>
+                        console.log('Background scan triggered:', err)
+                    );
                 } else {
                     const error = await response.json();
                     showNotification(`Failed to remove image: ${error.error}`, 'error');
