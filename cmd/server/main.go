@@ -85,8 +85,14 @@ func main() {
 
 	go runPeriodicScans(ctx, db, scan, cfg.Scanner.IntervalSeconds)
 
-	// Start telemetry scheduler if enabled
-	if cfg.Telemetry.Enabled {
+	// Start telemetry scheduler if any endpoint is enabled
+	enabledCount := 0
+	for _, ep := range cfg.Telemetry.Endpoints {
+		if ep.Enabled {
+			enabledCount++
+		}
+	}
+	if enabledCount > 0 {
 		telemetryScheduler, err := telemetry.NewScheduler(db, scan, cfg.Telemetry, cfg.Scanner.IntervalSeconds)
 		if err != nil {
 			log.Printf("Warning: Failed to initialize telemetry: %v", err)

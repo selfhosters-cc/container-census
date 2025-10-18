@@ -42,8 +42,16 @@ func NewScheduler(db *storage.DB, scanner *scanner.Scanner, config models.Teleme
 
 // Start begins the periodic telemetry collection
 func (s *Scheduler) Start(ctx context.Context) {
-	if !s.config.Enabled {
-		log.Println("Telemetry is disabled")
+	// Check if any endpoint is enabled
+	enabledCount := 0
+	for _, ep := range s.config.Endpoints {
+		if ep.Enabled {
+			enabledCount++
+		}
+	}
+
+	if enabledCount == 0 {
+		log.Println("Telemetry scheduler: no endpoints enabled")
 		return
 	}
 
@@ -53,7 +61,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 	}
 
 	interval := time.Duration(s.config.IntervalHours) * time.Hour
-	log.Printf("Telemetry enabled: reporting every %v to %d endpoint(s)", interval, len(s.config.Endpoints))
+	log.Printf("Telemetry scheduler: reporting every %v to %d enabled endpoint(s)", interval, enabledCount)
 
 	// Submit initial report after 5 minutes (to allow system to stabilize)
 	time.AfterFunc(5*time.Minute, func() {
@@ -108,8 +116,16 @@ func (s *Scheduler) collectAndSubmit(ctx context.Context) {
 
 // SubmitNow triggers an immediate telemetry collection and submission
 func (s *Scheduler) SubmitNow(ctx context.Context) error {
-	if !s.config.Enabled {
-		return fmt.Errorf("telemetry is not enabled")
+	// Check if any endpoint is enabled
+	enabledCount := 0
+	for _, ep := range s.config.Endpoints {
+		if ep.Enabled {
+			enabledCount++
+		}
+	}
+
+	if enabledCount == 0 {
+		return fmt.Errorf("no telemetry endpoints enabled")
 	}
 
 	log.Println("Manual telemetry submission triggered")

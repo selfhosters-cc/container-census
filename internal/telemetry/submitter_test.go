@@ -18,6 +18,7 @@ type mockDB struct {
 	successCalls      map[string]int
 	failureCalls      map[string]int
 	lastFailureReason map[string]string
+	lastFailureTime   map[string]time.Time
 }
 
 func newMockDB() *mockDB {
@@ -25,6 +26,7 @@ func newMockDB() *mockDB {
 		successCalls:      make(map[string]int),
 		failureCalls:      make(map[string]int),
 		lastFailureReason: make(map[string]string),
+		lastFailureTime:   make(map[string]time.Time),
 	}
 }
 
@@ -40,7 +42,24 @@ func (m *mockDB) SaveTelemetryFailure(endpointName, endpointURL, reason string) 
 	defer m.mu.Unlock()
 	m.failureCalls[endpointName]++
 	m.lastFailureReason[endpointName] = reason
+	m.lastFailureTime[endpointName] = time.Now()
 	return nil
+}
+
+func (m *mockDB) GetTelemetryStatus(endpointName string) (*models.TelemetryEndpoint, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Return status with last failure time if endpoint has failed
+	if failureTime, exists := m.lastFailureTime[endpointName]; exists {
+		return &models.TelemetryEndpoint{
+			Name:        endpointName,
+			LastFailure: &failureTime,
+		}, nil
+	}
+
+	// Return nil to indicate no status (allows endpoint to be tried)
+	return nil, nil
 }
 
 func (m *mockDB) getSuccessCount(name string) int {
@@ -558,5 +577,76 @@ func TestSubmitWithEmptyURL(t *testing.T) {
 
 	if db.getSuccessCount("empty-url") != 0 {
 		t.Errorf("Expected 0 success records for empty-url endpoint, got %d", db.getSuccessCount("empty-url"))
+	}
+}
+
+// TestCircuitBreaker tests that recently-failed endpoints are skipped
+func TestCircuitBreaker(t *testing.T) {
+	// Create test server
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusInternalServerError) // Always fail
+	}))
+	defer server.Close()
+
+	config := models.TelemetryConfig{
+		Enabled:       true,
+		IntervalHours: 24,
+		Endpoints: []models.TelemetryEndpoint{
+			{
+				Name:    "failing",
+				URL:     server.URL,
+				Enabled: true,
+			},
+		},
+	}
+
+	db := newMockDB()
+	submitter := NewSubmitter(config, db)
+	// Set circuit breaker to very short duration for testing
+	submitter.circuitBreakerWindow = 100 * time.Millisecond
+
+	report := &models.TelemetryReport{
+		InstallationID:  "test-install",
+		Version:         "1.0.0",
+		Timestamp:       time.Now(),
+		HostCount:       1,
+		TotalContainers: 5,
+	}
+
+	ctx := context.Background()
+
+	// First submission - should fail and record the failure
+	err := submitter.Submit(ctx, report)
+	if err == nil {
+		t.Error("Expected error on first submission")
+	}
+
+	firstCallCount := calls
+
+	// Second submission immediately after - should skip due to circuit breaker
+	err = submitter.Submit(ctx, report)
+	if err != nil {
+		t.Errorf("Expected no error when circuit breaker skips all endpoints, got: %v", err)
+	}
+
+	// Verify the endpoint was NOT called again (circuit breaker active)
+	if calls != firstCallCount {
+		t.Errorf("Expected circuit breaker to prevent retry, but endpoint was called again (calls: %d)", calls)
+	}
+
+	// Wait for circuit breaker window to expire
+	time.Sleep(150 * time.Millisecond)
+
+	// Third submission after window - should retry
+	err = submitter.Submit(ctx, report)
+	if err == nil {
+		t.Error("Expected error after circuit breaker expired")
+	}
+
+	// Verify the endpoint WAS called again (circuit breaker expired)
+	if calls == firstCallCount {
+		t.Error("Expected circuit breaker to expire and allow retry")
 	}
 }

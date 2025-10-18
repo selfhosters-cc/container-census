@@ -975,96 +975,74 @@ async function handleAddAgent(e) {
 // Settings Management
 async function loadTelemetrySettings() {
     try {
-        // Get current config to check telemetry status
+        // Get current config to load frequency
         const response = await fetch('/api/config');
         const config = await response.json();
 
-        const enabled = config.telemetry?.enabled || false;
-        const intervalHours = config.telemetry?.interval_hours || 168;
-
-        // Check if community endpoint is enabled
-        const communityEndpoint = config.telemetry?.endpoints?.find(e => 
-            e.url === 'http://cc-telemetry.selfhosters.cc:9876/api/ingest'
-        );
-        const isCommunityEnabled = communityEndpoint && communityEndpoint.enabled;
-
-        document.getElementById('telemetryEnabled').checked = enabled && isCommunityEnabled;
-        document.getElementById('telemetryFrequency').value = intervalHours.toString();
-
-        // Show/hide options based on checkbox
-        toggleTelemetryOptions();
+        // API returns IntervalHours (capital I) not interval_hours
+        const intervalHours = config.Telemetry?.IntervalHours || 168;
+        const dropdown = document.getElementById('telemetryFrequency');
+        if (dropdown) {
+            dropdown.value = intervalHours.toString();
+            console.log('Loaded telemetry frequency:', intervalHours, 'Set dropdown to:', dropdown.value);
+        }
     } catch (error) {
         console.error('Failed to load telemetry settings:', error);
     }
 }
 
-function toggleTelemetryOptions() {
-    const enabled = document.getElementById('telemetryEnabled').checked;
-    const options = document.getElementById('telemetryOptions');
-    options.style.display = enabled ? 'block' : 'none';
-}
-
-async function saveTelemetrySettings() {
-    const status = document.getElementById('telemetrySaveStatus');
-
-    const enabled = document.getElementById('telemetryEnabled').checked;
+async function saveTelemetryFrequency() {
+    const status = document.getElementById('frequencySaveStatus');
     const intervalHours = parseInt(document.getElementById('telemetryFrequency').value);
 
-    // Show saving status
     status.textContent = 'Saving...';
     status.className = 'save-status-inline saving';
 
     try {
+        // First, get current config to preserve community endpoint state
+        const configResponse = await fetch('/api/config');
+        const config = await configResponse.json();
+
+        const communityEndpoint = config.telemetry?.endpoints?.find(e =>
+            e.url === 'http://cc-telemetry.selfhosters.cc/api/ingest'
+        );
+        const isCommunityEnabled = communityEndpoint ? communityEndpoint.enabled : false;
+
+        // Now save with preserved community state
         const response = await fetch('/api/config/telemetry', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                enabled,
                 interval_hours: intervalHours,
-                community_endpoint: enabled
+                community_endpoint: isCommunityEnabled  // Preserve current state
             })
         });
 
         if (response.ok) {
-            const data = await response.json();
             status.textContent = '✓ Saved';
             status.className = 'save-status-inline success';
-
-            // Show notification
-            showNotification('Telemetry settings updated successfully', 'success');
-        } else{
+            showNotification('Submission frequency updated successfully', 'success');
+        } else {
             const error = await response.json();
-            status.textContent = '✗ Failed: ' + (error.error || 'Unknown error');
+            status.textContent = '✗ Failed';
             status.className = 'save-status-inline error';
         }
     } catch (error) {
-        status.textContent = '✗ Error: ' + error.message;
+        status.textContent = '✗ Error';
         status.className = 'save-status-inline error';
+        console.error('Failed to save frequency:', error);
     }
 
-    // Clear status after 5 seconds (longer to see the restart message)
     setTimeout(() => {
         status.textContent = '';
         status.className = 'save-status-inline';
-    }, 5000);
+    }, 3000);
 }
 
 // Initialize settings when switching to settings tab
 document.addEventListener('DOMContentLoaded', () => {
-    // Telemetry checkbox listener - toggle options display and auto-save
-    const telemetryCheckbox = document.getElementById('telemetryEnabled');
-    if (telemetryCheckbox) {
-        telemetryCheckbox.addEventListener('change', () => {
-            toggleTelemetryOptions();
-            saveTelemetrySettings();
-        });
-    }
-
-    // Telemetry frequency dropdown listener - auto-save on change
-    const telemetryFrequency = document.getElementById('telemetryFrequency');
-    if (telemetryFrequency) {
-        telemetryFrequency.addEventListener('change', saveTelemetrySettings);
-    }
+    // Load settings immediately on page load
+    loadTelemetrySettings();
 
     // Load settings when settings tab is clicked
     const settingsTab = document.querySelector('[data-tab="settings"]');
@@ -1114,23 +1092,63 @@ function renderCollectors(collectors) {
         const statusClass = getStatusClass(lastSuccess, lastFailure);
 
         html += `
-            <div class="collector-item community-collector">
-                <div class="collector-info">
-                    <div class="collector-name">
-                        <strong>Community Collector</strong>
-                        <span class="collector-status ${communityCollector.enabled ? 'enabled' : 'disabled'}">
-                            ${communityCollector.enabled ? 'Enabled' : 'Disabled'}
-                        </span>
+            <div class="collector-item community-collector" style="background: #f8f9fa; border: 2px solid #667eea; margin-bottom: 20px; padding: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                    <div style="flex: 1;">
+                        <div class="collector-name" style="font-size: 16px; margin-bottom: 8px;">
+                            <strong>📊 Community Collector</strong>
+                            <span class="collector-status ${communityCollector.enabled ? 'enabled' : 'disabled'}">
+                                ${communityCollector.enabled ? 'Enabled' : 'Disabled'}
+                            </span>
+                        </div>
+                        <div class="collector-url" style="margin: 8px 0; color: #666; font-size: 13px;">${escapeHtml(communityCollector.url)}</div>
+                        <p style="margin: 10px 0; color: #555; font-size: 14px;">
+                            Help improve Container Census by sharing anonymous usage statistics.
+                        </p>
+
+                        <div class="telemetry-info" style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 15px 0; padding: 15px; background: white; border-radius: 6px;">
+                            <div class="info-column">
+                                <h4 style="margin: 0 0 8px 0; font-size: 13px; color: #2e7d32;">✓ What gets shared:</h4>
+                                <ul style="margin: 0; padding-left: 20px; font-size: 12px; color: #666;">
+                                    <li>Container Census version</li>
+                                    <li>Number of containers and hosts</li>
+                                    <li>Popular container images (names only)</li>
+                                    <li>Container registry distribution</li>
+                                    <li>Geographic region (timezone-based)</li>
+                                </ul>
+                            </div>
+                            <div class="info-column">
+                                <h4 style="margin: 0 0 8px 0; font-size: 13px; color: #c62828;">✗ What is NOT shared:</h4>
+                                <ul style="margin: 0; padding-left: 20px; font-size: 12px; color: #666;">
+                                    <li>Host names or IP addresses</li>
+                                    <li>Container names or env variables</li>
+                                    <li>Any credentials or secrets</li>
+                                    <li>Personal information</li>
+                                </ul>
+                            </div>
+                        </div>
+
+                        ${statusText ? `<div class="telemetry-status ${statusClass}">${statusText}</div>` : ''}
+                        ${lastFailure && communityCollector.last_failure_reason ?
+                            `<div class="telemetry-error" title="${escapeHtml(communityCollector.last_failure_reason)}">
+                                ⚠ ${escapeHtml(communityCollector.last_failure_reason.substring(0, 80))}${communityCollector.last_failure_reason.length > 80 ? '...' : ''}
+                            </div>` : ''}
                     </div>
-                    <div class="collector-url">${escapeHtml(communityCollector.url)}</div>
-                    ${statusText ? `<div class="telemetry-status ${statusClass}">${statusText}</div>` : ''}
-                    ${lastFailure && communityCollector.last_failure_reason ?
-                        `<div class="telemetry-error" title="${escapeHtml(communityCollector.last_failure_reason)}">
-                            ⚠ ${escapeHtml(communityCollector.last_failure_reason.substring(0, 60))}${communityCollector.last_failure_reason.length > 60 ? '...' : ''}
-                        </div>` : ''}
+                    <div style="margin-left: 20px;">
+                        <button class="btn ${communityCollector.enabled ? 'btn-warning' : 'btn-primary'}"
+                                onclick="toggleCollector('${escapeAttr(communityCollector.name)}', ${!communityCollector.enabled})"
+                                style="min-width: 100px; white-space: nowrap;">
+                            ${communityCollector.enabled ? 'Disable' : 'Enable'}
+                        </button>
+                    </div>
                 </div>
             </div>
         `;
+    }
+
+    // Add separator before custom collectors
+    if (customCollectors.length > 0) {
+        html += '<h4 style="margin: 30px 0 15px 0; color: #666;">Custom Collectors</h4>';
     }
 
     if (customCollectors.length === 0) {

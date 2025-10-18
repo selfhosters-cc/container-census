@@ -17,12 +17,12 @@ A Go-based tool that scans configured Docker hosts and tracks all running contai
 - **Multiple connection types**: Agent (recommended), Unix socket, TCP, and SSH connections
 - **Anonymous telemetry** (optional): Track container usage trends with privacy-first design
 
-## Quick Start
-
-### Using Docker Compose (Recommended)
+# Quick Start
+![alt text](screenshots/server.png)
+## Using Docker Compose (Recommended)
 
 The easiest way to get started:
-#### Server (requried)
+### Server (requried)
 ```
   census-server:
     image: ghcr.io/selfhosters-cc/container-census:latest
@@ -63,7 +63,7 @@ The easiest way to get started:
       start_period: 10s
 ```
 
-#### Agent - to collect data from other hosts
+### Agent - to collect data from other hosts
 ```
   census-agent:
     image: ghcr.io/selfhosters-cc/census-agent:latest
@@ -95,7 +95,7 @@ The easiest way to get started:
 
 ```
 
-##### Configuration
+#### Configuration
 
 **Get the API token from logs:**
 
@@ -109,6 +109,77 @@ The easiest way to get started:
    - Click **"Test Connection"** then **"Add Agent"**
 
 ---
+### Telemetry & Analytics
+Container Census includes an optional telemetry system to track anonymous container usage statistics. This helps understand trends and allows you to monitor your own infrastructure.
+![alt text](screenshots/telemetry-1.png)
+![alt text](screenshots/telemetry-2.png)
+![alt text](screenshots/telemetry-3.png)
+
+#### Key Features
+
+- 📊 **Anonymous data collection** - No personal information collected
+- 🔄 **Multi-endpoint support** - Send to public and/or private analytics servers
+- 🏢 **Self-hosted analytics** - Run your own telemetry collector
+- 📈 **Visual dashboards** - Charts showing popular images, growth trends
+- 🔒 **Opt-in by default** - Disabled unless explicitly enabled
+- 🌐 **Server aggregation** - Server collects stats from all agents before submission
+
+#### Run Your Own Analytics Server
+```
+  telemetry-collector:
+    image: ghcr.io/selfhosters-cc/telemetry-collector:latest
+    container_name: telemetry-collector
+    restart: unless-stopped
+
+    ports:
+      - "8081:8081"
+
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@telemetry-postgres:5432/telemetry?sslmode=disable
+      PORT: 8081
+      #API_KEY: ${TELEMETRY_API_KEY:-}
+      TZ: ${TZ:-UTC}
+      COLLECTOR_AUTH_ENABLED: true
+      COLLECTOR_AUTH_USERNAME: collector_user
+      COLLECTOR_AUTH_PASSWORD: collector_secure_password
+
+    depends_on:
+      telemetry-postgres:
+        condition: service_healthy
+
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  telemetry-postgres:
+    image: postgres:15-alpine
+    container_name: telemetry-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: telemetry
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      PGDATA: /var/lib/postgresql/data/pgdata
+
+    volumes:
+      - ./telemetry-db:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+```
+
+```bash
+# Access dashboard
+open http://localhost:8081
+```
 
 ## API Endpoints for the Server
 
@@ -157,55 +228,7 @@ Use the interactive `build-all-images.sh` script in the scripts folder.
 3. Implement API handlers in `internal/api/handlers.go`
 4. Update frontend in `web/` directory
 
-## Telemetry & Analytics
 
-Container Census includes an optional telemetry system to track anonymous container usage statistics. This helps understand trends and allows you to monitor your own infrastructure.
-
-### Key Features
-
-- 📊 **Anonymous data collection** - No personal information collected
-- 🔄 **Multi-endpoint support** - Send to public and/or private analytics servers
-- 🏢 **Self-hosted analytics** - Run your own telemetry collector
-- 📈 **Visual dashboards** - Charts showing popular images, growth trends
-- 🔒 **Opt-in by default** - Disabled unless explicitly enabled
-- 🌐 **Server aggregation** - Server collects stats from all agents before submission
-
-### Run Your Own Analytics Server
-```
-  telemetry-collector:
-    image: ghcr.io/selfhosters-cc/telemetry-collector:latest
-    container_name: telemetry-collector
-    restart: unless-stopped
-
-    ports:
-      - "8081:8081"
-
-    environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@telemetry-postgres:5432/telemetry?sslmode=disable
-      PORT: 8081
-      #API_KEY: ${TELEMETRY_API_KEY:-}
-      TZ: ${TZ:-UTC}
-      COLLECTOR_AUTH_ENABLED: true
-      COLLECTOR_AUTH_USERNAME: collector_user
-      COLLECTOR_AUTH_PASSWORD: collector_secure_password
-
-    depends_on:
-      telemetry-postgres:
-        condition: service_healthy
-
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8081/health"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 10s
-
-```
-
-```bash
-# Access dashboard
-open http://localhost:8081
-```
 
 ## Troubleshooting
 

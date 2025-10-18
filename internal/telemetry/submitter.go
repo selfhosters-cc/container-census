@@ -15,44 +15,64 @@ import (
 
 // Submitter handles sending telemetry to multiple endpoints
 type Submitter struct {
-	config     models.TelemetryConfig
-	httpClient *http.Client
-	db         interface {
+	config         models.TelemetryConfig
+	httpClient     *http.Client
+	db             interface {
 		SaveTelemetrySuccess(endpointName, endpointURL string) error
 		SaveTelemetryFailure(endpointName, endpointURL, reason string) error
+		GetTelemetryStatus(endpointName string) (*models.TelemetryEndpoint, error)
 	}
+	circuitBreakerWindow time.Duration // Don't retry failed endpoints within this window
 }
 
 // NewSubmitter creates a new telemetry submitter
 func NewSubmitter(config models.TelemetryConfig, db interface {
 	SaveTelemetrySuccess(endpointName, endpointURL string) error
 	SaveTelemetryFailure(endpointName, endpointURL, reason string) error
+	GetTelemetryStatus(endpointName string) (*models.TelemetryEndpoint, error)
 }) *Submitter {
 	return &Submitter{
 		config: config,
 		db:     db,
 		httpClient: &http.Client{
-			Timeout: 5 * time.Second,
+			Timeout: 15 * time.Second, // Increased from 5s to handle slow networks
 		},
+		circuitBreakerWindow: 5 * time.Minute, // Don't retry failed endpoints for 5 minutes
 	}
 }
 
 // Submit sends telemetry report to all configured endpoints in parallel
 func (s *Submitter) Submit(ctx context.Context, report *models.TelemetryReport) error {
-	if !s.config.Enabled {
-		return nil
-	}
-
-	// Filter enabled endpoints
+	// Filter enabled endpoints and check circuit breaker
 	var endpoints []models.TelemetryEndpoint
 	for _, ep := range s.config.Endpoints {
-		if ep.Enabled && ep.URL != "" {
-			endpoints = append(endpoints, ep)
+		if !ep.Enabled || ep.URL == "" {
+			continue
 		}
+
+		// Check circuit breaker: skip if recently failed
+		if s.db != nil {
+			status, err := s.db.GetTelemetryStatus(ep.Name)
+			if err == nil && status != nil && status.LastFailure != nil {
+				// If last failure was recent and there's no success after it, skip
+				if status.LastSuccess == nil || status.LastFailure.After(*status.LastSuccess) {
+					timeSinceFailure := time.Since(*status.LastFailure)
+					if timeSinceFailure < s.circuitBreakerWindow {
+						log.Printf("Skipping %s (circuit breaker: failed %v ago, retry in %v)",
+							ep.Name,
+							timeSinceFailure.Round(time.Second),
+							(s.circuitBreakerWindow - timeSinceFailure).Round(time.Second))
+						continue
+					}
+				}
+			}
+		}
+
+		endpoints = append(endpoints, ep)
 	}
 
 	if len(endpoints) == 0 {
-		log.Println("No telemetry endpoints configured")
+		log.Println("No telemetry endpoints available (all disabled or circuit breaker active)")
 		return nil
 	}
 
@@ -112,11 +132,11 @@ func (s *Submitter) submitToEndpoint(ctx context.Context, endpoint models.Teleme
 	}
 
 	// Retry logic with exponential backoff
-	maxRetries := 3
+	maxRetries := 2 // Reduced from 3 to fail faster
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
-			// Exponential backoff: 2s, 4s, 8s
-			backoff := time.Duration(1<<attempt) * 2 * time.Second
+			// Exponential backoff: 5s, 10s
+			backoff := time.Duration(1<<attempt) * 5 * time.Second
 			select {
 			case <-time.After(backoff):
 			case <-ctx.Done():

@@ -126,7 +126,6 @@ type AgentResponse struct {
 
 // TelemetryConfig contains telemetry settings
 type TelemetryConfig struct {
-	Enabled       bool               `yaml:"enabled"`
 	IntervalHours int                `yaml:"interval_hours"`
 	Endpoints     []TelemetryEndpoint `yaml:"endpoints"`
 }

@@ -173,71 +173,26 @@
                 <h2>Settings</h2>
 
                 <div class="settings-card">
-                    <h3>📊 Community Telemetry</h3>
+                    <h3>📊 Telemetry Collectors</h3>
                     <p class="settings-description">
-                        Help improve Container Census by sharing anonymous usage statistics.
-                        No personal information, host names, or container names are collected.
-                        Only aggregate data like popular container images and version distribution.
+                        Configure telemetry endpoints to track anonymous container usage statistics.
+                        You can enable the community collector to help improve Container Census, or add your own private collectors.
                     </p>
                     <div class="alert alert-info" style="margin-bottom: 15px; padding: 12px; background: #e3f2fd; border: 1px solid #90caf9; border-radius: 4px; font-size: 14px;">
                         <strong>ℹ️ Note:</strong> Ensure <code>./config</code> volume is mounted in docker-compose.yml for settings to persist across restarts.
                     </div>
 
-                    <div class="telemetry-controls">
-                        <div class="checkbox-group">
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="telemetryEnabled" class="checkbox-input">
-                                <span class="checkbox-text">Enable Community Telemetry</span>
-                            </label>
-                            <span id="telemetrySaveStatus" class="save-status-inline"></span>
-                        </div>
-
-                        <div id="telemetryOptions" class="telemetry-options" style="display: none;">
-                            <div class="frequency-group">
-                                <label for="telemetryFrequency" class="frequency-label">Submission Frequency:</label>
-                                <select id="telemetryFrequency" class="frequency-select">
-                                    <option value="24">Daily</option>
-                                    <option value="168" selected>Weekly (recommended)</option>
-                                    <option value="336">Every 2 weeks</option>
-                                    <option value="720">Monthly</option>
-                                </select>
-                            </div>
-
-                            <div class="telemetry-info">
-                                <div class="info-column">
-                                    <h4>✓ What gets shared:</h4>
-                                    <ul>
-                                        <li>Container Census version</li>
-                                        <li>Number of containers and hosts</li>
-                                        <li>Popular container images (names only)</li>
-                                        <li>Container registry distribution</li>
-                                        <li>Geographic region (timezone-based)</li>
-                                    </ul>
-                                </div>
-                                <div class="info-column">
-                                    <h4>✗ What is NOT shared:</h4>
-                                    <ul>
-                                        <li>Host names or IP addresses</li>
-                                        <li>Container names or env variables</li>
-                                        <li>Any credentials or secrets</li>
-                                        <li>Personal information</li>
-                                    </ul>
-                                </div>
-                            </div>
-
-                            <p class="telemetry-endpoint">
-                                <strong>Endpoint:</strong> <code>http://cc-telemetry.selfhosters.cc:9876/api/ingest</code>
-                            </p>
-                        </div>
+                    <div class="frequency-group" style="margin-bottom: 20px;">
+                        <label for="telemetryFrequency" class="frequency-label">Submission Frequency (applies to all collectors):</label>
+                        <select id="telemetryFrequency" class="frequency-select">
+                            <option value="24">Daily</option>
+                            <option value="168">Weekly (recommended)</option>
+                            <option value="336">Every 2 weeks</option>
+                            <option value="720">Monthly</option>
+                        </select>
+                        <button onclick="saveTelemetryFrequency()" class="btn btn-primary" style="margin-left: 10px;">Save Frequency</button>
+                        <span id="frequencySaveStatus" class="save-status-inline"></span>
                     </div>
-                </div>
-
-                <div class="settings-card">
-                    <h3>🔧 Custom Telemetry Collectors</h3>
-                    <p class="settings-description">
-                        Configure your own private telemetry collectors. These can be self-hosted instances
-                        or internal monitoring systems. Changes take effect immediately.
-                    </p>
 
                     <div class="custom-collectors">
                         <div id="collectorsList"></div>

@@ -89,11 +89,6 @@ func applyEnvOverrides(cfg *models.Config) {
 		}
 	}
 
-	// Telemetry enabled override
-	if telemetryStr := os.Getenv("TELEMETRY_ENABLED"); telemetryStr != "" {
-		cfg.Telemetry.Enabled = telemetryStr == "true" || telemetryStr == "1" || telemetryStr == "yes"
-	}
-
 	// Telemetry interval override
 	if intervalStr := os.Getenv("TELEMETRY_INTERVAL_HOURS"); intervalStr != "" {
 		var interval int

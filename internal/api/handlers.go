@@ -95,12 +95,6 @@ func (s *Server) RestartTelemetry() error {
 		return nil
 	}
 
-	// Check if telemetry is globally enabled
-	if !cfg.Telemetry.Enabled {
-		log.Println("Telemetry globally disabled, not starting scheduler")
-		return nil
-	}
-
 	// Create new scheduler
 	newScheduler, err := telemetry.NewScheduler(s.db, s.scanner, cfg.Telemetry, s.scanInterval)
 	if err != nil {
@@ -768,17 +762,6 @@ func (s *Server) handleSubmitTelemetry(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Endpoints are configured - ensure telemetry is enabled and try to start scheduler
-		if !cfg.Telemetry.Enabled {
-			// Auto-enable telemetry if endpoints are configured
-			cfg.Telemetry.Enabled = true
-			if err := config.Save(s.configPath, cfg); err != nil {
-				log.Printf("Warning: Failed to auto-enable telemetry: %v", err)
-			} else {
-				log.Println("Auto-enabled telemetry because endpoints are configured")
-			}
-		}
-
 		// Scheduler not running - try to start it
 		log.Printf("Telemetry scheduler not running, attempting to start with %d enabled endpoint(s)...", enabledCount)
 		if err := s.RestartTelemetry(); err != nil {
@@ -830,14 +813,13 @@ func (s *Server) handleUpdateTelemetry(w http.ResponseWriter, r *http.Request) {
 	// Load current config
 	cfg, _ := config.LoadOrDefault(s.configPath)
 
-	// Update telemetry settings
-	cfg.Telemetry.Enabled = req.Enabled
+	// Update interval
 	if req.IntervalHours > 0 {
 		cfg.Telemetry.IntervalHours = req.IntervalHours
 	}
 
 	// Update or add community endpoint
-	communityURL := "http://cc-telemetry.selfhosters.cc:9876/api/ingest"
+	communityURL := "http://cc-telemetry.selfhosters.cc/api/ingest"
 	foundCommunity := false
 
 	for i := range cfg.Telemetry.Endpoints {
@@ -864,8 +846,8 @@ func (s *Server) handleUpdateTelemetry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Log the update for server logs
-	log.Printf("Telemetry settings updated - enabled: %v, interval: %dh, community: %v",
-		req.Enabled, cfg.Telemetry.IntervalHours, req.CommunityEndpoint)
+	log.Printf("Telemetry settings updated - interval: %dh, community: %v",
+		cfg.Telemetry.IntervalHours, req.CommunityEndpoint)
 
 	// Restart telemetry scheduler to apply changes immediately
 	if err := s.RestartTelemetry(); err != nil {
@@ -935,7 +917,7 @@ func (s *Server) handleAddTelemetryEndpoint(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	log.Printf("Telemetry endpoint added: %s (%s)", endpoint.Name, endpoint.URL)
+	log.Printf("Telemetry endpoint added: %s (%s) enabled: %v", endpoint.Name, endpoint.URL, endpoint.Enabled)
 
 	// Restart telemetry scheduler to apply changes immediately
 	if err := s.RestartTelemetry(); err != nil {
@@ -965,11 +947,8 @@ func (s *Server) handleUpdateTelemetryEndpoint(w http.ResponseWriter, r *http.Re
 	found := false
 	for i := range cfg.Telemetry.Endpoints {
 		if cfg.Telemetry.Endpoints[i].Name == name {
-			// Preserve the name if not provided in update
-			if updatedEndpoint.Name == "" {
-				updatedEndpoint.Name = name
-			}
-			cfg.Telemetry.Endpoints[i] = updatedEndpoint
+			// ONLY update the enabled field - don't touch anything else
+			cfg.Telemetry.Endpoints[i].Enabled = updatedEndpoint.Enabled
 			found = true
 			break
 		}
@@ -986,7 +965,7 @@ func (s *Server) handleUpdateTelemetryEndpoint(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	log.Printf("Telemetry endpoint updated: %s", name)
+	log.Printf("Telemetry endpoint updated: %s (enabled: %v)", name, updatedEndpoint.Enabled)
 
 	// Restart telemetry scheduler to apply changes immediately
 	if err := s.RestartTelemetry(); err != nil {
