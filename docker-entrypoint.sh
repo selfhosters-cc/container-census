@@ -52,7 +52,7 @@ telemetry:
   endpoints:
     # Community telemetry endpoint (optional - helps improve container-census)
     - name: community
-      url: http://cc-telemetry.selfhosters.cc:9876/api/ingest
+      url: https://cc-telemetry.selfhosters.cc/api/ingest
       enabled: false  # Set to true to participate
       api_key: ""  # No authentication required for community endpoint
 

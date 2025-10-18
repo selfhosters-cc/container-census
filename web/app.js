@@ -1004,7 +1004,7 @@ async function saveTelemetryFrequency() {
         const config = await configResponse.json();
 
         const communityEndpoint = config.telemetry?.endpoints?.find(e =>
-            e.url === 'http://cc-telemetry.selfhosters.cc/api/ingest'
+            e.url === 'https://cc-telemetry.selfhosters.cc/api/ingest'
         );
         const isCommunityEnabled = communityEndpoint ? communityEndpoint.enabled : false;
 
