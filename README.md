@@ -43,7 +43,6 @@ The easiest way to get started:
 
       # Optional: Mount custom config file
       # Uncomment to use a custom configuration
-      #- ./census/config.yaml:/app/config/config.yaml
       - ./census/config:/app/config
 
     environment:
