@@ -133,10 +133,13 @@ type TelemetryConfig struct {
 
 // TelemetryEndpoint represents a telemetry submission endpoint
 type TelemetryEndpoint struct {
-	Name    string `yaml:"name" json:"name"`
-	URL     string `yaml:"url" json:"url"`
-	Enabled bool   `yaml:"enabled" json:"enabled"`
-	APIKey  string `yaml:"api_key,omitempty" json:"api_key,omitempty"` // Optional API key for authenticated endpoints
+	Name              string     `yaml:"name" json:"name"`
+	URL               string     `yaml:"url" json:"url"`
+	Enabled           bool       `yaml:"enabled" json:"enabled"`
+	APIKey            string     `yaml:"api_key,omitempty" json:"api_key,omitempty"` // Optional API key for authenticated endpoints
+	LastSuccess       *time.Time `yaml:"-" json:"last_success,omitempty"`             // Last successful submission
+	LastFailure       *time.Time `yaml:"-" json:"last_failure,omitempty"`             // Last failed submission
+	LastFailureReason string     `yaml:"-" json:"last_failure_reason,omitempty"`      // Error message from last failure
 }
 
 // TelemetryReport contains anonymous usage statistics

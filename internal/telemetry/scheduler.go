@@ -28,7 +28,7 @@ func NewScheduler(db *storage.DB, scanner *scanner.Scanner, config models.Teleme
 		return nil, err
 	}
 
-	submitter := NewSubmitter(config)
+	submitter := NewSubmitter(config, db)
 
 	return &Scheduler{
 		collector: collector,

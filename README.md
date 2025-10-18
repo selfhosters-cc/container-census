@@ -22,50 +22,95 @@ A Go-based tool that scans configured Docker hosts and tracks all running contai
 ### Using Docker Compose (Recommended)
 
 The easiest way to get started:
+#### Server (requried)
+```
+  census-server:
+    image: ghcr.io/selfhosters-cc/container-census:latest
+    container_name: census-server
+    restart: unless-stopped
+    group_add:
+      - "${DOCKER_GID:-999}"
 
-# 1. Grab docker-compose.yml
-Create .env file with Docker socket GID
-echo "DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)" >> .env
+    ports:
+      - "8080:8080"
 
-# 2. Create and modify the config file (optional)
-`cp config/config.yaml.example config/config.yaml`
+    volumes:
+      # Docker socket for scanning local containers
+      - /var/run/docker.sock:/var/run/docker.sock
 
-# 3. Start the server
-`docker-compose up -d`
+      # Persistent data directory
+      - ./census/server:/app/data
 
-# 4. Access the UI
-`open http://localhost:8080`
+      # Optional: Mount custom config file
+      # Uncomment to use a custom configuration
+      #- ./census/config.yaml:/app/config/config.yaml
+      - ./census/config:/app/config
 
-## Configuration
+    environment:
+      # Optional: Override config path
+      # CONFIG_PATH: /app/config/config.yaml
+      AUTH_ENABLED: false
+      AUTH_USERNAME: your_username
+      AUTH_PASSWORD: your_secure_password
+      # Timezone
+      TZ: ${TZ:-UTC}
 
-### Option 1: Agent-Based Hosts (Recommended)
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+```
 
-The easiest way to add remote hosts is using the **lightweight agent**:
+#### Agent - to collect data from other hosts
+```
+  census-agent:
+    image: ghcr.io/selfhosters-cc/census-agent:latest
+    container_name: census-agent
+    restart: unless-stopped
 
-1. **Deploy agent on remote host:**
-Grab docker-compose.agent.example.yml
+    # Runtime Docker socket GID configuration
+    group_add:
+      - "${DOCKER_GID:-999}"
 
-2. **Get the API token from logs:**
+    ports:
+      - "9876:9876"
+
+    volumes:
+      # Docker socket for local container management
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    environment:
+      API_TOKEN: ${AGENT_API_TOKEN:-}
+      PORT: 9876
+      TZ: ${TZ:-UTC}
+
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9876/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+```
+
+##### Configuration
+
+**Get the API token from logs:**
 
    ```bash
    docker logs census-agent | grep "API Token"
    ```
 
-3. **Add in the UI of the server:**
+**Add in the UI of the server:**
    - Click **"+ Add Agent Host"** button
    - Enter host name, agent URL (`http://host-ip:9876`), and token
    - Click **"Test Connection"** then **"Add Agent"**
 
 ---
 
-### Connection Types
-
-- **Agent** (Recommended): `agent://hostname:9876` or `http://hostname:9876` - Lightweight agent with token auth
-- **Unix Socket**: `unix:///var/run/docker.sock` (local Docker daemon)
-
-**Why use agents?** No SSH keys, no TLS certificates, no Docker daemon exposure - just a simple URL and token!
-
-## API Endpoints
+## API Endpoints for the Server
 
 ### Hosts
 
@@ -125,30 +170,39 @@ Container Census includes an optional telemetry system to track anonymous contai
 - 🔒 **Opt-in by default** - Disabled unless explicitly enabled
 - 🌐 **Server aggregation** - Server collects stats from all agents before submission
 
-### Quick Start
+### Run Your Own Analytics Server
+```
+  telemetry-collector:
+    image: ghcr.io/selfhosters-cc/telemetry-collector:latest
+    container_name: telemetry-collector
+    restart: unless-stopped
 
-Enable in `config/config.yaml`:
+    ports:
+      - "8081:8081"
 
-```yaml
-telemetry:
-  enabled: true
-  interval_hours: 168  # Weekly
-  endpoints:
-    - name: public
-      url: https://telemetry.container-census.io/api/ingest
-      enabled: true
-    - name: private
-      url: http://my-analytics:8081/api/ingest
-      enabled: true
-      api_key: "your-key"
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@telemetry-postgres:5432/telemetry?sslmode=disable
+      PORT: 8081
+      #API_KEY: ${TELEMETRY_API_KEY:-}
+      TZ: ${TZ:-UTC}
+      COLLECTOR_AUTH_ENABLED: true
+      COLLECTOR_AUTH_USERNAME: collector_user
+      COLLECTOR_AUTH_PASSWORD: collector_secure_password
+
+    depends_on:
+      telemetry-postgres:
+        condition: service_healthy
+
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
 ```
 
-### Run Your Own Analytics Server
-
 ```bash
-# Start telemetry collector with dashboard
-docker-compose -f docker-compose.telemetry.yml up -d
-
 # Access dashboard
 open http://localhost:8081
 ```

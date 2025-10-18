@@ -50,12 +50,21 @@ DOCKER_GID=$(stat -c '%g' /var/run/docker.sock) docker-compose up -d
 
 ### Building Container Images
 ```bash
-# Interactive script (easiest)
+# Interactive script (easiest - recommended)
 ./scripts/build-all-images.sh
 
-# Manual builds
-docker build --build-arg DOCKER_GID=$DOCKER_GID -t container-census:latest .
-docker build --build-arg DOCKER_GID=$DOCKER_GID -f Dockerfile.agent -t census-agent:latest .
+# Manual builds using docker buildx (for multi-architecture support)
+# Single platform (local use):
+docker buildx build --platform linux/amd64 --build-arg DOCKER_GID=999 -t container-census:latest --load .
+docker buildx build --platform linux/amd64 --build-arg DOCKER_GID=999 -f Dockerfile.agent -t census-agent:latest --load .
+docker buildx build --platform linux/amd64 -f Dockerfile.telemetry-collector -t telemetry-collector:latest --load .
+
+# Multi-platform (requires push to registry):
+docker buildx build --platform linux/amd64,linux/arm64 --build-arg DOCKER_GID=999 -t container-census:latest --push .
+
+# Legacy docker build (amd64 only, no buildx):
+docker build --build-arg DOCKER_GID=$(stat -c '%g' /var/run/docker.sock) -t container-census:latest .
+docker build --build-arg DOCKER_GID=$(stat -c '%g' /var/run/docker.sock) -f Dockerfile.agent -t census-agent:latest .
 docker build -f Dockerfile.telemetry-collector -t telemetry-collector:latest .
 ```
 

@@ -105,6 +105,8 @@ function startAutoRefresh() {
                 loadImages();
             } else if (currentTab === 'scans') {
                 loadScanResults();
+            } else if (currentTab === 'settings') {
+                loadCollectors(); // Auto-refresh telemetry status
             }
         }, 30000); // 30 seconds
     }
@@ -224,18 +226,41 @@ async function submitTelemetry() {
     btn.disabled = true;
     btn.textContent = 'Submitting...';
 
+    // Add visual indicator to collector items
+    const collectorItems = document.querySelectorAll('.collector-item');
+    collectorItems.forEach(item => {
+        item.classList.add('submitting');
+    });
+
     try {
         const response = await fetch('/api/telemetry/submit', { method: 'POST' });
         if (response.ok) {
             const data = await response.json();
             showNotification(data.message || 'Telemetry submitted successfully', 'success');
+
+            // Wait a moment for submission to complete, then refresh status
+            setTimeout(async () => {
+                if (currentTab === 'settings') {
+                    await loadCollectors();
+                }
+            }, 1500);
         } else {
             const error = await response.json();
             showNotification('Failed to submit telemetry: ' + (error.error || 'Unknown error'), 'error');
+
+            // Remove submitting state on error
+            collectorItems.forEach(item => {
+                item.classList.remove('submitting');
+            });
         }
     } catch (error) {
         console.error('Error submitting telemetry:', error);
         showNotification('Failed to submit telemetry: ' + error.message, 'error');
+
+        // Remove submitting state on error
+        collectorItems.forEach(item => {
+            item.classList.remove('submitting');
+        });
     } finally {
         btn.disabled = false;
         btn.textContent = 'Submit Telemetry';
@@ -1025,13 +1050,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function loadCollectors() {
     try {
-        const response = await fetch('/api/config/telemetry/endpoints');
+        // Fetch telemetry status which includes all endpoints with status info
+        const response = await fetch('/api/telemetry/status');
         if (!response.ok) {
-            console.error('Failed to fetch collectors, status:', response.status);
+            console.error('Failed to fetch telemetry status, status:', response.status);
             throw new Error('Failed to load collectors');
         }
         const collectors = await response.json();
-        console.log('Loaded collectors:', collectors);
+        console.log('Loaded collectors with status:', collectors);
         renderCollectors(collectors);
     } catch (error) {
         console.error('Error loading collectors:', error);
@@ -1042,36 +1068,103 @@ async function loadCollectors() {
 function renderCollectors(collectors) {
     const collectorsList = document.getElementById('collectorsList');
 
-    // Filter out the community collector
+    // Separate community and custom collectors
+    const communityCollector = collectors.find(c => c.name === 'community');
     const customCollectors = collectors.filter(c => c.name !== 'community');
 
-    if (customCollectors.length === 0) {
-        collectorsList.innerHTML = '<p style="color: #666; font-style: italic;">No custom collectors configured.</p>';
-        return;
+    let html = '';
+
+    // Render community collector if exists
+    if (communityCollector) {
+        const lastSuccess = communityCollector.last_success ? new Date(communityCollector.last_success) : null;
+        const lastFailure = communityCollector.last_failure ? new Date(communityCollector.last_failure) : null;
+        const statusText = formatTelemetryStatus(lastSuccess, lastFailure);
+        const statusClass = getStatusClass(lastSuccess, lastFailure);
+
+        html += `
+            <div class="collector-item community-collector">
+                <div class="collector-info">
+                    <div class="collector-name">
+                        <strong>Community Collector</strong>
+                        <span class="collector-status ${communityCollector.enabled ? 'enabled' : 'disabled'}">
+                            ${communityCollector.enabled ? 'Enabled' : 'Disabled'}
+                        </span>
+                    </div>
+                    <div class="collector-url">${escapeHtml(communityCollector.url)}</div>
+                    ${statusText ? `<div class="telemetry-status ${statusClass}">${statusText}</div>` : ''}
+                    ${lastFailure && communityCollector.last_failure_reason ?
+                        `<div class="telemetry-error" title="${escapeHtml(communityCollector.last_failure_reason)}">
+                            ⚠ ${escapeHtml(communityCollector.last_failure_reason.substring(0, 60))}${communityCollector.last_failure_reason.length > 60 ? '...' : ''}
+                        </div>` : ''}
+                </div>
+            </div>
+        `;
     }
 
-    collectorsList.innerHTML = customCollectors.map(collector => `
-        <div class="collector-item">
-            <div class="collector-info">
-                <div class="collector-name">
-                    ${escapeHtml(collector.name)}
-                    <span class="collector-status ${collector.enabled ? 'enabled' : 'disabled'}">
-                        ${collector.enabled ? 'Enabled' : 'Disabled'}
-                    </span>
+    if (customCollectors.length === 0) {
+        html += '<p style="color: #666; font-style: italic; margin-top: 20px;">No custom collectors configured.</p>';
+    } else {
+        html += customCollectors.map(collector => {
+            const lastSuccess = collector.last_success ? new Date(collector.last_success) : null;
+            const lastFailure = collector.last_failure ? new Date(collector.last_failure) : null;
+            const statusText = formatTelemetryStatus(lastSuccess, lastFailure);
+            const statusClass = getStatusClass(lastSuccess, lastFailure);
+
+            return `
+            <div class="collector-item">
+                <div class="collector-info">
+                    <div class="collector-name">
+                        ${escapeHtml(collector.name)}
+                        <span class="collector-status ${collector.enabled ? 'enabled' : 'disabled'}">
+                            ${collector.enabled ? 'Enabled' : 'Disabled'}
+                        </span>
+                    </div>
+                    <div class="collector-url">${escapeHtml(collector.url)}</div>
+                    ${collector.api_key ? '<div style="font-size: 12px; color: #999;">🔑 API Key configured</div>' : ''}
+                    ${statusText ? `<div class="telemetry-status ${statusClass}">${statusText}</div>` : ''}
+                    ${lastFailure && collector.last_failure_reason ?
+                        `<div class="telemetry-error" title="${escapeHtml(collector.last_failure_reason)}">
+                            ⚠ ${escapeHtml(collector.last_failure_reason.substring(0, 60))}${collector.last_failure_reason.length > 60 ? '...' : ''}
+                        </div>` : ''}
                 </div>
-                <div class="collector-url">${escapeHtml(collector.url)}</div>
-                ${collector.api_key ? '<div style="font-size: 12px; color: #999;">🔑 API Key configured</div>' : ''}
+                <div class="collector-actions">
+                    <button class="btn btn-sm btn-secondary" onclick="toggleCollector('${escapeAttr(collector.name)}', ${!collector.enabled})">
+                        ${collector.enabled ? 'Disable' : 'Enable'}
+                    </button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteCollector('${escapeAttr(collector.name)}')">
+                        Delete
+                    </button>
+                </div>
             </div>
-            <div class="collector-actions">
-                <button class="btn btn-sm btn-secondary" onclick="toggleCollector('${escapeAttr(collector.name)}', ${!collector.enabled})">
-                    ${collector.enabled ? 'Disable' : 'Enable'}
-                </button>
-                <button class="btn btn-sm btn-danger" onclick="deleteCollector('${escapeAttr(collector.name)}')">
-                    Delete
-                </button>
-            </div>
-        </div>
-    `).join('');
+            `;
+        }).join('');
+    }
+
+    collectorsList.innerHTML = html;
+}
+
+function formatTelemetryStatus(lastSuccess, lastFailure) {
+    if (!lastSuccess && !lastFailure) {
+        return 'No telemetry submitted yet';
+    }
+
+    if (!lastFailure || (lastSuccess && lastSuccess > lastFailure)) {
+        return `✓ Last success: ${formatTimeAgo(lastSuccess)}`;
+    } else {
+        return `✗ Last failure: ${formatTimeAgo(lastFailure)}`;
+    }
+}
+
+function getStatusClass(lastSuccess, lastFailure) {
+    if (!lastSuccess && !lastFailure) {
+        return 'status-unknown';
+    }
+
+    if (!lastFailure || (lastSuccess && lastSuccess > lastFailure)) {
+        return 'status-success';
+    } else {
+        return 'status-error';
+    }
 }
 
 async function addCollector() {

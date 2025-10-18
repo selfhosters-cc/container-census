@@ -95,6 +95,15 @@ func (db *DB) initSchema() error {
 
 	CREATE INDEX IF NOT EXISTS idx_scan_results_host_id ON scan_results(host_id);
 	CREATE INDEX IF NOT EXISTS idx_scan_results_started_at ON scan_results(started_at);
+
+	CREATE TABLE IF NOT EXISTS telemetry_status (
+		endpoint_name TEXT PRIMARY KEY,
+		endpoint_url TEXT NOT NULL,
+		last_success TIMESTAMP,
+		last_failure TIMESTAMP,
+		last_failure_reason TEXT,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
 	`
 
 	if _, err := db.conn.Exec(schema); err != nil {
@@ -443,4 +452,106 @@ func (db *DB) CleanupOldData(olderThan time.Duration) error {
 	cutoff := time.Now().Add(-olderThan)
 	_, err := db.conn.Exec("DELETE FROM containers WHERE scanned_at < ?", cutoff)
 	return err
+}
+
+// Telemetry status operations
+
+// SaveTelemetrySuccess records a successful telemetry submission
+func (db *DB) SaveTelemetrySuccess(endpointName, endpointURL string) error {
+	now := time.Now().UTC()
+	_, err := db.conn.Exec(`
+		INSERT INTO telemetry_status (endpoint_name, endpoint_url, last_success, updated_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(endpoint_name) DO UPDATE SET
+			endpoint_url = excluded.endpoint_url,
+			last_success = excluded.last_success,
+			updated_at = excluded.updated_at
+	`, endpointName, endpointURL, now, now)
+	return err
+}
+
+// SaveTelemetryFailure records a failed telemetry submission
+func (db *DB) SaveTelemetryFailure(endpointName, endpointURL, reason string) error {
+	now := time.Now().UTC()
+	_, err := db.conn.Exec(`
+		INSERT INTO telemetry_status (endpoint_name, endpoint_url, last_failure, last_failure_reason, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(endpoint_name) DO UPDATE SET
+			endpoint_url = excluded.endpoint_url,
+			last_failure = excluded.last_failure,
+			last_failure_reason = excluded.last_failure_reason,
+			updated_at = excluded.updated_at
+	`, endpointName, endpointURL, now, reason, now)
+	return err
+}
+
+// GetTelemetryStatus retrieves telemetry status for a specific endpoint
+func (db *DB) GetTelemetryStatus(endpointName string) (*models.TelemetryEndpoint, error) {
+	var status models.TelemetryEndpoint
+	var lastSuccess, lastFailure sql.NullTime
+	var lastFailureReason sql.NullString
+
+	err := db.conn.QueryRow(`
+		SELECT endpoint_name, endpoint_url, last_success, last_failure, last_failure_reason
+		FROM telemetry_status
+		WHERE endpoint_name = ?
+	`, endpointName).Scan(&status.Name, &status.URL, &lastSuccess, &lastFailure, &lastFailureReason)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	if lastSuccess.Valid {
+		status.LastSuccess = &lastSuccess.Time
+	}
+	if lastFailure.Valid {
+		status.LastFailure = &lastFailure.Time
+	}
+	if lastFailureReason.Valid {
+		status.LastFailureReason = lastFailureReason.String
+	}
+
+	return &status, nil
+}
+
+// GetAllTelemetryStatuses retrieves all telemetry endpoint statuses
+func (db *DB) GetAllTelemetryStatuses() (map[string]*models.TelemetryEndpoint, error) {
+	rows, err := db.conn.Query(`
+		SELECT endpoint_name, endpoint_url, last_success, last_failure, last_failure_reason
+		FROM telemetry_status
+		ORDER BY endpoint_name
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	statuses := make(map[string]*models.TelemetryEndpoint)
+	for rows.Next() {
+		var status models.TelemetryEndpoint
+		var lastSuccess, lastFailure sql.NullTime
+		var lastFailureReason sql.NullString
+
+		err := rows.Scan(&status.Name, &status.URL, &lastSuccess, &lastFailure, &lastFailureReason)
+		if err != nil {
+			return nil, err
+		}
+
+		if lastSuccess.Valid {
+			status.LastSuccess = &lastSuccess.Time
+		}
+		if lastFailure.Valid {
+			status.LastFailure = &lastFailure.Time
+		}
+		if lastFailureReason.Valid {
+			status.LastFailureReason = lastFailureReason.String
+		}
+
+		statuses[status.Name] = &status
+	}
+
+	return statuses, rows.Err()
 }

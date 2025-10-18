@@ -95,10 +95,10 @@ func (s *Server) RestartTelemetry() error {
 		return nil
 	}
 
-	// Ensure telemetry is enabled (auto-enable if endpoints exist)
+	// Check if telemetry is globally enabled
 	if !cfg.Telemetry.Enabled {
-		log.Println("Auto-enabling telemetry because endpoints are configured")
-		cfg.Telemetry.Enabled = true
+		log.Println("Telemetry globally disabled, not starting scheduler")
+		return nil
 	}
 
 	// Create new scheduler
@@ -173,6 +173,7 @@ func (s *Server) setupRoutes() {
 
 	// Telemetry endpoints
 	api.HandleFunc("/telemetry/submit", s.handleSubmitTelemetry).Methods("POST")
+	api.HandleFunc("/telemetry/status", s.handleGetTelemetryStatus).Methods("GET")
 
 	// Serve static files (embedded web frontend) - also protected
 	s.router.PathPrefix("/").Handler(authMiddleware(http.FileServer(http.Dir("./web"))))
@@ -1039,4 +1040,35 @@ func (s *Server) handleDeleteTelemetryEndpoint(w http.ResponseWriter, r *http.Re
 	respondJSON(w, http.StatusOK, map[string]string{
 		"message": "Telemetry endpoint deleted successfully",
 	})
+}
+
+// handleGetTelemetryStatus returns the telemetry submission status for all endpoints
+func (s *Server) handleGetTelemetryStatus(w http.ResponseWriter, r *http.Request) {
+	// Load current config to get all endpoints
+	cfg, _ := config.LoadOrDefault(s.configPath)
+
+	// Get telemetry statuses from database
+	statuses, err := s.db.GetAllTelemetryStatuses()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get telemetry status: "+err.Error())
+		return
+	}
+
+	// Merge config endpoints with status data
+	result := make([]models.TelemetryEndpoint, 0, len(cfg.Telemetry.Endpoints))
+	for _, endpoint := range cfg.Telemetry.Endpoints {
+		// Copy endpoint from config
+		ep := endpoint
+
+		// Merge with status from database if available
+		if status, exists := statuses[endpoint.Name]; exists {
+			ep.LastSuccess = status.LastSuccess
+			ep.LastFailure = status.LastFailure
+			ep.LastFailureReason = status.LastFailureReason
+		}
+
+		result = append(result, ep)
+	}
+
+	respondJSON(w, http.StatusOK, result)
 }

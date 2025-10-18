@@ -17,12 +17,20 @@ import (
 type Submitter struct {
 	config     models.TelemetryConfig
 	httpClient *http.Client
+	db         interface {
+		SaveTelemetrySuccess(endpointName, endpointURL string) error
+		SaveTelemetryFailure(endpointName, endpointURL, reason string) error
+	}
 }
 
 // NewSubmitter creates a new telemetry submitter
-func NewSubmitter(config models.TelemetryConfig) *Submitter {
+func NewSubmitter(config models.TelemetryConfig, db interface {
+	SaveTelemetrySuccess(endpointName, endpointURL string) error
+	SaveTelemetryFailure(endpointName, endpointURL, reason string) error
+}) *Submitter {
 	return &Submitter{
 		config: config,
+		db:     db,
 		httpClient: &http.Client{
 			Timeout: 5 * time.Second,
 		},
@@ -59,8 +67,22 @@ func (s *Submitter) Submit(ctx context.Context, report *models.TelemetryReport) 
 			if err := s.submitToEndpoint(ctx, ep, report); err != nil {
 				log.Printf("Failed to submit telemetry to %s (%s): %v", ep.Name, ep.URL, err)
 				errors <- fmt.Errorf("%s: %w", ep.Name, err)
+
+				// Record failure in database
+				if s.db != nil {
+					if dbErr := s.db.SaveTelemetryFailure(ep.Name, ep.URL, err.Error()); dbErr != nil {
+						log.Printf("Failed to save telemetry failure status: %v", dbErr)
+					}
+				}
 			} else {
 				log.Printf("Successfully submitted telemetry to %s (%s)", ep.Name, ep.URL)
+
+				// Record success in database
+				if s.db != nil {
+					if dbErr := s.db.SaveTelemetrySuccess(ep.Name, ep.URL); dbErr != nil {
+						log.Printf("Failed to save telemetry success status: %v", dbErr)
+					}
+				}
 			}
 		}(endpoint)
 	}
