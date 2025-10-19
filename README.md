@@ -28,7 +28,7 @@ Popular and trending images across the internet can be found there.
 ## Using Docker Compose (Recommended)
 
 The easiest way to get started:
-### Server (requried)
+### Server (required)
 ```
   census-server:
     image: ghcr.io/selfhosters-cc/container-census:latest
