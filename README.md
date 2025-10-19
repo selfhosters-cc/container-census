@@ -6,6 +6,8 @@ If the user opts in, their telemetry will be anonymously submitted to a public t
 
 Popular and trending images across the internet can be found there.
 
+**Note:** You must opt in on the Settings page for your anonsymous data to be submitted to the public community server. 
+
 ## Features
 
 - **Multi-host scanning**: Monitor multiple Docker hosts from a single dashboard
