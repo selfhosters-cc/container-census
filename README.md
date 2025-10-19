@@ -1,6 +1,7 @@
 # Container Census
 
 A Go-based tool that scans configured Docker hosts and tracks all running containers. Container information is timestamped and stored in a database, accessible through a web frontend. The entire stack runs in a single container.
+If the user opts in, their telemetry will be anonymously submitted to a public tracker where aggregated stats showing the most popular containers (and much more) can be seen at [Selfhosters](https://selfhosters.cc).
 
 ## Features
 
