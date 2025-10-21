@@ -66,6 +66,12 @@
             <button onclick="refreshData()">🔄 Refresh</button>
         </div>
 
+        <div class="tabs">
+            <button class="tab-button active" onclick="showTab('charts')">Charts</button>
+            <button class="tab-button" onclick="showTab('images')">Container Images</button>
+        </div>
+
+        <div id="chartsTab" class="tab-content active">
         <div class="chart-container">
             <h2>Top 20 Most Popular Container Images</h2>
             <canvas id="topImagesChart"></canvas>
@@ -101,6 +107,53 @@
         <div class="chart-container">
             <h2>🌍 Geographic Distribution (by Timezone)</h2>
             <canvas id="geographyChart"></canvas>
+        </div>
+        </div>
+
+        <div id="imagesTab" class="tab-content">
+            <div class="table-container">
+                <div class="table-controls">
+                    <input type="text" id="imageSearch" placeholder="Search images..." onkeyup="filterImages()">
+                    <div class="results-info">
+                        <span id="resultsCount">Showing 0 images</span>
+                    </div>
+                </div>
+
+                <div class="table-wrapper">
+                    <table id="imagesTable" class="data-table">
+                        <thead>
+                            <tr>
+                                <th onclick="sortTable('name')" class="sortable">
+                                    Image Name <span class="sort-indicator"></span>
+                                </th>
+                                <th onclick="sortTable('count')" class="sortable text-right">
+                                    Container Count <span class="sort-indicator">▼</span>
+                                </th>
+                                <th onclick="sortTable('registry')" class="sortable">
+                                    Registry <span class="sort-indicator"></span>
+                                </th>
+                                <th onclick="sortTable('installations')" class="sortable text-right">
+                                    Installations <span class="sort-indicator"></span>
+                                </th>
+                                <th onclick="sortTable('percentage')" class="sortable text-right">
+                                    % of Total <span class="sort-indicator"></span>
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody id="imagesTableBody">
+                            <tr>
+                                <td colspan="5" class="loading-cell">Loading...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="pagination">
+                    <button id="prevPage" onclick="changePage(-1)" disabled>← Previous</button>
+                    <span id="pageInfo">Page 1</span>
+                    <button id="nextPage" onclick="changePage(1)">Next →</button>
+                </div>
+            </div>
         </div>
 
         <footer>

@@ -199,6 +199,18 @@ To track new metrics in telemetry:
 6. Update INSERT/UPDATE queries in `saveTelemetry()`
 7. Create API endpoint and chart in `web/analytics/`
 
+**IMPORTANT - Backward Compatibility:**
+- When removing fields from API responses, ensure the telemetry collector's database queries handle missing columns gracefully
+- Use SQL's `COALESCE()` or conditional logic to provide defaults for missing fields
+- API endpoints should not break if older data lacks certain fields
+- Frontend code should handle `null`/`undefined` values for fields that may not exist in all records
+- Keep database columns even if not displayed in UI - they may be re-added later or used by older versions
+- Example: `image_stats.size_bytes` column exists in DB but is not returned by `/api/stats/image-details` endpoint
+  - Query selects only `count`, not `size_bytes`
+  - Old telemetry submissions with `size_bytes` continue to work
+  - New submissions can omit it or include it (ignored)
+  - Column remains in schema for potential future use
+
 ### UI Refresh Pattern
 
 The web UI maintains local state and doesn't automatically refresh after mutations. When implementing delete/update operations:

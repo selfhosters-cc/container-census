@@ -887,3 +887,234 @@ document.addEventListener('DOMContentLoaded', () => {
 window.addEventListener('beforeunload', () => {
     stopLiveTracking();
 });
+
+// ========== Container Images Table Functions ==========
+
+let imageDetailsData = [];
+let currentPage = 0;
+let pageSize = 50;
+let currentSort = { column: 'count', order: 'desc' };
+let totalContainers = 0;
+
+// Tab switching
+function showTab(tabName) {
+    // Update tab buttons
+    document.querySelectorAll('.tab-button').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    event.target.classList.add('active');
+
+    // Update tab content
+    document.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.remove('active');
+    });
+
+    if (tabName === 'charts') {
+        document.getElementById('chartsTab').classList.add('active');
+    } else if (tabName === 'images') {
+        document.getElementById('imagesTab').classList.add('active');
+        // Load image data if not already loaded
+        if (imageDetailsData.length === 0) {
+            loadImageDetails();
+        }
+    }
+}
+
+// Load image details from API
+async function loadImageDetails() {
+    const days = document.getElementById('timeRange').value;
+    const search = document.getElementById('imageSearch').value;
+
+    const params = new URLSearchParams({
+        days: days,
+        limit: 1000, // Load more for client-side pagination
+        offset: 0,
+        sort_by: currentSort.column,
+        sort_order: currentSort.order
+    });
+
+    if (search) {
+        params.append('search', search);
+    }
+
+    try {
+        const response = await fetch(`/api/stats/image-details?${params}`);
+        const data = await response.json();
+
+        imageDetailsData = data.images || [];
+        currentPage = 0;
+
+        renderImageTable();
+    } catch (error) {
+        console.error('Failed to load image details:', error);
+        document.getElementById('imagesTableBody').innerHTML =
+            '<tr><td colspan="5" class="error-cell">Failed to load data</td></tr>';
+    }
+}
+
+// Render the table with current page data
+function renderImageTable() {
+    const tbody = document.getElementById('imagesTableBody');
+
+    if (imageDetailsData.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-cell">No images found</td></tr>';
+        document.getElementById('resultsCount').textContent = 'No images found';
+        updatePaginationButtons();
+        return;
+    }
+
+    // Calculate total containers for percentage
+    totalContainers = imageDetailsData.reduce((sum, img) => sum + img.count, 0);
+
+    // Get current page data
+    const start = currentPage * pageSize;
+    const end = start + pageSize;
+    const pageData = imageDetailsData.slice(start, end);
+
+    // Render rows
+    tbody.innerHTML = pageData.map(img => {
+        const percentage = totalContainers > 0 ? ((img.count / totalContainers) * 100).toFixed(2) : '0';
+        const registryBadge = getRegistryBadge(img.registry);
+
+        return `
+            <tr>
+                <td class="image-name">${escapeHtml(img.image)}</td>
+                <td class="number">${img.count.toLocaleString()}</td>
+                <td>${registryBadge}</td>
+                <td class="number">${img.installation_count}</td>
+                <td class="number">${percentage}%</td>
+            </tr>
+        `;
+    }).join('');
+
+    // Update results count
+    const showing = `Showing ${start + 1}-${Math.min(end, imageDetailsData.length)} of ${imageDetailsData.length} images`;
+    document.getElementById('resultsCount').textContent = showing;
+
+    updatePaginationButtons();
+}
+
+// Format bytes to human-readable size
+function formatBytes(bytes) {
+    if (bytes === 0 || !bytes) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// Get registry badge HTML
+function getRegistryBadge(registry) {
+    const badges = {
+        'Docker Hub': '<span class="registry-badge docker-hub">Docker Hub</span>',
+        'ghcr.io': '<span class="registry-badge ghcr">GHCR</span>',
+        'quay.io': '<span class="registry-badge quay">Quay</span>',
+        'gcr.io': '<span class="registry-badge gcr">GCR</span>',
+        'mcr.microsoft.com': '<span class="registry-badge mcr">MCR</span>',
+    };
+    return badges[registry] || `<span class="registry-badge other">${escapeHtml(registry)}</span>`;
+}
+
+// Escape HTML to prevent XSS
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Sort table by column
+function sortTable(column) {
+    // Toggle sort order if clicking same column
+    if (currentSort.column === column) {
+        currentSort.order = currentSort.order === 'asc' ? 'desc' : 'asc';
+    } else {
+        currentSort.column = column;
+        currentSort.order = 'desc'; // Default to descending for new column
+    }
+
+    // Update sort indicators
+    document.querySelectorAll('.sort-indicator').forEach(el => {
+        el.textContent = '';
+    });
+
+    const header = event.target.closest('th');
+    const indicator = header.querySelector('.sort-indicator');
+    indicator.textContent = currentSort.order === 'asc' ? '▲' : '▼';
+
+    // Sort data
+    imageDetailsData.sort((a, b) => {
+        let aVal, bVal;
+
+        switch(column) {
+            case 'name':
+                aVal = a.image.toLowerCase();
+                bVal = b.image.toLowerCase();
+                break;
+            case 'count':
+                aVal = a.count;
+                bVal = b.count;
+                break;
+            case 'registry':
+                aVal = a.registry.toLowerCase();
+                bVal = b.registry.toLowerCase();
+                break;
+            case 'installations':
+                aVal = a.installation_count;
+                bVal = b.installation_count;
+                break;
+            case 'percentage':
+                // Calculate percentage for sorting
+                aVal = totalContainers > 0 ? (a.count / totalContainers) * 100 : 0;
+                bVal = totalContainers > 0 ? (b.count / totalContainers) * 100 : 0;
+                break;
+            default:
+                return 0;
+        }
+
+        if (aVal < bVal) return currentSort.order === 'asc' ? -1 : 1;
+        if (aVal > bVal) return currentSort.order === 'asc' ? 1 : -1;
+        return 0;
+    });
+
+    currentPage = 0;
+    renderImageTable();
+}
+
+// Filter images by search
+function filterImages() {
+    const search = document.getElementById('imageSearch').value.toLowerCase();
+
+    if (search === '') {
+        // Reload all data if search is cleared
+        loadImageDetails();
+        return;
+    }
+
+    // Filter client-side for better UX
+    const allImages = [...imageDetailsData];
+    imageDetailsData = allImages.filter(img =>
+        img.image.toLowerCase().includes(search)
+    );
+
+    currentPage = 0;
+    renderImageTable();
+}
+
+// Change page
+function changePage(delta) {
+    const maxPage = Math.ceil(imageDetailsData.length / pageSize) - 1;
+    currentPage = Math.max(0, Math.min(maxPage, currentPage + delta));
+    renderImageTable();
+}
+
+// Update pagination button states
+function updatePaginationButtons() {
+    const maxPage = Math.ceil(imageDetailsData.length / pageSize) - 1;
+
+    document.getElementById('prevPage').disabled = currentPage === 0;
+    document.getElementById('nextPage').disabled = currentPage >= maxPage;
+
+    const pageNum = currentPage + 1;
+    const totalPages = Math.max(1, maxPage + 1);
+    document.getElementById('pageInfo').textContent = `Page ${pageNum} of ${totalPages}`;
+}

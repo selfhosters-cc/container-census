@@ -272,6 +272,29 @@ import { GeographyChart } from '@/components/GeographyChart';
 - `data: GeographyData[]` - Array of geographic data
 - `title?: string` - Chart title (default: "Geographic Distribution")
 
+#### `ContainerImagesTable`
+
+Interactive, sortable, filterable table displaying detailed container image data with pagination.
+
+```typescript
+import { ContainerImagesTable } from '@/components/ContainerImagesTable';
+
+<ContainerImagesTable images={imageDetails} title="All Container Images" />
+```
+
+**Props:**
+- `images: ImageDetail[]` - Array of detailed image data (includes name, count, registry, installation count)
+- `title?: string` - Table title (default: "Container Images")
+
+**Features:**
+- Client-side search/filtering by image name
+- Sortable columns (name, container count)
+- Pagination (50 items per page)
+- Color-coded registry badges (Docker Hub, GHCR, Quay, GCR, MCR)
+- Percentage of total containers calculation
+- Installation count per image
+- Responsive design with Tailwind CSS
+
 ## API Reference
 
 ### TelemetryAPI Class
@@ -299,6 +322,7 @@ const api = new TelemetryAPI({
 | `getScanIntervals()` | - | `Promise<IntervalCount[]>` | Get scan interval distribution |
 | `getRecentEvents()` | `{ limit?, since? }` | `Promise<SubmissionEvent[]>` | Get recent submissions |
 | `getInstallations()` | `{ days? }` | `Promise<{...}>` | Get installation count |
+| `getImageDetails()` | `{ limit?, offset?, days?, search?, sort_by?, sort_order? }` | `Promise<ImageDetailsResponse>` | Get detailed image data with pagination and search |
 
 ### Data Types
 
@@ -314,8 +338,30 @@ import {
   GeographyData,
   HeatmapData,
   IntervalCount,
-  SubmissionEvent
+  SubmissionEvent,
+  ImageDetail,
+  ImageDetailsResponse
 } from '@/lib/telemetry-api';
+```
+
+**New Types for Image Details:**
+
+```typescript
+interface ImageDetail {
+  image: string;              // Container image name (normalized)
+  count: number;              // Number of containers using this image
+  registry: string;           // Registry source (Docker Hub, GHCR, etc.)
+  installation_count: number; // Number of installations using this image
+}
+
+interface ImageDetailsResponse {
+  images: ImageDetail[];
+  pagination: {
+    total: number;   // Total number of images
+    limit: number;   // Page size
+    offset: number;  // Current offset
+  };
+}
 ```
 
 ## Security Best Practices

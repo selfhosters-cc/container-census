@@ -66,6 +66,22 @@ export interface SubmissionEvent {
   hosts: number;
 }
 
+export interface ImageDetail {
+  image: string;
+  count: number;
+  registry: string;
+  installation_count: number;
+}
+
+export interface ImageDetailsResponse {
+  images: ImageDetail[];
+  pagination: {
+    total: number;
+    limit: number;
+    offset: number;
+  };
+}
+
 // API Client Configuration
 interface TelemetryAPIConfig {
   baseURL: string;
@@ -208,6 +224,20 @@ export class TelemetryAPI {
    */
   async getInstallations(params?: { days?: number }): Promise<{ total_installations: number; period_days: number }> {
     return this.request('/api/stats/installations', params);
+  }
+
+  /**
+   * Get detailed image data with pagination and search
+   */
+  async getImageDetails(params?: {
+    limit?: number;
+    offset?: number;
+    days?: number;
+    search?: string;
+    sort_by?: 'name' | 'count' | 'size';
+    sort_order?: 'asc' | 'desc';
+  }): Promise<ImageDetailsResponse> {
+    return this.request<ImageDetailsResponse>('/api/stats/image-details', params);
   }
 }
 

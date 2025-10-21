@@ -140,6 +140,7 @@ func (s *Server) setupRoutes() {
 
 	// Stats API - protected by API key (read-only analytics data)
 	s.router.HandleFunc("/api/stats/top-images", s.apiKeyMiddleware(s.handleTopImages)).Methods("GET", "OPTIONS")
+	s.router.HandleFunc("/api/stats/image-details", s.apiKeyMiddleware(s.handleImageDetails)).Methods("GET", "OPTIONS")
 	s.router.HandleFunc("/api/stats/growth", s.apiKeyMiddleware(s.handleGrowth)).Methods("GET", "OPTIONS")
 	s.router.HandleFunc("/api/stats/installations", s.apiKeyMiddleware(s.handleInstallations)).Methods("GET", "OPTIONS")
 	s.router.HandleFunc("/api/stats/summary", s.apiKeyMiddleware(s.handleSummary)).Methods("GET", "OPTIONS")
@@ -501,6 +502,175 @@ func (s *Server) handleTopImages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, results)
+}
+
+// Get detailed image data with size, count, registry info
+func (s *Server) handleImageDetails(w http.ResponseWriter, r *http.Request) {
+	limit := getQueryInt(r, "limit", 100)
+	offset := getQueryInt(r, "offset", 0)
+	days := getQueryInt(r, "days", 30)
+	search := r.URL.Query().Get("search")
+	sortBy := r.URL.Query().Get("sort_by")    // name, count, size
+	sortOrder := r.URL.Query().Get("sort_order") // asc, desc
+
+	// Default sorting
+	if sortBy == "" {
+		sortBy = "count"
+	}
+	if sortOrder == "" {
+		sortOrder = "desc"
+	}
+
+	// Validate sortBy to prevent SQL injection
+	validSortColumns := map[string]string{
+		"name":  "normalized_image",
+		"count": "total_count",
+		"size":  "total_size",
+	}
+	sortColumn, ok := validSortColumns[sortBy]
+	if !ok {
+		sortColumn = "total_count"
+	}
+
+	// Validate sortOrder
+	if sortOrder != "asc" && sortOrder != "desc" {
+		sortOrder = "desc"
+	}
+
+	since := time.Now().AddDate(0, 0, -days)
+
+	// Build query with optional search filter
+	searchFilter := ""
+	args := []interface{}{since}
+	argNum := 2
+	if search != "" {
+		searchFilter = fmt.Sprintf("AND normalized_image ILIKE $%d", argNum)
+		args = append(args, "%"+search+"%")
+		argNum++
+	}
+
+	// Main query with normalization, deduplication, and registry detection
+	query := fmt.Sprintf(`
+		SELECT
+			normalized_image,
+			SUM(count) as total_count,
+			-- Use MAX to pick the most specific registry (prefer explicit registry over Docker Hub)
+			MAX(CASE
+				WHEN registry != 'Docker Hub' THEN registry
+				ELSE registry
+			END) as registry,
+			COUNT(DISTINCT installation_id) as installation_count
+		FROM (
+			SELECT DISTINCT ON (installation_id, image)
+				installation_id,
+				-- Normalize image names by removing registry prefixes
+				REGEXP_REPLACE(
+					REGEXP_REPLACE(
+						REGEXP_REPLACE(
+							REGEXP_REPLACE(
+								REGEXP_REPLACE(
+									REGEXP_REPLACE(
+										REGEXP_REPLACE(image, '^ghcr\.io/', ''),
+									'^docker\.io/', ''),
+								'^hub\.docker\.com/', ''),
+							'^registry\.hub\.docker\.com/', ''),
+						'^quay\.io/', ''),
+					'^gcr\.io/', ''),
+				'^mcr\.microsoft\.com/', '') as normalized_image,
+				-- Detect registry from original image name
+				CASE
+					WHEN image ~ '^ghcr\.io/' THEN 'ghcr.io'
+					WHEN image ~ '^quay\.io/' THEN 'quay.io'
+					WHEN image ~ '^gcr\.io/' THEN 'gcr.io'
+					WHEN image ~ '^mcr\.microsoft\.com/' THEN 'mcr.microsoft.com'
+					ELSE 'Docker Hub'
+				END as registry,
+				count
+			FROM image_stats
+			WHERE timestamp >= $1
+			ORDER BY installation_id, image, timestamp DESC
+		) latest_stats
+		WHERE 1=1 %s
+		GROUP BY normalized_image
+		ORDER BY %s %s
+		LIMIT $%d OFFSET $%d
+	`, searchFilter, sortColumn, sortOrder, argNum, argNum+1)
+
+	args = append(args, limit, offset)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Query failed: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	type ImageDetail struct {
+		Image             string `json:"image"`
+		Count             int    `json:"count"`
+		Registry          string `json:"registry"`
+		InstallationCount int    `json:"installation_count"`
+	}
+
+	var results []ImageDetail
+	for rows.Next() {
+		var id ImageDetail
+		if err := rows.Scan(&id.Image, &id.Count, &id.Registry, &id.InstallationCount); err != nil {
+			log.Printf("Scan error: %v", err)
+			continue
+		}
+		results = append(results, id)
+	}
+
+	// Get total count for pagination metadata
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(DISTINCT normalized_image)
+		FROM (
+			SELECT DISTINCT ON (installation_id, image)
+				installation_id,
+				REGEXP_REPLACE(
+					REGEXP_REPLACE(
+						REGEXP_REPLACE(
+							REGEXP_REPLACE(
+								REGEXP_REPLACE(
+									REGEXP_REPLACE(
+										REGEXP_REPLACE(image, '^ghcr\.io/', ''),
+									'^docker\.io/', ''),
+								'^hub\.docker\.com/', ''),
+							'^registry\.hub\.docker\.com/', ''),
+						'^quay\.io/', ''),
+					'^gcr\.io/', ''),
+				'^mcr\.microsoft\.com/', '') as normalized_image
+			FROM image_stats
+			WHERE timestamp >= $1
+			ORDER BY installation_id, image, timestamp DESC
+		) latest_stats
+		WHERE 1=1 %s
+	`, searchFilter)
+
+	var totalCount int
+	countArgs := []interface{}{since}
+	if search != "" {
+		countArgs = append(countArgs, "%"+search+"%")
+	}
+
+	err = s.db.QueryRow(countQuery, countArgs...).Scan(&totalCount)
+	if err != nil {
+		log.Printf("Count query error: %v", err)
+		totalCount = len(results) // Fallback
+	}
+
+	// Return results with pagination metadata
+	response := map[string]interface{}{
+		"images": results,
+		"pagination": map[string]interface{}{
+			"total":  totalCount,
+			"limit":  limit,
+			"offset": offset,
+		},
+	}
+
+	respondJSON(w, http.StatusOK, response)
 }
 
 // Get growth metrics
