@@ -1,6 +1,12 @@
 # Container Census
 
-A Go-based tool that scans configured Docker hosts and tracks all running containers. Container information is timestamped and stored in a database, accessible through a web frontend. The entire stack runs in a single container.
+A Go-based tool that scans configured Docker hosts and tracks all running containers. Container information is timestamped and stored in a database, accessible through a web frontend. The entire stack runs in a single container.  Telemetry across multiple hosts can be collected with the use of agents and viewed on a private collector instance.  The server, agent, and telemetry collector all run in separate containers, docker compose details below.
+
+If the user opts in, their telemetry will be anonymously submitted to a public tracker where aggregated stats showing the most popular containers (and much more) can be seen at [Selfhosters](https://selfhosters.cc).
+
+Popular and trending images across the internet can be found there.
+
+**Note:** You must opt in on the Settings page for your anonymous data to be submitted to the public community server. 
 
 ## Features
 
@@ -22,7 +28,7 @@ A Go-based tool that scans configured Docker hosts and tracks all running contai
 ## Using Docker Compose (Recommended)
 
 The easiest way to get started:
-### Server (requried)
+### Server (required)
 ```
   census-server:
     image: ghcr.io/selfhosters-cc/container-census:latest
