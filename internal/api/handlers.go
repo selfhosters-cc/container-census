@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -330,11 +331,12 @@ func (s *Server) handleGetContainerGraph(w http.ResponseWriter, r *http.Request)
 		Edges: make([]models.ContainerGraphEdge, 0),
 	}
 
-	// Create nodes
+	// Create container nodes
 	for _, c := range containers {
 		node := models.ContainerGraphNode{
 			ID:             c.ID,
 			Name:           c.Name,
+			NodeType:       "container",
 			Image:          c.Image,
 			State:          c.State,
 			HostID:         c.HostID,
@@ -344,35 +346,63 @@ func (s *Server) handleGetContainerGraph(w http.ResponseWriter, r *http.Request)
 		graph.Nodes = append(graph.Nodes, node)
 	}
 
+	// Create network nodes by collecting all unique networks
+	networkMap := make(map[string]map[int64]bool) // network name -> set of host IDs
+	for _, c := range containers {
+		for _, network := range c.Networks {
+			if networkMap[network] == nil {
+				networkMap[network] = make(map[int64]bool)
+			}
+			networkMap[network][c.HostID] = true
+		}
+	}
+
+	// Create a network node for each unique network+host combination
+	networkNodeIDs := make(map[string]string) // network+host -> node ID
+	for networkName, hostIDs := range networkMap {
+		for hostID := range hostIDs {
+			// Create a unique ID for this network on this host
+			networkNodeID := fmt.Sprintf("net-%d-%s", hostID, networkName)
+			networkNodeIDs[fmt.Sprintf("%d-%s", hostID, networkName)] = networkNodeID
+
+			// Find host name for this network node
+			var hostName string
+			for _, c := range containers {
+				if c.HostID == hostID {
+					hostName = c.HostName
+					break
+				}
+			}
+
+			graph.Nodes = append(graph.Nodes, models.ContainerGraphNode{
+				ID:       networkNodeID,
+				Name:     networkName,
+				NodeType: "network",
+				HostID:   hostID,
+				HostName: hostName,
+			})
+		}
+	}
+
 	// Build edges by analyzing connections
 	// Track which connections we've already added to avoid duplicates
 	edgeMap := make(map[string]bool)
 
 	for i, c1 := range containers {
-		// Network connections
+		// Network connections - connect each container to its network nodes
 		for _, network := range c1.Networks {
-			// Find other containers on the same network AND same host
-			for j, c2 := range containers {
-				if i >= j {
-					continue // Skip self and already processed pairs
-				}
-				// Networks are isolated per Docker daemon - only connect containers on same host
-				if c1.HostID != c2.HostID {
-					continue
-				}
-				for _, network2 := range c2.Networks {
-					if network == network2 {
-						edgeKey := c1.ID + "-" + c2.ID + "-network-" + network
-						if !edgeMap[edgeKey] {
-							graph.Edges = append(graph.Edges, models.ContainerGraphEdge{
-								Source: c1.ID,
-								Target: c2.ID,
-								Type:   "network",
-								Label:  network,
-							})
-							edgeMap[edgeKey] = true
-						}
-					}
+			// Get the network node ID for this network on this host
+			networkKey := fmt.Sprintf("%d-%s", c1.HostID, network)
+			if networkNodeID, exists := networkNodeIDs[networkKey]; exists {
+				edgeKey := c1.ID + "-" + networkNodeID + "-network"
+				if !edgeMap[edgeKey] {
+					graph.Edges = append(graph.Edges, models.ContainerGraphEdge{
+						Source: c1.ID,
+						Target: networkNodeID,
+						Type:   "network",
+						Label:  "", // No label needed since network node itself has the name
+					})
+					edgeMap[edgeKey] = true
 				}
 			}
 		}
@@ -403,31 +433,6 @@ func (s *Server) handleGetContainerGraph(w http.ResponseWriter, r *http.Request)
 							})
 							edgeMap[edgeKey] = true
 						}
-					}
-				}
-			}
-		}
-
-		// Docker Compose project connections
-		if c1.ComposeProject != "" {
-			for j, c2 := range containers {
-				if i >= j {
-					continue
-				}
-				// Compose projects are isolated per host - only connect containers on same host
-				if c1.HostID != c2.HostID {
-					continue
-				}
-				if c2.ComposeProject == c1.ComposeProject {
-					edgeKey := c1.ID + "-" + c2.ID + "-compose-" + c1.ComposeProject
-					if !edgeMap[edgeKey] {
-						graph.Edges = append(graph.Edges, models.ContainerGraphEdge{
-							Source: c1.ID,
-							Target: c2.ID,
-							Type:   "compose",
-							Label:  c1.ComposeProject,
-						})
-						edgeMap[edgeKey] = true
 					}
 				}
 			}

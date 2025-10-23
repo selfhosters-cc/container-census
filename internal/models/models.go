@@ -65,10 +65,11 @@ type VolumeMount struct {
 type ContainerGraphNode struct {
 	ID             string `json:"id"`
 	Name           string `json:"name"`
-	Image          string `json:"image"`
-	State          string `json:"state"`
+	NodeType       string `json:"node_type"`         // "container" or "network"
+	Image          string `json:"image,omitempty"`
+	State          string `json:"state,omitempty"`
 	HostID         int64  `json:"host_id"`
-	HostName       string `json:"host_name"`
+	HostName       string `json:"host_name,omitempty"`
 	ComposeProject string `json:"compose_project,omitempty"`
 }
 

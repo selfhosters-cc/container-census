@@ -62,7 +62,6 @@ function setupEventListeners() {
     // Graph filter handlers
     document.getElementById('showNetworks')?.addEventListener('change', applyGraphFilters);
     document.getElementById('showVolumes')?.addEventListener('change', applyGraphFilters);
-    document.getElementById('showCompose')?.addEventListener('change', applyGraphFilters);
     document.getElementById('showDepends')?.addEventListener('change', applyGraphFilters);
     document.getElementById('showLinks')?.addEventListener('change', applyGraphFilters);
 
@@ -1471,6 +1470,7 @@ function renderGraph(data) {
             data: {
                 id: node.id,
                 label: node.name,
+                nodeType: node.node_type || 'container',
                 state: node.state,
                 image: node.image,
                 host: node.host_name,
@@ -1507,7 +1507,22 @@ function renderGraph(data) {
                     'text-outline-width': 2,
                     'font-size': '12px',
                     'width': 50,
-                    'height': 50
+                    'height': 50,
+                    'shape': 'ellipse'
+                }
+            },
+            // Network nodes - different shape and color
+            {
+                selector: 'node[nodeType="network"]',
+                style: {
+                    'shape': 'diamond',
+                    'background-color': '#3498db',
+                    'border-width': 3,
+                    'border-color': '#2980b9',
+                    'width': 60,
+                    'height': 60,
+                    'font-size': '11px',
+                    'font-weight': 'bold'
                 }
             },
             {
@@ -1596,14 +1611,6 @@ function renderGraph(data) {
                 }
             },
             {
-                selector: 'edge[type="compose"]',
-                style: {
-                    'line-color': '#f39c12',
-                    'width': 2,
-                    'line-style': 'dashed'
-                }
-            },
-            {
                 selector: 'edge[type="depends"]',
                 style: {
                     'line-color': '#16a085',
@@ -1670,13 +1677,25 @@ function renderGraph(data) {
     cy.on('tap', 'node', function(evt) {
         const node = evt.target;
         const data = node.data();
-        showGraphInfo(`
-            <strong>${data.label}</strong><br>
-            Host: ${data.host}<br>
-            Image: ${data.image}<br>
-            State: <span class="state-badge state-${data.state}">${data.state}</span><br>
-            ${data.composeProject ? `Compose Project: ${data.composeProject}<br>` : ''}
-        `);
+
+        if (data.nodeType === 'network') {
+            // Show network node info
+            const connectedContainers = cy.edges(`[source="${data.id}"], [target="${data.id}"]`).length;
+            showGraphInfo(`
+                <strong>🌐 Network: ${data.label}</strong><br>
+                Host: ${data.host}<br>
+                Connected Containers: ${connectedContainers}
+            `);
+        } else {
+            // Show container node info
+            showGraphInfo(`
+                <strong>${data.label}</strong><br>
+                Host: ${data.host}<br>
+                Image: ${data.image}<br>
+                State: <span class="state-badge state-${data.state}">${data.state}</span><br>
+                ${data.composeProject ? `Compose Project: ${data.composeProject}<br>` : ''}
+            `);
+        }
     });
 
     cy.on('tap', 'edge', function(evt) {
@@ -1689,7 +1708,6 @@ function renderGraph(data) {
         switch(data.type) {
             case 'network': typeDescription = 'Network Connection'; break;
             case 'volume': typeDescription = 'Shared Volume'; break;
-            case 'compose': typeDescription = 'Docker Compose Project'; break;
             case 'depends': typeDescription = 'Dependency'; break;
             case 'link': typeDescription = 'Container Link'; break;
             default: typeDescription = 'Connection';
@@ -1718,7 +1736,6 @@ function applyGraphFilters() {
 
     const showNetworks = document.getElementById('showNetworks').checked;
     const showVolumes = document.getElementById('showVolumes').checked;
-    const showCompose = document.getElementById('showCompose').checked;
     const showDepends = document.getElementById('showDepends').checked;
     const showLinks = document.getElementById('showLinks').checked;
     const colorByProject = document.getElementById('colorByProject').checked;
@@ -1742,7 +1759,6 @@ function applyGraphFilters() {
         let visibleByType = true;
         if (type === 'network' && !showNetworks) visibleByType = false;
         if (type === 'volume' && !showVolumes) visibleByType = false;
-        if (type === 'compose' && !showCompose) visibleByType = false;
         if (type === 'depends' && !showDepends) visibleByType = false;
         if (type === 'link' && !showLinks) visibleByType = false;
 
@@ -1841,7 +1857,6 @@ function updateEdgeCounts(edges) {
     const counts = {
         network: 0,
         volume: 0,
-        compose: 0,
         depends: 0,
         link: 0
     };
@@ -1854,7 +1869,6 @@ function updateEdgeCounts(edges) {
 
     document.getElementById('networkCount').textContent = `(${counts.network})`;
     document.getElementById('volumeCount').textContent = `(${counts.volume})`;
-    document.getElementById('composeCount').textContent = `(${counts.compose})`;
     document.getElementById('dependsCount').textContent = `(${counts.depends})`;
     document.getElementById('linksCount').textContent = `(${counts.link})`;
 }
