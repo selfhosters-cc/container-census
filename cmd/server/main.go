@@ -103,6 +103,12 @@ func main() {
 		}
 	}
 
+	// Check for updates on startup
+	go checkForUpdates()
+
+	// Start daily version check
+	go runDailyVersionCheck(ctx)
+
 	// Start HTTP server
 	go func() {
 		log.Printf("Server listening on http://%s", addr)
@@ -256,6 +262,37 @@ func performScan(ctx context.Context, db *storage.DB, scan *scanner.Scanner) {
 		// Save scan result
 		if _, err := db.SaveScanResult(result); err != nil {
 			log.Printf("Failed to save scan result for host %s: %v", host.Name, err)
+		}
+	}
+}
+
+// checkForUpdates checks for new versions and logs a warning if an update is available
+func checkForUpdates() {
+	info := version.CheckLatestVersion()
+
+	if info.Error != nil {
+		// Silently ignore errors during version check
+		log.Printf("Version check: %v", info.Error)
+		return
+	}
+
+	if info.UpdateAvailable {
+		log.Printf("⚠️  UPDATE AVAILABLE: Container Census %s → %s", info.CurrentVersion, info.LatestVersion)
+		log.Printf("   Download: %s", info.ReleaseURL)
+	}
+}
+
+// runDailyVersionCheck performs version checks once per day
+func runDailyVersionCheck(ctx context.Context) {
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			checkForUpdates()
 		}
 	}
 }

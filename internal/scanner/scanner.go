@@ -88,28 +88,73 @@ func (s *Scanner) ScanHost(ctx context.Context, host models.Host) ([]models.Cont
 		// Get image size
 		imageSize := imageMap[c.ImageID]
 
-		// Inspect container for detailed info (restart count, etc.)
+		// Inspect container for detailed info (restart count, connections, etc.)
 		var restartCount int
+		var networks []string
+		var volumes []models.VolumeMount
+		var links []string
+		var composeProject string
+
 		containerJSON, err := dockerClient.ContainerInspect(ctx, c.ID)
 		if err == nil {
 			restartCount = containerJSON.RestartCount
+
+			// Extract network connections
+			if containerJSON.NetworkSettings != nil && containerJSON.NetworkSettings.Networks != nil {
+				for networkName := range containerJSON.NetworkSettings.Networks {
+					networks = append(networks, networkName)
+				}
+			}
+
+			// Extract volume mounts
+			if containerJSON.Mounts != nil {
+				for _, mount := range containerJSON.Mounts {
+					volumeMount := models.VolumeMount{
+						Name:        mount.Name,
+						Destination: mount.Destination,
+						Type:        string(mount.Type),
+						RW:          mount.RW,
+					}
+					// For bind mounts, use source path as name
+					if mount.Type == "bind" {
+						volumeMount.Name = mount.Source
+					}
+					volumes = append(volumes, volumeMount)
+				}
+			}
+
+			// Extract legacy links
+			if containerJSON.HostConfig != nil && containerJSON.HostConfig.Links != nil {
+				links = containerJSON.HostConfig.Links
+			}
+
+			// Extract Docker Compose project name from labels
+			if containerJSON.Config != nil && containerJSON.Config.Labels != nil {
+				if project, ok := containerJSON.Config.Labels["com.docker.compose.project"]; ok {
+					composeProject = project
+				}
+			}
 		}
 
 		container := models.Container{
-			ID:           c.ID,
-			Name:         name,
-			Image:        c.Image,
-			ImageID:      c.ImageID,
-			ImageSize:    imageSize,
-			State:        c.State,
-			Status:       c.Status,
-			RestartCount: restartCount,
-			Ports:        ports,
-			Labels:       c.Labels,
-			Created:      time.Unix(c.Created, 0),
-			HostID:       host.ID,
-			HostName:     host.Name,
-			ScannedAt:    now,
+			ID:             c.ID,
+			Name:           name,
+			Image:          c.Image,
+			ImageID:        c.ImageID,
+			ImageSize:      imageSize,
+			State:          c.State,
+			Status:         c.Status,
+			RestartCount:   restartCount,
+			Ports:          ports,
+			Labels:         c.Labels,
+			Created:        time.Unix(c.Created, 0),
+			HostID:         host.ID,
+			HostName:       host.Name,
+			ScannedAt:      now,
+			Networks:       networks,
+			Volumes:        volumes,
+			Links:          links,
+			ComposeProject: composeProject,
 		}
 
 		// Optionally collect resource stats for running containers

@@ -436,6 +436,45 @@ if [ "$BUILD_SUCCESS" = true ]; then
     if [ "$PUSH_TO_REGISTRY" = true ]; then
         echo ""
         print_success "Images pushed to registry: $REGISTRY"
+
+        # Offer to create GitHub release
+        echo ""
+        print_info "GitHub Release Creation"
+        echo ""
+        read -p "Create GitHub Release for v${NEW_VERSION}? (Y/n): " create_release
+
+        if [[ ! $create_release =~ ^[Nn]$ ]]; then
+            # Check if gh CLI is installed
+            if command -v gh &> /dev/null; then
+                print_info "Creating GitHub release v${NEW_VERSION}..."
+
+                # Check if already logged in to GitHub
+                if gh auth status &> /dev/null; then
+                    # Try to create the release
+                    if gh release create "v${NEW_VERSION}" \
+                        --repo selfhosters-cc/container-census \
+                        --title "v${NEW_VERSION}" \
+                        --generate-notes; then
+                        print_success "GitHub release v${NEW_VERSION} created successfully!"
+                        print_info "View at: https://github.com/selfhosters-cc/container-census/releases/tag/v${NEW_VERSION}"
+                    else
+                        print_warning "Failed to create GitHub release (may already exist)"
+                        print_info "You can create it manually at: https://github.com/selfhosters-cc/container-census/releases/new"
+                    fi
+                else
+                    print_warning "Not logged in to GitHub CLI"
+                    print_info "Login with: gh auth login"
+                    print_info "Then create release manually at: https://github.com/selfhosters-cc/container-census/releases/new"
+                fi
+            else
+                print_warning "GitHub CLI (gh) not installed"
+                print_info "Install from: https://cli.github.com/"
+                print_info "Or create release manually at: https://github.com/selfhosters-cc/container-census/releases/new"
+            fi
+        else
+            print_info "Skipping GitHub release creation"
+            print_info "You can create it manually later at: https://github.com/selfhosters-cc/container-census/releases/new"
+        fi
     elif [ "$platform_count" -gt 1 ]; then
         echo ""
         print_warning "Multi-architecture images are in build cache only"

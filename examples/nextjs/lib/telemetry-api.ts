@@ -82,6 +82,21 @@ export interface ImageDetailsResponse {
   };
 }
 
+export interface ConnectionMetrics {
+  total_containers: number;
+  compose_project_count: number;
+  containers_in_compose: number;
+  compose_percentage: number;
+  network_count: number;
+  custom_network_count: number;
+  shared_volume_count: number;
+  total_volumes: number;
+  containers_with_deps: number;
+  total_dependencies: number;
+  avg_connections_per_container: number;
+  installations: number;
+}
+
 // API Client Configuration
 interface TelemetryAPIConfig {
   baseURL: string;
@@ -238,6 +253,14 @@ export class TelemetryAPI {
     sort_order?: 'asc' | 'desc';
   }): Promise<ImageDetailsResponse> {
     return this.request<ImageDetailsResponse>('/api/stats/image-details', params);
+  }
+
+  /**
+   * Get connection and architecture metrics
+   * Shows Docker Compose adoption, network usage, volume sharing, and dependency patterns
+   */
+  async getConnectionMetrics(params?: { days?: number }): Promise<ConnectionMetrics> {
+    return this.request<ConnectionMetrics>('/api/stats/connection-metrics', params);
   }
 }
 

@@ -28,6 +28,7 @@
         <nav class="tabs">
             <button class="tab-btn active" data-tab="containers">Containers</button>
             <button class="tab-btn" data-tab="images">Images</button>
+            <button class="tab-btn" data-tab="graph">Graph</button>
             <button class="tab-btn" data-tab="hosts">Hosts</button>
             <button class="tab-btn" data-tab="scans">Scan Results</button>
             <button class="tab-btn" data-tab="settings">Settings</button>
@@ -114,6 +115,89 @@
                             </tr>
                         </tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="graphTab" class="tab-content">
+            <div class="graph-section">
+                <div class="graph-header">
+                    <h2>Container Connection Graph</h2>
+                    <div class="graph-toolbar">
+                        <div class="graph-search">
+                            <input type="text" id="graphSearch" class="search-input" placeholder="Search containers...">
+                        </div>
+                        <div class="graph-selectors">
+                            <select id="composeProjectSelect" class="filter-select">
+                                <option value="">Compose: All Projects</option>
+                            </select>
+                            <select id="networkSelect" class="filter-select">
+                                <option value="">Networks: Show All</option>
+                            </select>
+                            <select id="layoutSelect" class="filter-select">
+                                <option value="cose">Layout: Force-Directed</option>
+                                <option value="dagre">Layout: Hierarchical</option>
+                                <option value="circle">Layout: Circular</option>
+                                <option value="grid">Layout: Grid</option>
+                                <option value="concentric">Layout: Concentric</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="graph-controls-row">
+                    <div class="graph-filters">
+                        <label class="filter-checkbox">
+                            <input type="checkbox" id="showNetworks" checked>
+                            <span class="legend-color" style="background: #3498db;"></span>
+                            Networks <span class="edge-count" id="networkCount">(0)</span>
+                        </label>
+                        <label class="filter-checkbox">
+                            <input type="checkbox" id="showVolumes" checked>
+                            <span class="legend-color" style="background: #e74c3c;"></span>
+                            Volumes <span class="edge-count" id="volumeCount">(0)</span>
+                        </label>
+                        <label class="filter-checkbox">
+                            <input type="checkbox" id="showCompose" checked>
+                            <span class="legend-color" style="background: #f39c12;"></span>
+                            Compose <span class="edge-count" id="composeCount">(0)</span>
+                        </label>
+                        <label class="filter-checkbox">
+                            <input type="checkbox" id="showDepends" checked>
+                            <span class="legend-color legend-arrow" style="background: #16a085;">→</span>
+                            Dependencies <span class="edge-count" id="dependsCount">(0)</span>
+                        </label>
+                        <label class="filter-checkbox">
+                            <input type="checkbox" id="showLinks" checked>
+                            <span class="legend-color" style="background: #9b59b6;"></span>
+                            Links <span class="edge-count" id="linksCount">(0)</span>
+                        </label>
+                    </div>
+
+                    <div class="graph-display-options">
+                        <label class="filter-checkbox">
+                            <input type="checkbox" id="colorByProject">
+                            🎨 Color by Project
+                        </label>
+                        <label class="filter-checkbox">
+                            <input type="checkbox" id="hideEdgeLabels">
+                            🏷️ Hide Edge Labels
+                        </label>
+                    </div>
+
+                    <div class="graph-zoom-controls">
+                        <button id="zoomOutBtn" class="btn btn-sm btn-secondary" title="Zoom Out">−</button>
+                        <button id="zoomResetBtn" class="btn btn-sm btn-secondary" title="Reset Zoom">⊙</button>
+                        <button id="zoomInBtn" class="btn btn-sm btn-secondary" title="Zoom In">+</button>
+                        <button id="fitGraphBtn" class="btn btn-sm btn-secondary" title="Fit to Screen">⛶</button>
+                    </div>
+                </div>
+
+                <div id="graphContainer" class="graph-container">
+                    <div class="graph-loading">Loading graph...</div>
+                </div>
+                <div class="graph-info" id="graphInfo">
+                    <p>Click on containers or connections to see details</p>
                 </div>
             </div>
         </div>
@@ -300,6 +384,10 @@
         </div>
     </div>
 
-    <script src="app.js?v=3"></script>
+    <!-- Cytoscape.js for graph visualization -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.29.2/cytoscape.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
+    <script src="app.js?v=7"></script>
 </body>
 </html>

@@ -82,6 +82,16 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	// Check for updates on startup
+	go checkForUpdates()
+
+	// Create context for background tasks
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start daily version check
+	go runDailyVersionCheck(ctx)
+
 	// Start server
 	go func() {
 		log.Printf("Agent listening on http://0.0.0.0%s", addr)
@@ -97,15 +107,48 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
+	cancel() // Cancel background tasks
+
 	log.Println("Shutting down agent...")
 
 	// Graceful shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
 
-	if err := server.Shutdown(ctx); err != nil {
+	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf("Agent forced to shutdown: %v", err)
 	}
 
 	log.Println("Agent stopped")
+}
+
+// checkForUpdates checks for new versions and logs a warning if an update is available
+func checkForUpdates() {
+	info := version.CheckLatestVersion()
+
+	if info.Error != nil {
+		// Silently ignore errors during version check
+		log.Printf("Version check: %v", info.Error)
+		return
+	}
+
+	if info.UpdateAvailable {
+		log.Printf("⚠️  UPDATE AVAILABLE: Container Census Agent %s → %s", info.CurrentVersion, info.LatestVersion)
+		log.Printf("   Download: %s", info.ReleaseURL)
+	}
+}
+
+// runDailyVersionCheck performs version checks once per day
+func runDailyVersionCheck(ctx context.Context) {
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			checkForUpdates()
+		}
+	}
 }

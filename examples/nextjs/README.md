@@ -284,6 +284,66 @@ import { ContainerImagesTable } from '@/components/ContainerImagesTable';
 
 **Props:**
 - `images: ImageDetail[]` - Array of detailed image data (includes name, count, registry, installation count)
+
+### Connection & Architecture Charts
+
+These components visualize container connectivity patterns, Docker Compose adoption, network usage, and volume sharing.
+
+#### `ComposeAdoptionChart`
+
+Pie chart showing Docker Compose adoption percentage.
+
+```typescript
+import { ComposeAdoptionChart } from '@/components/ComposeAdoptionChart';
+
+<ComposeAdoptionChart metrics={connectionMetrics} />
+```
+
+**Props:**
+- `metrics: ConnectionMetrics` - Connection metrics data
+- `title?: string` - Chart title (default: "🐳 Docker Compose Adoption")
+
+#### `ConnectivityChart`
+
+Bar chart showing container connectivity metrics including average connections, dependencies, and compose projects.
+
+```typescript
+import { ConnectivityChart } from '@/components/ConnectivityChart';
+
+<ConnectivityChart metrics={connectionMetrics} />
+```
+
+**Props:**
+- `metrics: ConnectionMetrics` - Connection metrics data
+- `title?: string` - Chart title (default: "🔗 Container Connectivity")
+
+#### `SharedVolumesChart`
+
+Doughnut chart showing volume sharing patterns across containers.
+
+```typescript
+import { SharedVolumesChart } from '@/components/SharedVolumesChart';
+
+<SharedVolumesChart metrics={connectionMetrics} />
+```
+
+**Props:**
+- `metrics: ConnectionMetrics` - Connection metrics data
+- `title?: string` - Chart title (default: "📦 Shared Volumes Usage")
+
+#### `CustomNetworksChart`
+
+Bar chart comparing custom networks vs default Docker networks.
+
+```typescript
+import { CustomNetworksChart } from '@/components/CustomNetworksChart';
+
+<CustomNetworksChart metrics={connectionMetrics} />
+```
+
+**Props:**
+- `metrics: ConnectionMetrics` - Connection metrics data
+- `title?: string` - Chart title (default: "🕸️ Custom Networks")
 - `title?: string` - Table title (default: "Container Images")
 
 **Features:**
@@ -323,6 +383,7 @@ const api = new TelemetryAPI({
 | `getRecentEvents()` | `{ limit?, since? }` | `Promise<SubmissionEvent[]>` | Get recent submissions |
 | `getInstallations()` | `{ days? }` | `Promise<{...}>` | Get installation count |
 | `getImageDetails()` | `{ limit?, offset?, days?, search?, sort_by?, sort_order? }` | `Promise<ImageDetailsResponse>` | Get detailed image data with pagination and search |
+| `getConnectionMetrics()` | `{ days? }` | `Promise<ConnectionMetrics>` | Get container connectivity and architecture metrics |
 
 ### Data Types
 
@@ -340,11 +401,12 @@ import {
   IntervalCount,
   SubmissionEvent,
   ImageDetail,
-  ImageDetailsResponse
+  ImageDetailsResponse,
+  ConnectionMetrics
 } from '@/lib/telemetry-api';
 ```
 
-**New Types for Image Details:**
+**Image Details Types:**
 
 ```typescript
 interface ImageDetail {
@@ -361,6 +423,25 @@ interface ImageDetailsResponse {
     limit: number;   // Page size
     offset: number;  // Current offset
   };
+}
+```
+
+**Connection Metrics Type:**
+
+```typescript
+interface ConnectionMetrics {
+  total_containers: number;              // Total containers across all installations
+  compose_project_count: number;         // Number of unique Docker Compose projects
+  containers_in_compose: number;         // Containers managed by Compose
+  compose_percentage: number;            // Percentage of containers using Compose
+  network_count: number;                 // Total Docker networks
+  custom_network_count: number;          // User-created networks (excludes bridge, host, none)
+  shared_volume_count: number;           // Volumes shared by 2+ containers
+  total_volumes: number;                 // Estimated total volumes
+  containers_with_deps: number;          // Containers with depends_on configured
+  total_dependencies: number;            // Total dependency relationships
+  avg_connections_per_container: number; // Average network + volume connections per container
+  installations: number;                 // Number of installations reporting this data
 }
 ```
 

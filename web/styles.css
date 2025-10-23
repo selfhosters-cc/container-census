@@ -1371,3 +1371,181 @@ tbody tr:hover {
         transform: translateX(100%);
     }
 }
+
+/* Graph Visualization Styles */
+.graph-section {
+    background: white;
+    border-radius: 10px;
+    padding: 20px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.graph-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    flex-wrap: wrap;
+    gap: 15px;
+}
+
+.graph-header h2 {
+    margin: 0;
+    color: #2c3e50;
+}
+
+.graph-toolbar {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+    flex: 1;
+}
+
+.graph-search {
+    flex: 0 1 300px;
+}
+
+.graph-search .search-input {
+    width: 100%;
+    margin: 0;
+}
+
+.graph-selectors {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    flex: 1;
+}
+
+.graph-selectors .filter-select {
+    min-width: 180px;
+}
+
+.graph-controls-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding: 12px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    flex-wrap: wrap;
+    gap: 15px;
+}
+
+.graph-filters {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+
+.graph-display-options {
+    display: flex;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+
+.graph-zoom-controls {
+    display: flex;
+    gap: 5px;
+    flex-shrink: 0;
+}
+
+.graph-zoom-controls .btn {
+    min-width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    padding: 0;
+    font-weight: bold;
+}
+
+.edge-count {
+    font-size: 11px;
+    color: #7f8c8d;
+    font-weight: normal;
+}
+
+.filter-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    user-select: none;
+}
+
+.filter-checkbox input[type="checkbox"] {
+    cursor: pointer;
+}
+
+.legend-color {
+    display: inline-block;
+    width: 20px;
+    height: 3px;
+    border-radius: 2px;
+}
+
+.legend-arrow {
+    height: auto;
+    line-height: 1;
+    font-size: 16px;
+    font-weight: bold;
+    padding: 0 2px;
+}
+
+.graph-container {
+    width: 100%;
+    height: 600px;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    background: #fafafa;
+    position: relative;
+    overflow: hidden;
+}
+
+.graph-loading,
+.graph-error,
+.graph-empty {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    color: #7f8c8d;
+    font-size: 16px;
+}
+
+.graph-error {
+    color: #e74c3c;
+}
+
+.graph-info {
+    margin-top: 15px;
+    padding: 15px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    border-left: 4px solid #667eea;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.graph-info strong {
+    display: block;
+    margin-bottom: 5px;
+    color: #2c3e50;
+    font-size: 15px;
+}
+
+.graph-info p {
+    margin: 0;
+    color: #7f8c8d;
+}
+
+/* Cytoscape canvas */
+#graphContainer canvas {
+    outline: none;
+}

@@ -19,9 +19,13 @@ import { TopImagesChart } from '@/components/TopImagesChart';
 import { GrowthChart } from '@/components/GrowthChart';
 import { RegistryChart } from '@/components/RegistryChart';
 import { ContainerImagesTable } from '@/components/ContainerImagesTable';
-import type { ImageCount, Growth, RegistryCount, ImageDetail, Summary } from '@/lib/telemetry-api';
+import { ComposeAdoptionChart } from '@/components/ComposeAdoptionChart';
+import { ConnectivityChart } from '@/components/ConnectivityChart';
+import { SharedVolumesChart } from '@/components/SharedVolumesChart';
+import { CustomNetworksChart } from '@/components/CustomNetworksChart';
+import type { ImageCount, Growth, RegistryCount, ImageDetail, Summary, ConnectionMetrics } from '@/lib/telemetry-api';
 
-type TabType = 'overview' | 'images';
+type TabType = 'overview' | 'images' | 'architecture';
 
 export default function TelemetryDashboard() {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
@@ -30,6 +34,7 @@ export default function TelemetryDashboard() {
   const [growth, setGrowth] = useState<Growth[]>([]);
   const [registries, setRegistries] = useState<RegistryCount[]>([]);
   const [imageDetails, setImageDetails] = useState<ImageDetail[]>([]);
+  const [connectionMetrics, setConnectionMetrics] = useState<ConnectionMetrics | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -49,6 +54,9 @@ export default function TelemetryDashboard() {
           setTopImages(topImagesData);
           setGrowth(growthData);
           setRegistries(registriesData);
+        } else if (activeTab === 'architecture') {
+          const metricsData = await api.getConnectionMetrics({ days: 30 });
+          setConnectionMetrics(metricsData);
         } else {
           const response = await api.getImageDetails({ limit: 1000, days: 30 });
           setImageDetails(response.images);
@@ -103,6 +111,18 @@ export default function TelemetryDashboard() {
                 `}
               >
                 Container Images
+              </button>
+              <button
+                onClick={() => setActiveTab('architecture')}
+                className={`
+                  py-4 px-1 border-b-2 font-medium text-sm transition-colors
+                  ${activeTab === 'architecture'
+                    ? 'border-purple-500 text-purple-600 dark:text-purple-400'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+                  }
+                `}
+              >
+                Architecture & Connectivity
               </button>
             </nav>
           </div>
@@ -221,6 +241,78 @@ export default function TelemetryDashboard() {
                   <RegistryChart data={registries} />
                 </div>
               </div>
+            </div>
+          </>
+        ) : activeTab === 'architecture' ? (
+          <>
+            {/* Architecture Overview */}
+            <div className="mb-8">
+              <h2 className="text-2xl font-semibold text-gray-900 dark:text-white mb-4">
+                Container Architecture & Connectivity
+              </h2>
+              <p className="text-gray-600 dark:text-gray-300 mb-6">
+                Insights into how containers are connected through Docker Compose, networks, volumes, and dependencies.
+              </p>
+
+              {connectionMetrics && (
+                <>
+                  {/* Summary Cards */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+                      <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">
+                        Compose Adoption
+                      </h3>
+                      <p className="mt-2 text-3xl font-semibold text-gray-900 dark:text-white">
+                        {connectionMetrics.compose_percentage.toFixed(1)}%
+                      </p>
+                      <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                        {connectionMetrics.containers_in_compose.toLocaleString()} of {connectionMetrics.total_containers.toLocaleString()} containers
+                      </p>
+                    </div>
+                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+                      <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">
+                        Custom Networks
+                      </h3>
+                      <p className="mt-2 text-3xl font-semibold text-gray-900 dark:text-white">
+                        {connectionMetrics.custom_network_count.toLocaleString()}
+                      </p>
+                      <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                        of {connectionMetrics.network_count.toLocaleString()} total networks
+                      </p>
+                    </div>
+                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+                      <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">
+                        Shared Volumes
+                      </h3>
+                      <p className="mt-2 text-3xl font-semibold text-gray-900 dark:text-white">
+                        {connectionMetrics.shared_volume_count.toLocaleString()}
+                      </p>
+                      <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                        Used by 2+ containers
+                      </p>
+                    </div>
+                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+                      <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">
+                        Avg Connections
+                      </h3>
+                      <p className="mt-2 text-3xl font-semibold text-gray-900 dark:text-white">
+                        {connectionMetrics.avg_connections_per_container.toFixed(2)}
+                      </p>
+                      <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                        Per container
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Charts Grid */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    <ComposeAdoptionChart metrics={connectionMetrics} />
+                    <ConnectivityChart metrics={connectionMetrics} />
+                    <SharedVolumesChart metrics={connectionMetrics} />
+                    <CustomNetworksChart metrics={connectionMetrics} />
+                  </div>
+                </>
+              )}
             </div>
           </>
         ) : (

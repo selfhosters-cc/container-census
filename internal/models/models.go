@@ -38,6 +38,11 @@ type Container struct {
 	MemoryUsage   int64   `json:"memory_usage,omitempty"`   // bytes
 	MemoryLimit   int64   `json:"memory_limit,omitempty"`   // bytes
 	MemoryPercent float64 `json:"memory_percent,omitempty"`
+	// Connection information for graph visualization
+	Networks       []string      `json:"networks,omitempty"`        // Network names this container is connected to
+	Volumes        []VolumeMount `json:"volumes,omitempty"`         // Volume mounts
+	Links          []string      `json:"links,omitempty"`           // Container links (legacy)
+	ComposeProject string        `json:"compose_project,omitempty"` // Docker Compose project name
 }
 
 // PortMapping represents a container port mapping
@@ -46,6 +51,39 @@ type PortMapping struct {
 	PublicPort  int    `json:"public_port,omitempty"`
 	Type        string `json:"type"` // tcp or udp
 	IP          string `json:"ip,omitempty"`
+}
+
+// VolumeMount represents a volume or bind mount in a container
+type VolumeMount struct {
+	Name        string `json:"name"`        // Named volume or source path for bind mounts
+	Destination string `json:"destination"` // Mount point inside container
+	Type        string `json:"type"`        // "volume", "bind", "tmpfs"
+	RW          bool   `json:"rw"`          // Read-write vs read-only
+}
+
+// ContainerGraphNode represents a container node in the connection graph
+type ContainerGraphNode struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Image          string `json:"image"`
+	State          string `json:"state"`
+	HostID         int64  `json:"host_id"`
+	HostName       string `json:"host_name"`
+	ComposeProject string `json:"compose_project,omitempty"`
+}
+
+// ContainerGraphEdge represents a connection between containers
+type ContainerGraphEdge struct {
+	Source string `json:"source"` // Source container ID
+	Target string `json:"target"` // Target container ID
+	Type   string `json:"type"`   // "network", "volume", "link", "compose"
+	Label  string `json:"label"`  // Human-readable label (network name, volume name, etc.)
+}
+
+// ContainerGraph represents the complete connection graph
+type ContainerGraph struct {
+	Nodes []ContainerGraphNode `json:"nodes"`
+	Edges []ContainerGraphEdge `json:"edges"`
 }
 
 // ScanResult represents a scan operation
@@ -169,6 +207,15 @@ type TelemetryReport struct {
 	UniqueImages   int   `json:"unique_images,omitempty"`
 	// System information (optional)
 	Timezone string `json:"timezone,omitempty"` // e.g., "America/New_York"
+	// Connection and architecture metrics
+	ComposeProjectCount  int `json:"compose_project_count,omitempty"`  // number of unique compose projects
+	ContainersInCompose  int `json:"containers_in_compose,omitempty"`  // containers with compose_project set
+	NetworkCount         int `json:"network_count,omitempty"`          // total networks (including bridge, host)
+	CustomNetworkCount   int `json:"custom_network_count,omitempty"`   // user-created networks (excludes bridge, host, none)
+	SharedVolumeCount    int `json:"shared_volume_count,omitempty"`    // volumes shared by 2+ containers
+	ContainersWithDeps   int `json:"containers_with_deps,omitempty"`   // containers with depends_on configured
+	TotalDependencies    int `json:"total_dependencies,omitempty"`     // total dependency edges
+	AvgConnectionsPerContainer float64 `json:"avg_connections_per_container,omitempty"` // avg network+volume connections
 }
 
 // ImageStat contains statistics for a container image

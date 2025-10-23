@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -140,6 +141,7 @@ func (s *Server) setupRoutes() {
 
 	// Container endpoints
 	api.HandleFunc("/containers", s.handleGetContainers).Methods("GET")
+	api.HandleFunc("/containers/graph", s.handleGetContainerGraph).Methods("GET")
 	api.HandleFunc("/containers/host/{id}", s.handleGetContainersByHost).Methods("GET")
 	api.HandleFunc("/containers/history", s.handleGetContainersHistory).Methods("GET")
 	api.HandleFunc("/containers/{host_id}/{container_id}/start", s.handleStartContainer).Methods("POST")
@@ -314,6 +316,189 @@ func (s *Server) handleGetContainersHistory(w http.ResponseWriter, r *http.Reque
 	respondJSON(w, http.StatusOK, containers)
 }
 
+func (s *Server) handleGetContainerGraph(w http.ResponseWriter, r *http.Request) {
+	// Get latest containers with all connection details
+	containers, err := s.db.GetLatestContainers()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get containers: "+err.Error())
+		return
+	}
+
+	// Build graph nodes and edges
+	graph := models.ContainerGraph{
+		Nodes: make([]models.ContainerGraphNode, 0, len(containers)),
+		Edges: make([]models.ContainerGraphEdge, 0),
+	}
+
+	// Create nodes
+	for _, c := range containers {
+		node := models.ContainerGraphNode{
+			ID:             c.ID,
+			Name:           c.Name,
+			Image:          c.Image,
+			State:          c.State,
+			HostID:         c.HostID,
+			HostName:       c.HostName,
+			ComposeProject: c.ComposeProject,
+		}
+		graph.Nodes = append(graph.Nodes, node)
+	}
+
+	// Build edges by analyzing connections
+	// Track which connections we've already added to avoid duplicates
+	edgeMap := make(map[string]bool)
+
+	for i, c1 := range containers {
+		// Network connections
+		for _, network := range c1.Networks {
+			// Find other containers on the same network AND same host
+			for j, c2 := range containers {
+				if i >= j {
+					continue // Skip self and already processed pairs
+				}
+				// Networks are isolated per Docker daemon - only connect containers on same host
+				if c1.HostID != c2.HostID {
+					continue
+				}
+				for _, network2 := range c2.Networks {
+					if network == network2 {
+						edgeKey := c1.ID + "-" + c2.ID + "-network-" + network
+						if !edgeMap[edgeKey] {
+							graph.Edges = append(graph.Edges, models.ContainerGraphEdge{
+								Source: c1.ID,
+								Target: c2.ID,
+								Type:   "network",
+								Label:  network,
+							})
+							edgeMap[edgeKey] = true
+						}
+					}
+				}
+			}
+		}
+
+		// Volume connections (shared volumes)
+		for _, vol1 := range c1.Volumes {
+			if vol1.Type != "volume" || vol1.Name == "" {
+				continue // Only process named volumes
+			}
+			// Find other containers with the same volume on the same host
+			for j, c2 := range containers {
+				if i >= j {
+					continue
+				}
+				// Volumes are isolated per Docker daemon - only connect containers on same host
+				if c1.HostID != c2.HostID {
+					continue
+				}
+				for _, vol2 := range c2.Volumes {
+					if vol1.Name == vol2.Name && vol1.Type == vol2.Type {
+						edgeKey := c1.ID + "-" + c2.ID + "-volume-" + vol1.Name
+						if !edgeMap[edgeKey] {
+							graph.Edges = append(graph.Edges, models.ContainerGraphEdge{
+								Source: c1.ID,
+								Target: c2.ID,
+								Type:   "volume",
+								Label:  vol1.Name,
+							})
+							edgeMap[edgeKey] = true
+						}
+					}
+				}
+			}
+		}
+
+		// Docker Compose project connections
+		if c1.ComposeProject != "" {
+			for j, c2 := range containers {
+				if i >= j {
+					continue
+				}
+				// Compose projects are isolated per host - only connect containers on same host
+				if c1.HostID != c2.HostID {
+					continue
+				}
+				if c2.ComposeProject == c1.ComposeProject {
+					edgeKey := c1.ID + "-" + c2.ID + "-compose-" + c1.ComposeProject
+					if !edgeMap[edgeKey] {
+						graph.Edges = append(graph.Edges, models.ContainerGraphEdge{
+							Source: c1.ID,
+							Target: c2.ID,
+							Type:   "compose",
+							Label:  c1.ComposeProject,
+						})
+						edgeMap[edgeKey] = true
+					}
+				}
+			}
+		}
+
+		// Legacy links
+		for _, link := range c1.Links {
+			// Links are in format: /container_name:/alias
+			// Extract the target container name
+			parts := strings.Split(link, ":")
+			if len(parts) > 0 {
+				targetName := strings.TrimPrefix(parts[0], "/")
+				// Find the target container by name on the same host
+				for _, c2 := range containers {
+					// Links only work on same host
+					if c1.HostID != c2.HostID {
+						continue
+					}
+					if c2.Name == targetName {
+						edgeKey := c1.ID + "-" + c2.ID + "-link"
+						if !edgeMap[edgeKey] {
+							graph.Edges = append(graph.Edges, models.ContainerGraphEdge{
+								Source: c1.ID,
+								Target: c2.ID,
+								Type:   "link",
+								Label:  "linked",
+							})
+							edgeMap[edgeKey] = true
+						}
+						break
+					}
+				}
+			}
+		}
+
+		// Docker Compose depends_on from labels
+		if dependsOn, ok := c1.Labels["com.docker.compose.depends_on"]; ok && dependsOn != "" {
+			// Format: "service1:condition:required,service2:condition:required"
+			dependencies := strings.Split(dependsOn, ",")
+			for _, dep := range dependencies {
+				// Parse "service:condition:required"
+				depParts := strings.Split(strings.TrimSpace(dep), ":")
+				if len(depParts) > 0 {
+					targetService := depParts[0]
+					// Find container with matching compose service name on same host
+					for _, c2 := range containers {
+						if serviceName, ok := c2.Labels["com.docker.compose.service"]; ok && serviceName == targetService {
+							// Only create edge if same compose project AND same host
+							if c1.ComposeProject != "" && c1.ComposeProject == c2.ComposeProject && c1.HostID == c2.HostID {
+								edgeKey := c1.ID + "-" + c2.ID + "-depends"
+								if !edgeMap[edgeKey] {
+									graph.Edges = append(graph.Edges, models.ContainerGraphEdge{
+										Source: c1.ID,
+										Target: c2.ID,
+										Type:   "depends",
+										Label:  "depends on",
+									})
+									edgeMap[edgeKey] = true
+								}
+							}
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	respondJSON(w, http.StatusOK, graph)
+}
+
 func (s *Server) handleTriggerScan(w http.ResponseWriter, r *http.Request) {
 	// Get all hosts
 	hosts, err := s.db.GetHosts()
@@ -383,11 +568,23 @@ func (s *Server) handleGetScanResults(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	respondJSON(w, http.StatusOK, map[string]string{
+	response := map[string]interface{}{
 		"status":  "healthy",
 		"version": version.Get(),
 		"time":    time.Now().Format(time.RFC3339),
-	})
+	}
+
+	// Add update information if available
+	updateInfo := version.GetUpdateInfo()
+	if updateInfo != nil && updateInfo.Error == nil {
+		response["latest_version"] = updateInfo.LatestVersion
+		response["update_available"] = updateInfo.UpdateAvailable
+		if updateInfo.UpdateAvailable {
+			response["release_url"] = updateInfo.ReleaseURL
+		}
+	}
+
+	respondJSON(w, http.StatusOK, response)
 }
 
 // Helper functions

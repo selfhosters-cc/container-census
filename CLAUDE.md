@@ -238,6 +238,66 @@ Version is stored in `.version` file at repository root and embedded at build ti
 
 Update `.version` before building/tagging releases.
 
+### Version Update Notifications
+
+Container Census automatically checks for updates and notifies users through multiple channels:
+
+**GitHub Release Requirement:**
+- All releases MUST be created as GitHub Releases on `selfhosters-cc/container-census`
+- The build script (`scripts/build-all-images.sh`) prompts to create releases after pushing images
+- Releases use tag format: `v{VERSION}` (e.g., `v0.9.23`)
+- Release notes are auto-generated using `gh release create --generate-notes`
+
+**Version Checking Architecture:**
+- **Backend**: `internal/version/version.go` contains `CheckLatestVersion()` function
+  - Queries GitHub Releases API: `https://api.github.com/repos/selfhosters-cc/container-census/releases/latest`
+  - Results cached for 24 hours to respect rate limits (60 requests/hour unauthenticated)
+  - Thread-safe with RWMutex for concurrent access
+  - Semantic version comparison (major.minor.patch)
+  - Returns `UpdateInfo` struct with current version, latest version, availability flag, and release URL
+
+**Health Endpoint Integration:**
+- `/api/health` endpoint includes version information:
+  ```json
+  {
+    "status": "healthy",
+    "version": "0.9.22",
+    "latest_version": "0.9.23",
+    "update_available": true,
+    "release_url": "https://github.com/selfhosters-cc/container-census/releases/tag/v0.9.23"
+  }
+  ```
+- Available in both census server and telemetry collector
+
+**UI Notification:**
+- Version badge in header shows update arrow when available: `v0.9.22 → v0.9.23 ⬆️`
+- Badge is clickable and opens release page in new tab
+- Implemented in both vanilla JS dashboards (`web/app.js`, `web/analytics/app.js`)
+- Console log message with download link
+
+**Server Log Notification:**
+- All three applications (server, agent, collector) check for updates:
+  - On startup (asynchronous, non-blocking)
+  - Daily at midnight (background goroutine)
+- Log format:
+  ```
+  ⚠️  UPDATE AVAILABLE: Container Census v0.9.22 → v0.9.23
+     Download: https://github.com/selfhosters-cc/container-census/releases/tag/v0.9.23
+  ```
+
+**Implementation Details:**
+- Startup check: `go checkForUpdates()` launched before HTTP server starts
+- Daily check: `go runDailyVersionCheck(ctx)` runs with 24-hour ticker
+- Both functions are non-blocking and handle errors gracefully
+- "dev" builds do not show update notifications
+- Version check failures are logged but do not affect application operation
+
+**Rate Limiting Considerations:**
+- GitHub API unauthenticated limit: 60 requests/hour
+- With 24-hour cache per instance, supports ~1,440 installations checking concurrently
+- Cache invalidation available via `version.InvalidateCache()` if needed
+- No authentication required (public repository, public releases)
+
 ## Database Schemas
 
 ### Census Server (SQLite)

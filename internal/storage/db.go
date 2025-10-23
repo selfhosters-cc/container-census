@@ -73,6 +73,10 @@ func (db *DB) initSchema() error {
 		host_id INTEGER NOT NULL,
 		host_name TEXT NOT NULL,
 		scanned_at TIMESTAMP NOT NULL,
+		networks TEXT,
+		volumes TEXT,
+		links TEXT,
+		compose_project TEXT,
 		PRIMARY KEY (id, host_id, scanned_at),
 		FOREIGN KEY (host_id) REFERENCES hosts(id) ON DELETE CASCADE
 	);
@@ -144,6 +148,33 @@ func (db *DB) runMigrations() error {
 		}
 	}
 
+	// Check if containers.networks column exists (for graph feature)
+	var networksExists int
+	err = db.conn.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('containers') WHERE name='networks'
+	`).Scan(&networksExists)
+	if err != nil {
+		return err
+	}
+
+	if networksExists == 0 {
+		containerMigrations := []string{
+			`ALTER TABLE containers ADD COLUMN networks TEXT`,
+			`ALTER TABLE containers ADD COLUMN volumes TEXT`,
+			`ALTER TABLE containers ADD COLUMN links TEXT`,
+			`ALTER TABLE containers ADD COLUMN compose_project TEXT`,
+		}
+
+		for _, migration := range containerMigrations {
+			if _, err := db.conn.Exec(migration); err != nil {
+				// Ignore "duplicate column" errors
+				if !isSQLiteContainerColumnExistsError(err) {
+					return err
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -154,6 +185,15 @@ func isSQLiteColumnExistsError(err error) bool {
 		err.Error() == "duplicate column name: agent_token" ||
 		err.Error() == "duplicate column name: agent_status" ||
 		err.Error() == "duplicate column name: last_seen")
+}
+
+// isSQLiteContainerColumnExistsError checks if error is about duplicate container column
+func isSQLiteContainerColumnExistsError(err error) bool {
+	return err != nil && (
+		err.Error() == "duplicate column name: networks" ||
+		err.Error() == "duplicate column name: volumes" ||
+		err.Error() == "duplicate column name: links" ||
+		err.Error() == "duplicate column name: compose_project")
 }
 
 // Host operations
@@ -268,8 +308,8 @@ func (db *DB) SaveContainers(containers []models.Container) error {
 
 	stmt, err := tx.Prepare(`
 		INSERT INTO containers
-		(id, name, image, image_id, state, status, ports, labels, created, host_id, host_name, scanned_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, name, image, image_id, state, status, ports, labels, created, host_id, host_name, scanned_at, networks, volumes, links, compose_project)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return err
@@ -287,10 +327,26 @@ func (db *DB) SaveContainers(containers []models.Container) error {
 			return err
 		}
 
+		networksJSON, err := json.Marshal(c.Networks)
+		if err != nil {
+			return err
+		}
+
+		volumesJSON, err := json.Marshal(c.Volumes)
+		if err != nil {
+			return err
+		}
+
+		linksJSON, err := json.Marshal(c.Links)
+		if err != nil {
+			return err
+		}
+
 		_, err = stmt.Exec(
 			c.ID, c.Name, c.Image, c.ImageID, c.State, c.Status,
 			string(portsJSON), string(labelsJSON), c.Created,
 			c.HostID, c.HostName, c.ScannedAt,
+			string(networksJSON), string(volumesJSON), string(linksJSON), c.ComposeProject,
 		)
 		if err != nil {
 			return err
@@ -304,7 +360,8 @@ func (db *DB) SaveContainers(containers []models.Container) error {
 func (db *DB) GetLatestContainers() ([]models.Container, error) {
 	query := `
 		SELECT c.id, c.name, c.image, c.image_id, c.state, c.status,
-		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at
+		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at,
+		       c.networks, c.volumes, c.links, c.compose_project
 		FROM containers c
 		INNER JOIN (
 			SELECT host_id, MAX(scanned_at) as max_scan
@@ -327,7 +384,8 @@ func (db *DB) GetLatestContainers() ([]models.Container, error) {
 func (db *DB) GetContainersByHost(hostID int64) ([]models.Container, error) {
 	query := `
 		SELECT c.id, c.name, c.image, c.image_id, c.state, c.status,
-		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at
+		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at,
+		       c.networks, c.volumes, c.links, c.compose_project
 		FROM containers c
 		INNER JOIN (
 			SELECT MAX(scanned_at) as max_scan
@@ -351,7 +409,8 @@ func (db *DB) GetContainersByHost(hostID int64) ([]models.Container, error) {
 func (db *DB) GetContainersHistory(start, end time.Time) ([]models.Container, error) {
 	query := `
 		SELECT id, name, image, image_id, state, status,
-		       ports, labels, created, host_id, host_name, scanned_at
+		       ports, labels, created, host_id, host_name, scanned_at,
+		       networks, volumes, links, compose_project
 		FROM containers
 		WHERE scanned_at BETWEEN ? AND ?
 		ORDER BY scanned_at DESC, host_name, name
@@ -372,12 +431,14 @@ func (db *DB) scanContainers(rows *sql.Rows) ([]models.Container, error) {
 
 	for rows.Next() {
 		var c models.Container
-		var portsJSON, labelsJSON string
+		var portsJSON, labelsJSON, networksJSON, volumesJSON, linksJSON string
+		var composeProject sql.NullString
 
 		err := rows.Scan(
 			&c.ID, &c.Name, &c.Image, &c.ImageID, &c.State, &c.Status,
 			&portsJSON, &labelsJSON, &c.Created,
 			&c.HostID, &c.HostName, &c.ScannedAt,
+			&networksJSON, &volumesJSON, &linksJSON, &composeProject,
 		)
 		if err != nil {
 			return nil, err
@@ -389,6 +450,28 @@ func (db *DB) scanContainers(rows *sql.Rows) ([]models.Container, error) {
 
 		if err := json.Unmarshal([]byte(labelsJSON), &c.Labels); err != nil {
 			return nil, err
+		}
+
+		if networksJSON != "" && networksJSON != "null" {
+			if err := json.Unmarshal([]byte(networksJSON), &c.Networks); err != nil {
+				return nil, err
+			}
+		}
+
+		if volumesJSON != "" && volumesJSON != "null" {
+			if err := json.Unmarshal([]byte(volumesJSON), &c.Volumes); err != nil {
+				return nil, err
+			}
+		}
+
+		if linksJSON != "" && linksJSON != "null" {
+			if err := json.Unmarshal([]byte(linksJSON), &c.Links); err != nil {
+				return nil, err
+			}
+		}
+
+		if composeProject.Valid {
+			c.ComposeProject = composeProject.String
 		}
 
 		containers = append(containers, c)

@@ -3,6 +3,8 @@ let containers = [];
 let hosts = [];
 let scanResults = [];
 let images = {};
+let graphData = null;
+let cy = null; // Cytoscape instance
 let autoRefreshInterval = null;
 let currentTab = 'containers';
 
@@ -56,6 +58,31 @@ function setupEventListeners() {
             if (e.target.classList.contains('modal')) closeAddAgentModal();
         });
     }
+
+    // Graph filter handlers
+    document.getElementById('showNetworks')?.addEventListener('change', applyGraphFilters);
+    document.getElementById('showVolumes')?.addEventListener('change', applyGraphFilters);
+    document.getElementById('showCompose')?.addEventListener('change', applyGraphFilters);
+    document.getElementById('showDepends')?.addEventListener('change', applyGraphFilters);
+    document.getElementById('showLinks')?.addEventListener('change', applyGraphFilters);
+
+    // Graph display option handlers
+    document.getElementById('colorByProject')?.addEventListener('change', applyGraphFilters);
+    document.getElementById('hideEdgeLabels')?.addEventListener('change', toggleEdgeLabels);
+
+    // Graph selector handlers
+    document.getElementById('composeProjectSelect')?.addEventListener('change', handleComposeProjectChange);
+    document.getElementById('networkSelect')?.addEventListener('change', handleNetworkChange);
+    document.getElementById('layoutSelect')?.addEventListener('change', handleLayoutChange);
+
+    // Graph search handler
+    document.getElementById('graphSearch')?.addEventListener('input', handleGraphSearch);
+
+    // Graph zoom control handlers
+    document.getElementById('zoomInBtn')?.addEventListener('click', zoomIn);
+    document.getElementById('zoomOutBtn')?.addEventListener('click', zoomOut);
+    document.getElementById('zoomResetBtn')?.addEventListener('click', zoomReset);
+    document.getElementById('fitGraphBtn')?.addEventListener('click', fitGraph);
 }
 
 // Tab Management
@@ -78,6 +105,8 @@ function switchTab(tab) {
         loadImages();
     } else if (tab === 'hosts') {
         renderHosts(hosts);
+    } else if (tab === 'graph') {
+        loadGraph();
     }
 }
 
@@ -86,8 +115,30 @@ async function loadVersion() {
     try {
         const response = await fetch('/api/health');
         const data = await response.json();
+        const badge = document.getElementById('versionBadge');
+
         if (data.version) {
-            document.getElementById('versionBadge').textContent = 'v' + data.version;
+            if (data.update_available && data.latest_version) {
+                // Show update indicator
+                badge.innerHTML = `v${data.version} → v${data.latest_version} <span style="font-size: 1.2em;">⬆️</span>`;
+                badge.style.cursor = 'pointer';
+                badge.title = 'Click to view update';
+                badge.onclick = () => {
+                    if (data.release_url) {
+                        window.open(data.release_url, '_blank');
+                    }
+                };
+
+                // Log update notification
+                console.log(`🎉 Container Census update available: v${data.version} → v${data.latest_version}`);
+                console.log(`   Download: ${data.release_url || 'https://github.com/selfhosters-cc/container-census/releases'}`);
+            } else {
+                // No update available
+                badge.textContent = 'v' + data.version;
+                badge.style.cursor = 'default';
+                badge.title = 'Current version';
+                badge.onclick = null;
+            }
         }
     } catch (error) {
         console.error('Error loading version:', error);
@@ -1370,5 +1421,645 @@ async function resetCircuitBreaker(name) {
         }
     } catch (error) {
         showNotification('Error resetting circuit breaker', 'error');
+    }
+}
+
+// Graph Visualization Functions
+
+async function loadGraph() {
+    const container = document.getElementById('graphContainer');
+    container.innerHTML = '<div class="graph-loading">Loading graph...</div>';
+
+    try {
+        const response = await fetch('/api/containers/graph');
+        graphData = await response.json();
+        renderGraph(graphData);
+    } catch (error) {
+        console.error('Error loading graph:', error);
+        container.innerHTML = '<div class="graph-error">Failed to load container graph</div>';
+    }
+}
+
+function renderGraph(data) {
+    const container = document.getElementById('graphContainer');
+
+    if (!data.nodes || data.nodes.length === 0) {
+        container.innerHTML = '<div class="graph-empty">No containers to display</div>';
+        return;
+    }
+
+    // Clear loading message
+    container.innerHTML = '';
+
+    // Build lists for dropdowns
+    buildGraphDropdowns(data);
+
+    // Count edge types
+    updateEdgeCounts(data.edges);
+
+    // Assign colors to compose projects
+    const composeProjects = [...new Set(data.nodes.map(n => n.compose_project).filter(p => p))];
+    const projectColors = {};
+    const colors = ['#3498db', '#9b59b6', '#e67e22', '#1abc9c', '#e74c3c', '#f39c12', '#2ecc71', '#34495e'];
+    composeProjects.forEach((project, i) => {
+        projectColors[project] = colors[i % colors.length];
+    });
+
+    // Build Cytoscape elements
+    const elements = {
+        nodes: data.nodes.map(node => ({
+            data: {
+                id: node.id,
+                label: node.name,
+                state: node.state,
+                image: node.image,
+                host: node.host_name,
+                composeProject: node.compose_project || '',
+                projectColor: projectColors[node.compose_project] || null
+            }
+        })),
+        edges: data.edges.map(edge => ({
+            data: {
+                id: `${edge.source}-${edge.target}-${edge.type}`,
+                source: edge.source,
+                target: edge.target,
+                label: edge.label,
+                type: edge.type
+            }
+        }))
+    };
+
+    // Initialize Cytoscape
+    cy = cytoscape({
+        container: container,
+        elements: elements,
+        style: [
+            // Node styles
+            {
+                selector: 'node',
+                style: {
+                    'label': 'data(label)',
+                    'text-valign': 'center',
+                    'text-halign': 'center',
+                    'background-color': '#95a5a6',
+                    'color': '#fff',
+                    'text-outline-color': '#2c3e50',
+                    'text-outline-width': 2,
+                    'font-size': '12px',
+                    'width': 50,
+                    'height': 50
+                }
+            },
+            {
+                selector: 'node[state="running"]',
+                style: {
+                    'background-color': '#2ecc71',
+                    'border-width': 3,
+                    'border-color': '#27ae60'
+                }
+            },
+            {
+                selector: 'node[state="exited"]',
+                style: {
+                    'background-color': '#95a5a6',
+                    'border-width': 3,
+                    'border-color': '#7f8c8d'
+                }
+            },
+            {
+                selector: 'node[state="paused"]',
+                style: {
+                    'background-color': '#f39c12',
+                    'border-width': 3,
+                    'border-color': '#e67e22'
+                }
+            },
+            {
+                selector: 'node.project-colored',
+                style: {
+                    'background-color': 'data(projectColor)',
+                    'border-color': 'data(projectColor)',
+                    'border-width': 4
+                }
+            },
+            {
+                selector: 'node.dimmed',
+                style: {
+                    'opacity': 0.2
+                }
+            },
+            {
+                selector: 'node.highlighted',
+                style: {
+                    'border-width': 6,
+                    'border-color': '#f1c40f',
+                    'z-index': 999
+                }
+            },
+            {
+                selector: 'node:selected',
+                style: {
+                    'border-width': 5,
+                    'border-color': '#3498db'
+                }
+            },
+            // Edge styles
+            {
+                selector: 'edge',
+                style: {
+                    'curve-style': 'bezier',
+                    'target-arrow-shape': 'none',
+                    'line-color': '#bdc3c7',
+                    'width': 2,
+                    'label': 'data(label)',
+                    'font-size': '10px',
+                    'text-rotation': 'autorotate',
+                    'text-margin-y': -10,
+                    'color': '#34495e',
+                    'text-background-color': '#fff',
+                    'text-background-opacity': 0.8,
+                    'text-background-padding': '3px'
+                }
+            },
+            {
+                selector: 'edge[type="network"]',
+                style: {
+                    'line-color': '#3498db',
+                    'width': 3
+                }
+            },
+            {
+                selector: 'edge[type="volume"]',
+                style: {
+                    'line-color': '#e74c3c',
+                    'width': 3
+                }
+            },
+            {
+                selector: 'edge[type="compose"]',
+                style: {
+                    'line-color': '#f39c12',
+                    'width': 2,
+                    'line-style': 'dashed'
+                }
+            },
+            {
+                selector: 'edge[type="depends"]',
+                style: {
+                    'line-color': '#16a085',
+                    'width': 3,
+                    'target-arrow-shape': 'triangle',
+                    'target-arrow-color': '#16a085',
+                    'curve-style': 'bezier'
+                }
+            },
+            {
+                selector: 'edge[type="link"]',
+                style: {
+                    'line-color': '#9b59b6',
+                    'width': 2,
+                    'target-arrow-shape': 'triangle'
+                }
+            },
+            {
+                selector: 'edge:selected',
+                style: {
+                    'width': 4,
+                    'line-color': '#2c3e50'
+                }
+            },
+            {
+                selector: 'edge.dimmed',
+                style: {
+                    'opacity': 0.15
+                }
+            },
+            {
+                selector: 'edge.no-label',
+                style: {
+                    'label': ''
+                }
+            }
+        ],
+        layout: {
+            name: 'cose',
+            animate: true,
+            animationDuration: 1000,
+            idealEdgeLength: 100,
+            nodeOverlap: 20,
+            refresh: 20,
+            fit: true,
+            padding: 30,
+            randomize: false,
+            componentSpacing: 100,
+            nodeRepulsion: 400000,
+            edgeElasticity: 100,
+            nestingFactor: 5,
+            gravity: 80,
+            numIter: 1000,
+            initialTemp: 200,
+            coolingFactor: 0.95,
+            minTemp: 1.0
+        },
+        minZoom: 0.1,
+        maxZoom: 5,
+        wheelSensitivity: 0.1  // Slower, more controlled zoom with mouse wheel
+    });
+
+    // Add event handlers
+    cy.on('tap', 'node', function(evt) {
+        const node = evt.target;
+        const data = node.data();
+        showGraphInfo(`
+            <strong>${data.label}</strong><br>
+            Host: ${data.host}<br>
+            Image: ${data.image}<br>
+            State: <span class="state-badge state-${data.state}">${data.state}</span><br>
+            ${data.composeProject ? `Compose Project: ${data.composeProject}<br>` : ''}
+        `);
+    });
+
+    cy.on('tap', 'edge', function(evt) {
+        const edge = evt.target;
+        const data = edge.data();
+        const sourceNode = cy.getElementById(data.source).data();
+        const targetNode = cy.getElementById(data.target).data();
+
+        let typeDescription = '';
+        switch(data.type) {
+            case 'network': typeDescription = 'Network Connection'; break;
+            case 'volume': typeDescription = 'Shared Volume'; break;
+            case 'compose': typeDescription = 'Docker Compose Project'; break;
+            case 'depends': typeDescription = 'Dependency'; break;
+            case 'link': typeDescription = 'Container Link'; break;
+            default: typeDescription = 'Connection';
+        }
+
+        showGraphInfo(`
+            <strong>${typeDescription}</strong><br>
+            From: ${sourceNode.label}<br>
+            To: ${targetNode.label}<br>
+            ${data.label}
+        `);
+    });
+
+    cy.on('tap', function(evt) {
+        if (evt.target === cy) {
+            showGraphInfo('<p>Click on containers or connections to see details</p>');
+        }
+    });
+
+    // Apply initial filters
+    applyGraphFilters();
+}
+
+function applyGraphFilters() {
+    if (!cy) return;
+
+    const showNetworks = document.getElementById('showNetworks').checked;
+    const showVolumes = document.getElementById('showVolumes').checked;
+    const showCompose = document.getElementById('showCompose').checked;
+    const showDepends = document.getElementById('showDepends').checked;
+    const showLinks = document.getElementById('showLinks').checked;
+    const colorByProject = document.getElementById('colorByProject').checked;
+
+    // Apply color-by-project styling
+    if (colorByProject) {
+        cy.nodes().forEach(node => {
+            if (node.data('projectColor')) {
+                node.addClass('project-colored');
+            }
+        });
+    } else {
+        cy.nodes().removeClass('project-colored');
+    }
+
+    // Show/hide edges based on filters
+    cy.edges().forEach(edge => {
+        const type = edge.data('type');
+
+        // Check if edge should be visible based on type filters
+        let visibleByType = true;
+        if (type === 'network' && !showNetworks) visibleByType = false;
+        if (type === 'volume' && !showVolumes) visibleByType = false;
+        if (type === 'compose' && !showCompose) visibleByType = false;
+        if (type === 'depends' && !showDepends) visibleByType = false;
+        if (type === 'link' && !showLinks) visibleByType = false;
+
+        // Check if edge is dimmed by project/network selector
+        const isDimmed = edge.hasClass('dimmed');
+
+        // Show edge if it passes type filter and is not dimmed
+        // OR if we're re-enabling a type (even if dimmed, show it)
+        if (visibleByType && !isDimmed) {
+            edge.show();
+        } else if (!visibleByType) {
+            edge.hide();
+        } else if (visibleByType && isDimmed) {
+            // Show but keep dimmed
+            edge.show();
+        }
+    });
+}
+
+function showGraphInfo(html) {
+    const infoDiv = document.getElementById('graphInfo');
+    infoDiv.innerHTML = html;
+}
+
+// Graph zoom control functions
+function zoomIn() {
+    if (!cy) return;
+    const currentZoom = cy.zoom();
+    const newZoom = currentZoom * 1.2; // 20% increase
+    cy.zoom({
+        level: newZoom,
+        renderedPosition: {
+            x: cy.width() / 2,
+            y: cy.height() / 2
+        }
+    });
+}
+
+function zoomOut() {
+    if (!cy) return;
+    const currentZoom = cy.zoom();
+    const newZoom = currentZoom * 0.8; // 20% decrease
+    cy.zoom({
+        level: newZoom,
+        renderedPosition: {
+            x: cy.width() / 2,
+            y: cy.height() / 2
+        }
+    });
+}
+
+function zoomReset() {
+    if (!cy) return;
+    cy.zoom(1);
+    cy.center();
+}
+
+function fitGraph() {
+    if (!cy) return;
+    cy.fit(null, 30); // Fit all elements with 30px padding
+}
+
+// Helper functions for graph enhancements
+
+function buildGraphDropdowns(data) {
+    // Build compose project dropdown
+    const composeProjects = [...new Set(data.nodes.map(n => n.compose_project).filter(p => p))].sort();
+    const composeSelect = document.getElementById('composeProjectSelect');
+    composeSelect.innerHTML = '<option value="">Compose: All Projects</option>';
+    composeProjects.forEach(project => {
+        const optGroup1 = document.createElement('optgroup');
+        optGroup1.label = project;
+        optGroup1.innerHTML = `
+            <option value="highlight:${project}">Highlight: ${project}</option>
+            <option value="isolate:${project}">Isolate: ${project}</option>
+        `;
+        composeSelect.appendChild(optGroup1);
+    });
+
+    // Build network dropdown
+    const networks = [...new Set(data.edges.filter(e => e.type === 'network').map(e => e.label))].sort();
+    const networkSelect = document.getElementById('networkSelect');
+    networkSelect.innerHTML = '<option value="">Networks: Show All</option>';
+    networks.forEach(network => {
+        const optGroup = document.createElement('optgroup');
+        optGroup.label = network;
+        optGroup.innerHTML = `
+            <option value="highlight:${network}">Highlight: ${network}</option>
+            <option value="isolate:${network}">Isolate: ${network}</option>
+        `;
+        networkSelect.appendChild(optGroup);
+    });
+}
+
+function updateEdgeCounts(edges) {
+    const counts = {
+        network: 0,
+        volume: 0,
+        compose: 0,
+        depends: 0,
+        link: 0
+    };
+
+    edges.forEach(edge => {
+        if (counts.hasOwnProperty(edge.type)) {
+            counts[edge.type]++;
+        }
+    });
+
+    document.getElementById('networkCount').textContent = `(${counts.network})`;
+    document.getElementById('volumeCount').textContent = `(${counts.volume})`;
+    document.getElementById('composeCount').textContent = `(${counts.compose})`;
+    document.getElementById('dependsCount').textContent = `(${counts.depends})`;
+    document.getElementById('linksCount').textContent = `(${counts.link})`;
+}
+
+function handleComposeProjectChange(event) {
+    if (!cy) return;
+
+    const value = event.target.value;
+
+    // Reset all nodes and edges
+    cy.nodes().removeClass('dimmed highlighted').show();
+    cy.edges().removeClass('dimmed').show();
+
+    if (!value) {
+        applyGraphFilters();
+        return;
+    }
+
+    const [mode, project] = value.split(':');
+
+    if (mode === 'highlight') {
+        // Dim non-matching nodes
+        cy.nodes().forEach(node => {
+            if (node.data('composeProject') !== project) {
+                node.addClass('dimmed');
+            }
+        });
+        // Dim edges not connected to this project
+        cy.edges().forEach(edge => {
+            const source = cy.getElementById(edge.data('source'));
+            const target = cy.getElementById(edge.data('target'));
+            if (source.data('composeProject') !== project && target.data('composeProject') !== project) {
+                edge.addClass('dimmed');
+            }
+        });
+    } else if (mode === 'isolate') {
+        // Hide non-matching nodes
+        cy.nodes().forEach(node => {
+            if (node.data('composeProject') !== project) {
+                node.hide();
+            }
+        });
+        // Hide edges where both ends are not in project
+        cy.edges().forEach(edge => {
+            const source = cy.getElementById(edge.data('source'));
+            const target = cy.getElementById(edge.data('target'));
+            if (source.data('composeProject') !== project || target.data('composeProject') !== project) {
+                edge.hide();
+            }
+        });
+        // Fit to show isolated project
+        setTimeout(() => cy.fit(null, 30), 100);
+    }
+
+    applyGraphFilters();
+}
+
+function handleNetworkChange(event) {
+    if (!cy) return;
+
+    const value = event.target.value;
+
+    // Reset all
+    cy.nodes().removeClass('dimmed highlighted').show();
+    cy.edges().removeClass('dimmed').show();
+
+    if (!value) {
+        applyGraphFilters();
+        return;
+    }
+
+    const [mode, network] = value.split(':');
+
+    // Find all nodes connected to this network
+    const connectedNodeIds = new Set();
+    cy.edges().forEach(edge => {
+        if (edge.data('type') === 'network' && edge.data('label') === network) {
+            connectedNodeIds.add(edge.data('source'));
+            connectedNodeIds.add(edge.data('target'));
+        }
+    });
+
+    if (mode === 'highlight') {
+        // Dim non-connected nodes
+        cy.nodes().forEach(node => {
+            if (!connectedNodeIds.has(node.id())) {
+                node.addClass('dimmed');
+            }
+        });
+        // Dim edges not related to this network
+        cy.edges().forEach(edge => {
+            if (edge.data('type') !== 'network' || edge.data('label') !== network) {
+                edge.addClass('dimmed');
+            }
+        });
+    } else if (mode === 'isolate') {
+        // Hide non-connected nodes
+        cy.nodes().forEach(node => {
+            if (!connectedNodeIds.has(node.id())) {
+                node.hide();
+            }
+        });
+        // Hide non-network edges
+        cy.edges().forEach(edge => {
+            const source = cy.getElementById(edge.data('source'));
+            const target = cy.getElementById(edge.data('target'));
+            if (source.hidden() || target.hidden()) {
+                edge.hide();
+            }
+        });
+        setTimeout(() => cy.fit(null, 30), 100);
+    }
+
+    applyGraphFilters();
+}
+
+function handleLayoutChange(event) {
+    if (!cy) return;
+
+    const layoutName = event.target.value;
+    let layoutOptions = { name: layoutName, animate: true, animationDuration: 500 };
+
+    // Customize options for different layouts
+    if (layoutName === 'dagre') {
+        layoutOptions.rankDir = 'TB'; // Top to bottom
+        layoutOptions.nodeSep = 50;
+        layoutOptions.rankSep = 100;
+    } else if (layoutName === 'cose') {
+        layoutOptions.idealEdgeLength = 100;
+        layoutOptions.nodeOverlap = 20;
+        layoutOptions.refresh = 20;
+        layoutOptions.fit = true;
+        layoutOptions.padding = 30;
+        layoutOptions.randomize = false;
+        layoutOptions.componentSpacing = 100;
+        layoutOptions.nodeRepulsion = 400000;
+        layoutOptions.edgeElasticity = 100;
+        layoutOptions.nestingFactor = 5;
+        layoutOptions.gravity = 80;
+        layoutOptions.numIter = 1000;
+        layoutOptions.initialTemp = 200;
+        layoutOptions.coolingFactor = 0.95;
+        layoutOptions.minTemp = 1.0;
+    } else if (layoutName === 'circle') {
+        layoutOptions.radius = 250;
+    } else if (layoutName === 'grid') {
+        layoutOptions.rows = Math.ceil(Math.sqrt(cy.nodes().length));
+    } else if (layoutName === 'concentric') {
+        layoutOptions.concentric = node => node.degree();
+        layoutOptions.levelWidth = () => 2;
+    }
+
+    const layout = cy.layout(layoutOptions);
+    layout.run();
+}
+
+function handleGraphSearch(event) {
+    if (!cy) return;
+
+    const searchTerm = event.target.value.toLowerCase().trim();
+
+    // Reset all highlighting
+    cy.nodes().removeClass('highlighted');
+
+    if (!searchTerm) {
+        return;
+    }
+
+    // Find matching nodes
+    const matchingNodes = cy.nodes().filter(node => {
+        return node.data('label').toLowerCase().includes(searchTerm);
+    });
+
+    if (matchingNodes.length > 0) {
+        // Highlight matches
+        matchingNodes.addClass('highlighted');
+
+        // Center on first match
+        const firstMatch = matchingNodes[0];
+        cy.animate({
+            center: { eles: firstMatch },
+            zoom: Math.max(cy.zoom(), 1.5)
+        }, {
+            duration: 500
+        });
+
+        // Update info
+        if (matchingNodes.length === 1) {
+            showGraphInfo(`Found: <strong>${firstMatch.data('label')}</strong>`);
+        } else {
+            showGraphInfo(`Found ${matchingNodes.length} containers matching "${searchTerm}"`);
+        }
+    } else {
+        showGraphInfo(`No containers found matching "${searchTerm}"`);
+    }
+}
+
+function toggleEdgeLabels() {
+    if (!cy) return;
+
+    const hideLabels = document.getElementById('hideEdgeLabels').checked;
+
+    if (hideLabels) {
+        cy.edges().addClass('no-label');
+    } else {
+        cy.edges().removeClass('no-label');
     }
 }

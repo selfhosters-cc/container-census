@@ -177,17 +177,70 @@ func (a *Agent) handleListContainers(w http.ResponseWriter, r *http.Request) {
 			name = strings.TrimPrefix(c.Names[0], "/")
 		}
 
+		// Inspect container for detailed connection info
+		var restartCount int
+		var networks []string
+		var volumes []models.VolumeMount
+		var links []string
+		var composeProject string
+
+		containerJSON, err := a.dockerClient.ContainerInspect(ctx, c.ID)
+		if err == nil {
+			restartCount = containerJSON.RestartCount
+
+			// Extract network connections
+			if containerJSON.NetworkSettings != nil && containerJSON.NetworkSettings.Networks != nil {
+				for networkName := range containerJSON.NetworkSettings.Networks {
+					networks = append(networks, networkName)
+				}
+			}
+
+			// Extract volume mounts
+			if containerJSON.Mounts != nil {
+				for _, mount := range containerJSON.Mounts {
+					volumeMount := models.VolumeMount{
+						Name:        mount.Name,
+						Destination: mount.Destination,
+						Type:        string(mount.Type),
+						RW:          mount.RW,
+					}
+					// For bind mounts, use source path as name
+					if mount.Type == "bind" {
+						volumeMount.Name = mount.Source
+					}
+					volumes = append(volumes, volumeMount)
+				}
+			}
+
+			// Extract legacy links
+			if containerJSON.HostConfig != nil && containerJSON.HostConfig.Links != nil {
+				links = containerJSON.HostConfig.Links
+			}
+
+			// Extract Docker Compose project name from labels
+			if containerJSON.Config != nil && containerJSON.Config.Labels != nil {
+				if project, ok := containerJSON.Config.Labels["com.docker.compose.project"]; ok {
+					composeProject = project
+				}
+			}
+		}
+
 		result = append(result, models.Container{
-			ID:        c.ID,
-			Name:      name,
-			Image:     c.Image,
-			ImageID:   c.ImageID,
-			State:     c.State,
-			Status:    c.Status,
-			Ports:     ports,
-			Labels:    c.Labels,
-			Created:   time.Unix(c.Created, 0),
-			ScannedAt: now,
+			ID:             c.ID,
+			Name:           name,
+			Image:          c.Image,
+			ImageID:        c.ImageID,
+			State:          c.State,
+			Status:         c.Status,
+			RestartCount:   restartCount,
+			Ports:          ports,
+			Labels:         c.Labels,
+			Created:        time.Unix(c.Created, 0),
+			ScannedAt:      now,
+			Networks:       networks,
+			Volumes:        volumes,
+			Links:          links,
+			ComposeProject: composeProject,
 		})
 	}
 

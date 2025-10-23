@@ -5,6 +5,10 @@ let versionsChart = null;
 let scanIntervalsChart = null;
 let activityHeatmapChart = null;
 let geographyChart = null;
+let composeAdoptionChart = null;
+let connectivityChart = null;
+let sharedVolumesChart = null;
+let customNetworksChart = null;
 
 // Vibrant color palette for charts
 const colorPalette = [
@@ -554,14 +558,136 @@ function initCharts() {
             }
         }
     });
+
+    // Compose Adoption Chart (Pie)
+    const composeAdoptionCtx = document.getElementById('composeAdoptionChart').getContext('2d');
+    composeAdoptionChart = new Chart(composeAdoptionCtx, {
+        type: 'pie',
+        data: {
+            labels: [],
+            datasets: [{
+                data: [],
+                backgroundColor: ['#3498db', '#95a5a6']
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
+
+    // Container Connectivity Chart (Bar)
+    const connectivityCtx = document.getElementById('connectivityChart').getContext('2d');
+    connectivityChart = new Chart(connectivityCtx, {
+        type: 'bar',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Metrics',
+                data: [],
+                backgroundColor: ['#3498db', '#e74c3c', '#f39c12']
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            },
+            plugins: {
+                legend: {
+                    display: false
+                }
+            }
+        }
+    });
+
+    // Shared Volumes Chart (Doughnut)
+    const sharedVolumesCtx = document.getElementById('sharedVolumesChart').getContext('2d');
+    sharedVolumesChart = new Chart(sharedVolumesCtx, {
+        type: 'doughnut',
+        data: {
+            labels: [],
+            datasets: [{
+                data: [],
+                backgroundColor: ['#9b59b6', '#bdc3c7']
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
+
+    // Custom Networks Chart (Bar)
+    const customNetworksCtx = document.getElementById('customNetworksChart').getContext('2d');
+    customNetworksChart = new Chart(customNetworksCtx, {
+        type: 'bar',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Network Count',
+                data: [],
+                backgroundColor: ['#3498db', '#2ecc71', '#95a5a6']
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            },
+            plugins: {
+                legend: {
+                    display: false
+                }
+            }
+        }
+    });
 }
 
 async function loadVersion() {
     try {
         const response = await fetch('/health');
         const data = await response.json();
+        const badge = document.getElementById('versionBadge');
+
         if (data.version) {
-            document.getElementById('versionBadge').textContent = 'v' + data.version;
+            if (data.update_available && data.latest_version) {
+                // Show update indicator
+                badge.innerHTML = `v${data.version} → v${data.latest_version} <span style="font-size: 1.2em;">⬆️</span>`;
+                badge.style.cursor = 'pointer';
+                badge.title = 'Click to view update';
+                badge.onclick = () => {
+                    if (data.release_url) {
+                        window.open(data.release_url, '_blank');
+                    }
+                };
+
+                // Log update notification
+                console.log(`🎉 Container Census update available: v${data.version} → v${data.latest_version}`);
+                console.log(`   Download: ${data.release_url || 'https://github.com/selfhosters-cc/container-census/releases'}`);
+            } else {
+                // No update available
+                badge.textContent = 'v' + data.version;
+                badge.style.cursor = 'default';
+                badge.title = 'Current version';
+                badge.onclick = null;
+            }
         }
     } catch (error) {
         console.error('Error loading version:', error);
@@ -586,6 +712,7 @@ async function loadData() {
         await loadVersions();
         await loadScanIntervals();
         await loadActivityHeatmap(days);
+        await loadConnectionMetrics(days);
         await loadGeography(days);
     } catch (error) {
         console.error('Failed to load data:', error);
@@ -717,6 +844,55 @@ async function loadActivityHeatmap(days) {
     }
 }
 
+async function loadConnectionMetrics(days) {
+    try {
+        const response = await fetch(`/api/stats/connection-metrics?days=${days}`);
+        if (!response.ok) throw new Error('Failed to fetch connection metrics');
+
+        const data = await response.json();
+
+        // Update Compose Adoption Chart
+        composeAdoptionChart.data.labels = [
+            `Using Compose (${data.compose_percentage}%)`,
+            `Not Using Compose (${100 - data.compose_percentage}%)`
+        ];
+        composeAdoptionChart.data.datasets[0].data = [
+            data.containers_in_compose,
+            data.total_containers - data.containers_in_compose
+        ];
+        composeAdoptionChart.update();
+
+        // Update Container Connectivity Chart
+        connectivityChart.data.labels = ['Avg Connections', 'With Dependencies', 'Total Projects'];
+        connectivityChart.data.datasets[0].data = [
+            parseFloat(data.avg_connections_per_container.toFixed(2)),
+            data.containers_with_deps,
+            data.compose_project_count
+        ];
+        connectivityChart.update();
+
+        // Update Shared Volumes Chart
+        sharedVolumesChart.data.labels = ['Shared Volumes', 'Other Volumes'];
+        sharedVolumesChart.data.datasets[0].data = [
+            data.shared_volume_count,
+            data.total_volumes - data.shared_volume_count
+        ];
+        sharedVolumesChart.update();
+
+        // Update Custom Networks Chart
+        customNetworksChart.data.labels = ['Total Networks', 'Custom Networks', 'Default Networks'];
+        customNetworksChart.data.datasets[0].data = [
+            data.network_count,
+            data.custom_network_count,
+            data.network_count - data.custom_network_count
+        ];
+        customNetworksChart.update();
+
+    } catch (error) {
+        console.error('Failed to load connection metrics:', error);
+    }
+}
+
 async function loadGeography(days) {
     try {
         const response = await fetch(`/api/stats/geography?days=${days}`);
@@ -724,12 +900,22 @@ async function loadGeography(days) {
 
         const data = await response.json();
 
-        // Sort by installations (descending)
-        data.sort((a, b) => b.installations - a.installations);
+        // Aggregate by region (multiple timezones can map to the same region)
+        const regionMap = new Map();
+        data.forEach(item => {
+            const region = item.region || 'Unknown';
+            const current = regionMap.get(region) || 0;
+            regionMap.set(region, current + item.installations);
+        });
+
+        // Convert to array and sort by installations (descending)
+        const aggregated = Array.from(regionMap.entries())
+            .map(([region, installations]) => ({ region, installations }))
+            .sort((a, b) => b.installations - a.installations);
 
         // Update chart
-        geographyChart.data.labels = data.map(item => item.region);
-        geographyChart.data.datasets[0].data = data.map(item => item.installations);
+        geographyChart.data.labels = aggregated.map(item => item.region);
+        geographyChart.data.datasets[0].data = aggregated.map(item => item.installations);
         geographyChart.update();
     } catch (error) {
         console.error('Failed to load geography:', error);
@@ -897,12 +1083,24 @@ let currentSort = { column: 'count', order: 'desc' };
 let totalContainers = 0;
 
 // Tab switching
-function showTab(tabName) {
+function showTab(tabName, clickedButton) {
     // Update tab buttons
     document.querySelectorAll('.tab-button').forEach(btn => {
         btn.classList.remove('active');
     });
-    event.target.classList.add('active');
+
+    // Add active class to the clicked button
+    if (clickedButton) {
+        clickedButton.classList.add('active');
+    } else {
+        // Fallback: find button by tab name
+        const targetButton = tabName === 'charts' ?
+            document.querySelector('.tab-button[onclick*="charts"]') :
+            document.querySelector('.tab-button[onclick*="images"]');
+        if (targetButton) {
+            targetButton.classList.add('active');
+        }
+    }
 
     // Update tab content
     document.querySelectorAll('.tab-content').forEach(content => {
@@ -1023,7 +1221,7 @@ function escapeHtml(text) {
 }
 
 // Sort table by column
-function sortTable(column) {
+function sortTable(column, headerElement) {
     // Toggle sort order if clicking same column
     if (currentSort.column === column) {
         currentSort.order = currentSort.order === 'asc' ? 'desc' : 'asc';
@@ -1037,7 +1235,7 @@ function sortTable(column) {
         el.textContent = '';
     });
 
-    const header = event.target.closest('th');
+    const header = headerElement.closest('th');
     const indicator = header.querySelector('.sort-indicator');
     indicator.textContent = currentSort.order === 'asc' ? '▲' : '▼';
 

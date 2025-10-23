@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/container-census/container-census/internal/models"
@@ -162,6 +163,75 @@ func (c *Collector) CollectReport(ctx context.Context, agentStats map[string]*mo
 		timezone = tz
 	}
 
+	// Calculate connection and architecture metrics
+	composeProjects := make(map[string]bool)
+	containersInCompose := 0
+	networkSet := make(map[string]bool)
+	volumeUsage := make(map[string]int) // volume name -> container count
+	containersWithDeps := 0
+	totalDependencies := 0
+	totalConnections := 0 // for averaging
+
+	for _, container := range containers {
+		// Compose projects
+		if container.ComposeProject != "" {
+			composeProjects[container.ComposeProject] = true
+			containersInCompose++
+
+			// Check for dependencies
+			if dependsOn, ok := container.Labels["com.docker.compose.depends_on"]; ok && dependsOn != "" {
+				containersWithDeps++
+				// Count dependencies (format: "service1:condition:required,service2:condition:required")
+				deps := 0
+				for _, part := range splitAndTrim(dependsOn, ",") {
+					if part != "" {
+						deps++
+					}
+				}
+				totalDependencies += deps
+			}
+		}
+
+		// Networks
+		containerConnections := 0
+		for _, network := range container.Networks {
+			networkSet[network] = true
+			containerConnections++
+		}
+
+		// Volumes (only named volumes and non-bind mounts for sharing analysis)
+		for _, volume := range container.Volumes {
+			if volume.Type == "volume" && volume.Name != "" {
+				volumeUsage[volume.Name]++
+				containerConnections++
+			}
+		}
+
+		totalConnections += containerConnections
+	}
+
+	// Count custom networks (exclude default Docker networks)
+	customNetworkCount := 0
+	for networkName := range networkSet {
+		if networkName != "bridge" && networkName != "host" && networkName != "none" {
+			customNetworkCount++
+		}
+	}
+
+	// Count shared volumes (used by 2+ containers)
+	sharedVolumeCount := 0
+	for _, count := range volumeUsage {
+		if count >= 2 {
+			sharedVolumeCount++
+		}
+	}
+
+	// Calculate average connections per container
+	avgConnectionsPerContainer := 0.0
+	if len(containers) > 0 {
+		avgConnectionsPerContainer = float64(totalConnections) / float64(len(containers))
+	}
+
 	report := &models.TelemetryReport{
 		InstallationID:  c.installationID,
 		Version:         version.Get(),
@@ -172,7 +242,7 @@ func (c *Collector) CollectReport(ctx context.Context, agentStats map[string]*mo
 		ScanInterval:    c.scanInterval,
 		ImageStats:      imageStats,
 		AgentVersions:   agentVersions,
-		// New fields
+		// Container state fields
 		ContainersRunning:     containersRunning,
 		ContainersStopped:     containersStopped,
 		ContainersPaused:      containersPaused,
@@ -185,6 +255,15 @@ func (c *Collector) CollectReport(ctx context.Context, agentStats map[string]*mo
 		TotalImageSize:        totalImageSize,
 		UniqueImages:          len(imageMap),
 		Timezone:              timezone,
+		// Connection and architecture metrics
+		ComposeProjectCount:         len(composeProjects),
+		ContainersInCompose:         containersInCompose,
+		NetworkCount:                len(networkSet),
+		CustomNetworkCount:          customNetworkCount,
+		SharedVolumeCount:           sharedVolumeCount,
+		ContainersWithDeps:          containersWithDeps,
+		TotalDependencies:           totalDependencies,
+		AvgConnectionsPerContainer:  avgConnectionsPerContainer,
 	}
 
 	return report, nil
@@ -217,4 +296,17 @@ func getOrCreateInstallationID() (string, error) {
 func hashString(s string) string {
 	hash := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(hash[:])
+}
+
+// splitAndTrim splits a string by delimiter and trims whitespace from each part
+func splitAndTrim(s, delimiter string) []string {
+	parts := strings.Split(s, delimiter)
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }

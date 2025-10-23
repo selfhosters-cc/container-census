@@ -106,6 +106,16 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	// Check for updates on startup
+	go checkForUpdates()
+
+	// Create context for background tasks
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	defer bgCancel()
+
+	// Start daily version check
+	go runDailyVersionCheck(bgCtx)
+
 	// Start server
 	go func() {
 		log.Printf("Telemetry collector listening on http://0.0.0.0%s", addr)
@@ -118,6 +128,8 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
+
+	bgCancel() // Cancel background tasks
 
 	log.Println("Shutting down server...")
 
@@ -149,6 +161,7 @@ func (s *Server) setupRoutes() {
 	s.router.HandleFunc("/api/stats/activity-heatmap", s.apiKeyMiddleware(s.handleActivityHeatmap)).Methods("GET", "OPTIONS")
 	s.router.HandleFunc("/api/stats/scan-intervals", s.apiKeyMiddleware(s.handleScanIntervals)).Methods("GET", "OPTIONS")
 	s.router.HandleFunc("/api/stats/geography", s.apiKeyMiddleware(s.handleGeography)).Methods("GET", "OPTIONS")
+	s.router.HandleFunc("/api/stats/connection-metrics", s.apiKeyMiddleware(s.handleConnectionMetrics)).Methods("GET", "OPTIONS")
 	s.router.HandleFunc("/api/stats/recent-events", s.apiKeyMiddleware(s.handleRecentEvents)).Methods("GET", "OPTIONS")
 
 	// Static files for analytics dashboard - protected if auth is enabled
@@ -226,11 +239,23 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]string{
+	response := map[string]interface{}{
 		"status":  "healthy",
 		"version": version.Get(),
 		"time":    time.Now().Format(time.RFC3339),
-	})
+	}
+
+	// Add update information if available
+	updateInfo := version.GetUpdateInfo()
+	if updateInfo != nil && updateInfo.Error == nil {
+		response["latest_version"] = updateInfo.LatestVersion
+		response["update_available"] = updateInfo.UpdateAvailable
+		if updateInfo.UpdateAvailable {
+			response["release_url"] = updateInfo.ReleaseURL
+		}
+	}
+
+	respondJSON(w, http.StatusOK, response)
 }
 
 // Ingest telemetry data
@@ -324,7 +349,15 @@ func (s *Server) saveTelemetry(report models.TelemetryReport) error {
 			    high_restart_containers = $18,
 			    total_image_size = $19,
 			    unique_images = $20,
-			    timezone = $21
+			    timezone = $21,
+			    compose_project_count = $22,
+			    containers_in_compose = $23,
+			    network_count = $24,
+			    custom_network_count = $25,
+			    shared_volume_count = $26,
+			    containers_with_deps = $27,
+			    total_dependencies = $28,
+			    avg_connections_per_container = $29
 			WHERE id = $1
 		`
 		_, err = tx.Exec(updateQuery,
@@ -349,6 +382,14 @@ func (s *Server) saveTelemetry(report models.TelemetryReport) error {
 			report.TotalImageSize,
 			report.UniqueImages,
 			report.Timezone,
+			report.ComposeProjectCount,
+			report.ContainersInCompose,
+			report.NetworkCount,
+			report.CustomNetworkCount,
+			report.SharedVolumeCount,
+			report.ContainersWithDeps,
+			report.TotalDependencies,
+			report.AvgConnectionsPerContainer,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to update telemetry: %w", err)
@@ -375,8 +416,10 @@ func (s *Server) saveTelemetry(report models.TelemetryReport) error {
 				containers_running, containers_stopped, containers_paused, containers_other,
 				avg_cpu_percent, avg_memory_bytes, total_memory_limit,
 				avg_restarts, high_restart_containers,
-				total_image_size, unique_images, timezone
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+				total_image_size, unique_images, timezone,
+				compose_project_count, containers_in_compose, network_count, custom_network_count,
+				shared_volume_count, containers_with_deps, total_dependencies, avg_connections_per_container
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
 		`
 		_, err = tx.Exec(insertQuery,
 			report.InstallationID,
@@ -400,6 +443,14 @@ func (s *Server) saveTelemetry(report models.TelemetryReport) error {
 			report.TotalImageSize,
 			report.UniqueImages,
 			report.Timezone,
+			report.ComposeProjectCount,
+			report.ContainersInCompose,
+			report.NetworkCount,
+			report.CustomNetworkCount,
+			report.SharedVolumeCount,
+			report.ContainersWithDeps,
+			report.TotalDependencies,
+			report.AvgConnectionsPerContainer,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to insert telemetry: %w", err)
@@ -1040,6 +1091,86 @@ func (s *Server) handleGeography(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, results)
 }
 
+// Get connection and architecture metrics
+func (s *Server) handleConnectionMetrics(w http.ResponseWriter, r *http.Request) {
+	days := getQueryInt(r, "days", 30)
+	since := time.Now().AddDate(0, 0, -days)
+
+	query := `
+		SELECT
+			COALESCE(SUM(total_containers), 0) as total_containers,
+			COALESCE(SUM(compose_project_count), 0) as total_projects,
+			COALESCE(SUM(containers_in_compose), 0) as containers_in_compose,
+			COALESCE(SUM(network_count), 0) as network_count,
+			COALESCE(SUM(custom_network_count), 0) as custom_network_count,
+			COALESCE(SUM(shared_volume_count), 0) as shared_volume_count,
+			COALESCE(SUM(containers_with_deps), 0) as containers_with_deps,
+			COALESCE(SUM(total_dependencies), 0) as total_dependencies,
+			COALESCE(AVG(avg_connections_per_container), 0) as avg_connections_per_container,
+			COUNT(DISTINCT installation_id) as installations
+		FROM (
+			SELECT DISTINCT ON (installation_id)
+				installation_id,
+				total_containers,
+				compose_project_count,
+				containers_in_compose,
+				network_count,
+				custom_network_count,
+				shared_volume_count,
+				containers_with_deps,
+				total_dependencies,
+				avg_connections_per_container
+			FROM telemetry_reports
+			WHERE timestamp >= $1
+			ORDER BY installation_id, timestamp DESC
+		) latest_reports
+	`
+
+	var result struct {
+		TotalContainers             int     `json:"total_containers"`
+		TotalProjects               int     `json:"compose_project_count"`
+		ContainersInCompose         int     `json:"containers_in_compose"`
+		ComposePercentage           float64 `json:"compose_percentage"`
+		NetworkCount                int     `json:"network_count"`
+		CustomNetworkCount          int     `json:"custom_network_count"`
+		SharedVolumeCount           int     `json:"shared_volume_count"`
+		TotalVolumes                int     `json:"total_volumes"` // Estimated from shared volumes
+		ContainersWithDeps          int     `json:"containers_with_deps"`
+		TotalDependencies           int     `json:"total_dependencies"`
+		AvgConnectionsPerContainer  float64 `json:"avg_connections_per_container"`
+		Installations               int     `json:"installations"`
+	}
+
+	err := s.db.QueryRow(query, since).Scan(
+		&result.TotalContainers,
+		&result.TotalProjects,
+		&result.ContainersInCompose,
+		&result.NetworkCount,
+		&result.CustomNetworkCount,
+		&result.SharedVolumeCount,
+		&result.ContainersWithDeps,
+		&result.TotalDependencies,
+		&result.AvgConnectionsPerContainer,
+		&result.Installations,
+	)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Query failed: "+err.Error())
+		return
+	}
+
+	// Calculate compose adoption percentage
+	if result.TotalContainers > 0 {
+		result.ComposePercentage = float64(result.ContainersInCompose) / float64(result.TotalContainers) * 100
+		result.ComposePercentage = float64(int(result.ComposePercentage*10)) / 10 // Round to 1 decimal
+	}
+
+	// Estimate total volumes (shared volumes + assumed unique volumes per container not sharing)
+	// This is a rough estimate since we don't track all volumes, just shared ones
+	result.TotalVolumes = result.SharedVolumeCount * 2 // Very rough estimate
+
+	respondJSON(w, http.StatusOK, result)
+}
+
 // Helper functions
 
 // getRegionFromTimezone maps timezone to a general region for visualization
@@ -1161,6 +1292,15 @@ func initSchema(db *sql.DB) error {
 		total_image_size BIGINT DEFAULT 0,
 		unique_images INTEGER DEFAULT 0,
 		timezone VARCHAR(100),
+		-- Connection and architecture metrics
+		compose_project_count INTEGER DEFAULT 0,
+		containers_in_compose INTEGER DEFAULT 0,
+		network_count INTEGER DEFAULT 0,
+		custom_network_count INTEGER DEFAULT 0,
+		shared_volume_count INTEGER DEFAULT 0,
+		containers_with_deps INTEGER DEFAULT 0,
+		total_dependencies INTEGER DEFAULT 0,
+		avg_connections_per_container REAL DEFAULT 0.0,
 		created_at TIMESTAMPTZ DEFAULT NOW()
 	);
 
@@ -1216,6 +1356,15 @@ func initSchema(db *sql.DB) error {
 		`ALTER TABLE telemetry_reports ADD COLUMN IF NOT EXISTS unique_images INTEGER DEFAULT 0`,
 		`ALTER TABLE telemetry_reports ADD COLUMN IF NOT EXISTS timezone VARCHAR(100)`,
 		`ALTER TABLE image_stats ADD COLUMN IF NOT EXISTS size_bytes BIGINT DEFAULT 0`,
+		// Connection and architecture metrics
+		`ALTER TABLE telemetry_reports ADD COLUMN IF NOT EXISTS compose_project_count INTEGER DEFAULT 0`,
+		`ALTER TABLE telemetry_reports ADD COLUMN IF NOT EXISTS containers_in_compose INTEGER DEFAULT 0`,
+		`ALTER TABLE telemetry_reports ADD COLUMN IF NOT EXISTS network_count INTEGER DEFAULT 0`,
+		`ALTER TABLE telemetry_reports ADD COLUMN IF NOT EXISTS custom_network_count INTEGER DEFAULT 0`,
+		`ALTER TABLE telemetry_reports ADD COLUMN IF NOT EXISTS shared_volume_count INTEGER DEFAULT 0`,
+		`ALTER TABLE telemetry_reports ADD COLUMN IF NOT EXISTS containers_with_deps INTEGER DEFAULT 0`,
+		`ALTER TABLE telemetry_reports ADD COLUMN IF NOT EXISTS total_dependencies INTEGER DEFAULT 0`,
+		`ALTER TABLE telemetry_reports ADD COLUMN IF NOT EXISTS avg_connections_per_container REAL DEFAULT 0.0`,
 	}
 
 	for _, migration := range migrations {
@@ -1279,4 +1428,35 @@ func (s *Server) handleRecentEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, events)
+}
+
+// checkForUpdates checks for new versions and logs a warning if an update is available
+func checkForUpdates() {
+	info := version.CheckLatestVersion()
+
+	if info.Error != nil {
+		// Silently ignore errors during version check
+		log.Printf("Version check: %v", info.Error)
+		return
+	}
+
+	if info.UpdateAvailable {
+		log.Printf("⚠️  UPDATE AVAILABLE: Telemetry Collector %s → %s", info.CurrentVersion, info.LatestVersion)
+		log.Printf("   Download: %s", info.ReleaseURL)
+	}
+}
+
+// runDailyVersionCheck performs version checks once per day
+func runDailyVersionCheck(ctx context.Context) {
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			checkForUpdates()
+		}
+	}
 }
