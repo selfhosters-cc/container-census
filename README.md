@@ -3,6 +3,8 @@
 
 **Container Census** is a lightweight, Go-powered tool that automatically scans your Docker environment across one or many hosts and gives you a clear, historical view of everything running in your stack.
 
+Community stats on container usage can be found here: [Selfhosters Stats]([https://selfhosters.cc])
+
 ##### View / Manage Containers
 ![Main server page](screenshots/server-01.png)
 
