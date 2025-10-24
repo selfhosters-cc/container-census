@@ -1,7 +1,7 @@
 // State
 let containers = [];
 let hosts = [];
-let scanResults = [];
+let activities = [];
 let images = {};
 let graphData = null;
 let cy = null; // Cytoscape instance
@@ -292,7 +292,7 @@ async function loadActivityLog() {
     try {
         const activityType = document.getElementById('activityTypeFilter')?.value || 'all';
         const response = await fetch(`/api/activity-log?limit=50&type=${activityType}`);
-        const activities = await response.json() || [];
+        activities = await response.json() || [];
         renderActivityLog(activities);
         updateStats();
     } catch (error) {
@@ -829,8 +829,10 @@ function updateStats() {
     const running = containers.filter(c => c.state === 'running').length;
     document.getElementById('runningContainers').textContent = running;
 
-    if (scanResults.length > 0) {
-        const lastScan = new Date(scanResults[0].started_at);
+    // Find most recent scan activity
+    const scanActivities = activities.filter(a => a.type === 'scan');
+    if (scanActivities.length > 0) {
+        const lastScan = new Date(scanActivities[0].timestamp);
         document.getElementById('lastScan').textContent = formatTimeAgo(lastScan);
     } else {
         document.getElementById('lastScan').textContent = 'Never';
