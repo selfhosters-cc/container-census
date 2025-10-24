@@ -14,8 +14,6 @@
                 <span id="versionBadge" class="version-badge">v0.0.0</span>
             </div>
             <div class="header-actions">
-                <button id="addAgentBtn" class="btn btn-success">+ Add Agent Host</button>
-                <button id="refreshBtn" class="btn btn-primary">Refresh</button>
                 <button id="scanBtn" class="btn btn-secondary">Trigger Scan</button>
                 <button id="submitTelemetryBtn" class="btn btn-info">Submit Telemetry</button>
                 <label class="auto-refresh">
@@ -23,6 +21,7 @@
                     Auto-refresh (30s)
                 </label>
             </div>
+            <div id="telemetrySchedule" class="telemetry-schedule"></div>
         </header>
 
         <nav class="tabs">
@@ -30,7 +29,7 @@
             <button class="tab-btn" data-tab="images">Images</button>
             <button class="tab-btn" data-tab="graph">Graph</button>
             <button class="tab-btn" data-tab="hosts">Hosts</button>
-            <button class="tab-btn" data-tab="scans">Scan Results</button>
+            <button class="tab-btn" data-tab="activity">Activity Log</button>
             <button class="tab-btn" data-tab="settings">Settings</button>
         </nav>
 
@@ -199,7 +198,10 @@
 
         <div id="hostsTab" class="tab-content">
             <div class="hosts-section">
-                <h2>Configured Hosts</h2>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2 style="margin: 0;">Configured Hosts</h2>
+                    <button id="addAgentBtn" class="btn btn-success">+ Add Agent Host</button>
+                </div>
                 <div id="hostsTable" class="table-container">
                     <table>
                         <thead>
@@ -223,23 +225,31 @@
             </div>
         </div>
 
-        <div id="scansTab" class="tab-content">
-            <div class="scan-results-section">
-                <h2>Recent Scans</h2>
-                <div id="scanResultsTable" class="table-container">
+        <div id="activityTab" class="tab-content">
+            <div class="activity-log-section">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2 style="margin: 0;">Activity Log</h2>
+                    <select id="activityTypeFilter" class="filter-select">
+                        <option value="all">All Activities</option>
+                        <option value="scan">Scans Only</option>
+                        <option value="telemetry">Telemetry Only</option>
+                    </select>
+                </div>
+                <div id="activityLogTable" class="table-container">
                     <table>
                         <thead>
                             <tr>
-                                <th>Host</th>
-                                <th>Started</th>
+                                <th>Type</th>
+                                <th>Target</th>
+                                <th>Time</th>
                                 <th>Duration</th>
                                 <th>Status</th>
-                                <th>Containers Found</th>
+                                <th>Details</th>
                             </tr>
                         </thead>
-                        <tbody id="scanResultsBody">
+                        <tbody id="activityLogBody">
                             <tr>
-                                <td colspan="5" class="loading">Loading...</td>
+                                <td colspan="6" class="loading">Loading...</td>
                             </tr>
                         </tbody>
                     </table>

@@ -12,13 +12,13 @@ let currentTab = 'containers';
 document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
     loadVersion();
+    loadTelemetrySchedule();
     loadData();
     startAutoRefresh();
 });
 
 // Event Listeners
 function setupEventListeners() {
-    document.getElementById('refreshBtn').addEventListener('click', loadData);
     document.getElementById('scanBtn').addEventListener('click', triggerScan);
     document.getElementById('submitTelemetryBtn').addEventListener('click', submitTelemetry);
     document.getElementById('autoRefresh').addEventListener('change', handleAutoRefreshToggle);
@@ -69,6 +69,9 @@ function setupEventListeners() {
     document.getElementById('colorByProject')?.addEventListener('change', applyGraphFilters);
     document.getElementById('hideEdgeLabels')?.addEventListener('change', toggleEdgeLabels);
 
+    // Activity log filter
+    document.getElementById('activityTypeFilter')?.addEventListener('change', loadActivityLog);
+
     // Graph selector handlers
     document.getElementById('composeProjectSelect')?.addEventListener('change', handleComposeProjectChange);
     document.getElementById('networkSelect')?.addEventListener('change', handleNetworkChange);
@@ -99,13 +102,19 @@ function switchTab(tab) {
     });
     document.getElementById(`${tab}Tab`).classList.add('active');
 
-    // Load data for the tab
-    if (tab === 'images' && Object.keys(images).length === 0) {
+    // Auto-refresh data when switching to a tab
+    if (tab === 'containers') {
+        loadContainers();
+    } else if (tab === 'images') {
         loadImages();
     } else if (tab === 'hosts') {
-        renderHosts(hosts);
+        loadHosts().then(() => renderHosts(hosts));
     } else if (tab === 'graph') {
         loadGraph();
+    } else if (tab === 'activity') {
+        loadActivityLog();
+    } else if (tab === 'settings') {
+        loadCollectors();
     }
 }
 
@@ -144,17 +153,61 @@ async function loadVersion() {
     }
 }
 
+// Load telemetry schedule from API
+async function loadTelemetrySchedule() {
+    try {
+        const response = await fetch('/api/telemetry/schedule');
+        const data = await response.json();
+        const scheduleDiv = document.getElementById('telemetrySchedule');
+
+        if (data.enabled_endpoints === 0) {
+            scheduleDiv.innerHTML = '<small style="color: #999;">No automatic telemetry (no endpoints configured)</small>';
+            return;
+        }
+
+        if (data.next_submission) {
+            const nextDate = new Date(data.next_submission);
+            const now = new Date();
+            const diffMs = nextDate - now;
+            const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+            const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+
+            let timeStr = '';
+            if (diffMs < 0) {
+                timeStr = 'overdue';
+            } else if (diffHours < 1) {
+                timeStr = `in ${diffMins} minutes`;
+            } else if (diffHours < 24) {
+                timeStr = `in ${diffHours} hour${diffHours > 1 ? 's' : ''}`;
+            } else {
+                const diffDays = Math.floor(diffHours / 24);
+                timeStr = `in ${diffDays} day${diffDays > 1 ? 's' : ''}`;
+            }
+
+            const endpointText = data.enabled_endpoints === 1 ? 'endpoint' : 'endpoints';
+            scheduleDiv.innerHTML = `<small style="color: #999;">Next telemetry: ${timeStr} to ${data.enabled_endpoints} ${endpointText}</small>`;
+        } else if (data.message) {
+            scheduleDiv.innerHTML = `<small style="color: #999;">${data.message}</small>`;
+        }
+    } catch (error) {
+        console.error('Error loading telemetry schedule:', error);
+    }
+}
+
 // Auto-refresh
 function startAutoRefresh() {
     const checkbox = document.getElementById('autoRefresh');
     if (checkbox.checked) {
         autoRefreshInterval = setInterval(() => {
+            // Always refresh telemetry schedule
+            loadTelemetrySchedule();
+
             if (currentTab === 'containers') {
                 loadContainers();
             } else if (currentTab === 'images') {
                 loadImages();
-            } else if (currentTab === 'scans') {
-                loadScanResults();
+            } else if (currentTab === 'activity') {
+                loadActivityLog();
             } else if (currentTab === 'settings') {
                 loadCollectors(); // Auto-refresh telemetry status
             }
@@ -183,7 +236,7 @@ async function loadData() {
         await Promise.all([
             loadHosts(),
             loadContainers(),
-            loadScanResults()
+            loadActivityLog()
         ]);
         updateStats();
         updateHostFilter();
@@ -235,17 +288,17 @@ async function loadImages() {
     }
 }
 
-async function loadScanResults() {
+async function loadActivityLog() {
     try {
-        const response = await fetch('/api/scan/results?limit=10');
-        scanResults = await response.json() || [];
-        renderScanResults(scanResults);
+        const activityType = document.getElementById('activityTypeFilter')?.value || 'all';
+        const response = await fetch(`/api/activity-log?limit=50&type=${activityType}`);
+        const activities = await response.json() || [];
+        renderActivityLog(activities);
         updateStats();
     } catch (error) {
-        console.error('Error loading scan results:', error);
-        scanResults = [];
-        document.getElementById('scanResultsBody').innerHTML =
-            '<tr><td colspan="5" class="error">Failed to load scan results</td></tr>';
+        console.error('Error loading activity log:', error);
+        document.getElementById('activityLogBody').innerHTML =
+            '<tr><td colspan="6" class="error">Failed to load activity log</td></tr>';
     }
 }
 
@@ -589,12 +642,12 @@ function renderImages(imagesData) {
         const hostId = hostData.host_id;
         hostButtons[hostName] = `
             <button class="btn btn-sm btn-warning" onclick="pruneImages(${hostId}, '${escapeAttr(hostName)}')">
-                Prune Unused Images
+                Prune Unused Images (${escapeHtml(hostName)})
             </button>
         `;
     }
 
-    // Add prune buttons above table
+    // Add prune buttons above table (one button per host)
     const imagesSection = document.querySelector('.images-section h2');
     let pruneContainer = document.querySelector('.prune-buttons');
     if (!pruneContainer) {
@@ -602,6 +655,7 @@ function renderImages(imagesData) {
         pruneContainer.className = 'prune-buttons';
         imagesSection.parentNode.insertBefore(pruneContainer, imagesSection.nextSibling);
     }
+    // Update buttons - will show one "Prune Unused Images" button per host
     pruneContainer.innerHTML = Object.values(hostButtons).join(' ');
 
     tbody.innerHTML = allImages.map(img => {
@@ -633,28 +687,42 @@ function renderImages(imagesData) {
     }
 }
 
-function renderScanResults(results) {
-    const tbody = document.getElementById('scanResultsBody');
+function renderActivityLog(activities) {
+    const tbody = document.getElementById('activityLogBody');
 
-    if (results.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="loading">No scan results yet</td></tr>';
+    if (!activities || activities.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="loading">No activity logged yet</td></tr>';
         return;
     }
 
-    tbody.innerHTML = results.map(result => {
-        const duration = new Date(result.completed_at) - new Date(result.started_at);
-        const durationText = `${(duration / 1000).toFixed(1)}s`;
+    tbody.innerHTML = activities.map(activity => {
+        const durationText = `${activity.duration.toFixed(2)}s`;
+        const typeIcon = activity.type === 'scan' ? '🔍' : '📊';
+        const typeLabel = activity.type === 'scan' ? 'Scan' : 'Telemetry';
+
+        // Build details based on activity type
+        let details = '';
+        if (activity.type === 'scan') {
+            details = `${activity.details.containers_found || 0} containers`;
+        } else {
+            const parts = [];
+            if (activity.details.hosts_count) parts.push(`${activity.details.hosts_count} hosts`);
+            if (activity.details.containers_count) parts.push(`${activity.details.containers_count} containers`);
+            if (activity.details.images_count) parts.push(`${activity.details.images_count} images`);
+            details = parts.join(', ');
+        }
 
         return `
-            <tr>
-                <td><strong>${escapeHtml(result.host_name)}</strong></td>
-                <td class="time-ago">${formatDateTime(result.started_at)}</td>
+            <tr class="activity-${activity.type}">
+                <td>${typeIcon} <strong>${typeLabel}</strong></td>
+                <td><strong>${escapeHtml(activity.target)}</strong></td>
+                <td class="time-ago">${formatDateTime(activity.timestamp)}</td>
                 <td>${durationText}</td>
-                <td class="${result.success ? 'scan-success' : 'scan-failed'}">
-                    ${result.success ? '✓ Success' : '✗ Failed'}
-                    ${result.error ? `<br><small>${escapeHtml(result.error)}</small>` : ''}
+                <td class="${activity.success ? 'scan-success' : 'scan-failed'}">
+                    ${activity.success ? '✓ Success' : '✗ Failed'}
+                    ${activity.error ? `<br><small>${escapeHtml(activity.error)}</small>` : ''}
                 </td>
-                <td>${result.containers_found}</td>
+                <td><small>${details}</small></td>
             </tr>
         `;
     }).join('');
@@ -675,7 +743,11 @@ function renderHosts(hostsData) {
                 : '<span class="badge badge-success">Enabled</span>')
             : '<span class="badge badge-secondary">Disabled</span>';
 
-        const lastSeen = host.last_seen ? formatDate(host.last_seen) : '-';
+        // For agents, show precise datetime; for others, show relative time
+        const lastSeen = host.last_seen
+            ? (host.host_type === 'agent' ? formatDateTime(host.last_seen) : formatDate(host.last_seen))
+            : '-';
+
         const hostType = host.host_type || 'unknown';
         const typeIcon = {
             'agent': '🤖',
@@ -850,9 +922,23 @@ function formatPorts(ports) {
 }
 
 function formatDate(dateStr) {
+    if (!dateStr) return '-';
+
     const date = new Date(dateStr);
+
+    // Check if date is valid
+    if (isNaN(date.getTime())) return '-';
+
+    // Check if date is zero/epoch or in the far future/past (invalid)
+    const year = date.getFullYear();
+    if (year < 1970 || year > 2100) return '-';
+
     const now = new Date();
     const diffMs = now - date;
+
+    // If date is in the future, return '-'
+    if (diffMs < 0) return '-';
+
     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
     if (diffDays === 0) return 'Today';
@@ -1838,8 +1924,8 @@ function buildGraphDropdowns(data) {
         composeSelect.appendChild(optGroup1);
     });
 
-    // Build network dropdown
-    const networks = [...new Set(data.edges.filter(e => e.type === 'network').map(e => e.label))].sort();
+    // Build network dropdown - get network names from network nodes
+    const networks = [...new Set(data.nodes.filter(n => n.node_type === 'network').map(n => n.name))].sort();
     const networkSelect = document.getElementById('networkSelect');
     networkSelect.innerHTML = '<option value="">Networks: Show All</option>';
     networks.forEach(network => {
@@ -1942,40 +2028,57 @@ function handleNetworkChange(event) {
 
     const [mode, network] = value.split(':');
 
-    // Find all nodes connected to this network
-    const connectedNodeIds = new Set();
-    cy.edges().forEach(edge => {
-        if (edge.data('type') === 'network' && edge.data('label') === network) {
-            connectedNodeIds.add(edge.data('source'));
-            connectedNodeIds.add(edge.data('target'));
+    // Find the network node with this name
+    let networkNodeId = null;
+    cy.nodes().forEach(node => {
+        if (node.data('nodeType') === 'network' && node.data('label') === network) {
+            networkNodeId = node.id();
         }
     });
 
+    if (!networkNodeId) {
+        applyGraphFilters();
+        return;
+    }
+
+    // Find all container nodes connected to this network node
+    const connectedContainerIds = new Set();
+    cy.edges().forEach(edge => {
+        if (edge.data('type') === 'network' &&
+            (edge.data('source') === networkNodeId || edge.data('target') === networkNodeId)) {
+            // Add the other end (the container)
+            const containerId = edge.data('source') === networkNodeId ?
+                edge.data('target') : edge.data('source');
+            connectedContainerIds.add(containerId);
+        }
+    });
+
+    // Also add the network node itself to the set of nodes to keep visible
+    connectedContainerIds.add(networkNodeId);
+
     if (mode === 'highlight') {
-        // Dim non-connected nodes
+        // Dim nodes not connected to this network
         cy.nodes().forEach(node => {
-            if (!connectedNodeIds.has(node.id())) {
+            if (!connectedContainerIds.has(node.id())) {
                 node.addClass('dimmed');
             }
         });
-        // Dim edges not related to this network
+        // Dim edges not connected to this network node
         cy.edges().forEach(edge => {
-            if (edge.data('type') !== 'network' || edge.data('label') !== network) {
+            if (!(edge.data('source') === networkNodeId || edge.data('target') === networkNodeId)) {
                 edge.addClass('dimmed');
             }
         });
     } else if (mode === 'isolate') {
-        // Hide non-connected nodes
+        // Hide nodes not connected to this network
         cy.nodes().forEach(node => {
-            if (!connectedNodeIds.has(node.id())) {
+            if (!connectedContainerIds.has(node.id())) {
                 node.hide();
             }
         });
-        // Hide non-network edges
+        // Hide edges not connected to this network node
         cy.edges().forEach(edge => {
-            const source = cy.getElementById(edge.data('source'));
-            const target = cy.getElementById(edge.data('target'));
-            if (source.hidden() || target.hidden()) {
+            if (!(edge.data('source') === networkNodeId || edge.data('target') === networkNodeId)) {
                 edge.hide();
             }
         });

@@ -223,6 +223,11 @@ canvas {
     max-height: 400px;
 }
 
+#topImagesChart {
+    max-height: 700px !important;
+    height: 700px;
+}
+
 footer {
     text-align: center;
     color: white;

@@ -38,3 +38,6 @@ vendor/
 
 # Local things
 local/
+
+# Future development documentation
+future-development/

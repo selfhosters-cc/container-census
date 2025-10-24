@@ -56,7 +56,7 @@ function initCharts() {
         },
         options: {
             responsive: true,
-            maintainAspectRatio: true,
+            maintainAspectRatio: false,
             indexAxis: 'y',
             animation: {
                 duration: 1500,
@@ -77,7 +77,19 @@ function initCharts() {
                         size: 13
                     },
                     callbacks: {
+                        title: function(context) {
+                            // Show full image name in tooltip title
+                            return context[0].label;
+                        },
                         label: function(context) {
+                            // Access the stored data for this index
+                            const imageData = window.topImagesData ? window.topImagesData[context.dataIndex] : null;
+                            if (imageData) {
+                                return [
+                                    ' ' + context.parsed.x.toLocaleString() + ' containers',
+                                    ' ' + imageData.installation_count.toLocaleString() + ' installations (' + imageData.adoption_percentage + '%)'
+                                ];
+                            }
                             return ' ' + context.parsed.x.toLocaleString() + ' containers';
                         }
                     }
@@ -101,6 +113,17 @@ function initCharts() {
                 y: {
                     grid: {
                         display: false
+                    },
+                    ticks: {
+                        autoSkip: false,
+                        font: {
+                            size: 11
+                        },
+                        callback: function(value, index) {
+                            const label = this.getLabelForValue(value);
+                            // Truncate labels to prevent overflow, but show full in tooltip
+                            return label.length > 35 ? label.substring(0, 32) + '...' : label;
+                        }
                     }
                 }
             }
@@ -729,6 +752,7 @@ async function loadSummary() {
         document.getElementById('totalInstallations').textContent = formatNumber(data.installations);
         document.getElementById('totalSubmissions').textContent = formatNumber(data.total_submissions);
         document.getElementById('totalContainers').textContent = formatNumber(data.total_containers);
+        document.getElementById('avgContainers').textContent = data.avg_containers_per_install ? data.avg_containers_per_install.toFixed(1) : '-';
         document.getElementById('totalHosts').textContent = formatNumber(data.total_hosts);
         document.getElementById('totalAgents').textContent = formatNumber(data.total_agents);
         document.getElementById('uniqueImages').textContent = formatNumber(data.unique_images);
@@ -745,8 +769,11 @@ async function loadTopImages(days) {
 
         const data = await response.json();
 
-        // Update chart
-        topImagesChart.data.labels = data.map(item => truncateImageName(item.image));
+        // Store data globally for tooltip access
+        window.topImagesData = data;
+
+        // Update chart with full image names (truncation handled by y-axis callback)
+        topImagesChart.data.labels = data.map(item => item.image);
         topImagesChart.data.datasets[0].data = data.map(item => item.count);
         topImagesChart.update();
     } catch (error) {

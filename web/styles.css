@@ -55,6 +55,12 @@ header h1 {
     align-items: center;
 }
 
+.telemetry-schedule {
+    margin-top: 8px;
+    text-align: center;
+    opacity: 0.9;
+}
+
 .btn {
     padding: 10px 20px;
     border: none;
@@ -462,6 +468,30 @@ tbody tr:hover {
 .scan-failed {
     color: #dc3545;
     font-weight: 500;
+}
+
+/* Activity Log Styles */
+.activity-log-section {
+    background: white;
+    border-radius: 10px;
+    padding: 20px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.activity-scan {
+    background-color: rgba(46, 204, 113, 0.05);
+}
+
+.activity-telemetry {
+    background-color: rgba(52, 152, 219, 0.05);
+}
+
+.activity-scan:hover {
+    background-color: rgba(46, 204, 113, 0.1);
+}
+
+.activity-telemetry:hover {
+    background-color: rgba(52, 152, 219, 0.1);
 }
 
 .time-ago {

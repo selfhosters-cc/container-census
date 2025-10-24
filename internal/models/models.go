@@ -99,6 +99,31 @@ type ScanResult struct {
 	ContainersFound int       `json:"containers_found"`
 }
 
+// TelemetrySubmission represents a telemetry submission operation
+type TelemetrySubmission struct {
+	ID              int64     `json:"id"`
+	EndpointName    string    `json:"endpoint_name"`
+	EndpointURL     string    `json:"endpoint_url"`
+	StartedAt       time.Time `json:"started_at"`
+	CompletedAt     time.Time `json:"completed_at"`
+	Success         bool      `json:"success"`
+	Error           string    `json:"error,omitempty"`
+	HostsCount      int       `json:"hosts_count"`
+	ContainersCount int       `json:"containers_count"`
+	ImagesCount     int       `json:"images_count"`
+}
+
+// ActivityLogEntry represents a unified activity log entry (scan or telemetry)
+type ActivityLogEntry struct {
+	Type      string                 `json:"type"`       // "scan" or "telemetry"
+	Timestamp time.Time              `json:"timestamp"`  // started_at
+	Target    string                 `json:"target"`     // host_name or endpoint_name
+	Duration  float64                `json:"duration"`   // seconds
+	Success   bool                   `json:"success"`
+	Error     string                 `json:"error,omitempty"`
+	Details   map[string]interface{} `json:"details,omitempty"` // Type-specific details
+}
+
 // Config represents application configuration
 type Config struct {
 	Database       DatabaseConfig   `yaml:"database"`

@@ -161,6 +161,9 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/scan", s.handleTriggerScan).Methods("POST")
 	api.HandleFunc("/scan/results", s.handleGetScanResults).Methods("GET")
 
+	// Activity log (scans + telemetry)
+	api.HandleFunc("/activity-log", s.handleGetActivityLog).Methods("GET")
+
 	// Config endpoints
 	api.HandleFunc("/config", s.handleGetConfig).Methods("GET")
 	api.HandleFunc("/config/telemetry", s.handleUpdateTelemetry).Methods("POST")
@@ -172,6 +175,7 @@ func (s *Server) setupRoutes() {
 	// Telemetry endpoints
 	api.HandleFunc("/telemetry/submit", s.handleSubmitTelemetry).Methods("POST")
 	api.HandleFunc("/telemetry/status", s.handleGetTelemetryStatus).Methods("GET")
+	api.HandleFunc("/telemetry/schedule", s.handleGetTelemetrySchedule).Methods("GET")
 	api.HandleFunc("/telemetry/reset-circuit-breaker/{name}", s.handleResetCircuitBreaker).Methods("POST")
 	api.HandleFunc("/telemetry/debug-enabled", s.handleGetDebugEnabled).Methods("GET")
 
@@ -570,6 +574,36 @@ func (s *Server) handleGetScanResults(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, results)
+}
+
+func (s *Server) handleGetActivityLog(w http.ResponseWriter, r *http.Request) {
+	limitStr := r.URL.Query().Get("limit")
+	limit := 50 // default
+
+	if limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	activityType := r.URL.Query().Get("type")
+	if activityType == "" {
+		activityType = "all" // default to all activities
+	}
+
+	// Validate activity type
+	if activityType != "all" && activityType != "scan" && activityType != "telemetry" {
+		respondError(w, http.StatusBadRequest, "Invalid type parameter. Must be 'all', 'scan', or 'telemetry'")
+		return
+	}
+
+	activities, err := s.db.GetActivityLog(limit, activityType)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get activity log: "+err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, activities)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -1300,4 +1334,29 @@ func (s *Server) handleGetDebugEnabled(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]bool{
 		"debug_enabled": debugEnabled,
 	})
+}
+
+// handleGetTelemetrySchedule returns information about the next scheduled telemetry submission
+func (s *Server) handleGetTelemetrySchedule(w http.ResponseWriter, r *http.Request) {
+	if s.telemetryScheduler == nil {
+		// No scheduler running - return basic info from config
+		cfg, _ := config.LoadOrDefault(s.configPath)
+		enabledCount := 0
+		for _, ep := range cfg.Telemetry.Endpoints {
+			if ep.Enabled {
+				enabledCount++
+			}
+		}
+
+		respondJSON(w, http.StatusOK, map[string]interface{}{
+			"enabled_endpoints": enabledCount,
+			"interval_hours":    cfg.Telemetry.IntervalHours,
+			"next_submission":   nil,
+			"message":           "Telemetry scheduler not running",
+		})
+		return
+	}
+
+	scheduleInfo := s.telemetryScheduler.GetScheduleInfo()
+	respondJSON(w, http.StatusOK, scheduleInfo)
 }

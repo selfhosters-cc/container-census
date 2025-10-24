@@ -46,6 +46,11 @@ func (m *mockDB) SaveTelemetryFailure(endpointName, endpointURL, reason string) 
 	return nil
 }
 
+func (m *mockDB) SaveTelemetrySubmission(submission *models.TelemetrySubmission) error {
+	// Mock implementation - just return nil for tests
+	return nil
+}
+
 func (m *mockDB) GetTelemetryStatus(endpointName string) (*models.TelemetryEndpoint, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

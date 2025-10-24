@@ -160,3 +160,51 @@ func (s *Scheduler) collectAgentStats(ctx context.Context) map[string]*models.Ag
 
 	return agentStats
 }
+
+// GetScheduleInfo returns information about the next scheduled telemetry submission
+func (s *Scheduler) GetScheduleInfo() map[string]interface{} {
+	// Count enabled endpoints
+	enabledCount := 0
+	for _, ep := range s.config.Endpoints {
+		if ep.Enabled {
+			enabledCount++
+		}
+	}
+
+	result := map[string]interface{}{
+		"enabled_endpoints": enabledCount,
+		"interval_hours":    s.config.IntervalHours,
+	}
+
+	if enabledCount == 0 {
+		result["next_submission"] = nil
+		result["message"] = "No telemetry endpoints configured"
+		return result
+	}
+
+	// Get the most recent successful submission from any endpoint
+	var mostRecentSuccess *time.Time
+	statuses, err := s.db.GetAllTelemetryStatuses()
+	if err == nil {
+		for _, status := range statuses {
+			if status.LastSuccess != nil {
+				if mostRecentSuccess == nil || status.LastSuccess.After(*mostRecentSuccess) {
+					mostRecentSuccess = status.LastSuccess
+				}
+			}
+		}
+	}
+
+	if mostRecentSuccess != nil {
+		// Calculate next submission based on most recent success
+		nextSubmission := mostRecentSuccess.Add(time.Duration(s.config.IntervalHours) * time.Hour)
+		result["next_submission"] = nextSubmission
+		result["last_submission"] = mostRecentSuccess
+	} else {
+		// No previous submission - will submit in 5 minutes after start
+		result["next_submission"] = nil
+		result["message"] = "First submission pending (5 minutes after start)"
+	}
+
+	return result
+}

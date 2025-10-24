@@ -1,33 +1,54 @@
 # Container Census
+### Discover. Visualize. Track. Compare.
 
-A Go-based tool that scans configured Docker hosts and tracks all running containers. Container information is timestamped and stored in a database, accessible through a web frontend. The entire stack runs in a single container.  Telemetry across multiple hosts can be collected with the use of agents and viewed on a private collector instance.  The server, agent, and telemetry collector all run in separate containers, docker compose details below.
+**Container Census** is a lightweight, Go-powered tool that automatically scans your Docker environment across one or many hosts and gives you a clear, historical view of everything running in your stack.
 
-If the user opts in, their telemetry will be anonymously submitted to a public tracker where aggregated stats showing the most popular containers (and much more) can be seen at [Selfhosters](https://selfhosters.cc).
+##### View / Manage Containers
+![Main server page](screenshots/server-01.png)
 
-Popular and trending images across the internet can be found there.
+##### Visualize relationships / networks / links / dependencies
+![Graph view](screenshots/server-02.png)
 
-**Note:** You must opt in on the Settings page for your anonymous data to be submitted to the public community server. 
+##### Manage / Prune Images
+![Image view](screenshots/server-04.png)
 
-## Features
+##### Manage Multipe Hosts with Agents
+![Hosts view](screenshots/server-05.png)
 
-- **Multi-host scanning**: Monitor multiple Docker hosts from a single dashboard
-- **Lightweight Agent**: Deploy agents on remote hosts for easy, secure connectivity
-- **Simple UI-based setup**: Add remote hosts by just entering IP/URL and token
-- **Automatic scanning**: Configurable periodic scans (default: every 5 minutes)
-- **Historical tracking**: All container states are timestamped and stored
-- **Web UI**: Clean, responsive web interface with real-time updates
-- **REST API**: Full API access to all container and host data
-- **Container management**: Start, stop, restart, remove containers, and view logs
-- **Image management**: List, remove, and prune images across all hosts
-- **Single container deployment**: Everything runs in one lightweight container
-- **Multiple connection types**: Agent (recommended), Unix socket, TCP, and SSH connections
-- **Anonymous telemetry** (optional): Track container usage trends with privacy-first design
+##### Manage Telemetry Collection
+Can enable public collection ([Selfhosters.cc]([https://selfhosters.cc])) or send telemetry information to your own private collector.
 
-# Quick Start
-![alt text](screenshots/server.png)
-## Using Docker Compose (Recommended)
+![Telemetry settings view](screenshots/server-07.png)
 
-The easiest way to get started:
+
+
+#### Want deeper insights?
+##### Graph view
+See how your containers are connected to each other via networks, dependencies, and links.
+
+##### Multiple Hosts? No problem!
+Run lightweight agents on remote hosts to feed data back to your private Telemetry Collector, or choose to anonymously share usage stats with the Selfhosters community to see what’s trending across thousands of self-hosted environments worldwide.
+
+##### Privacy First
+Anonymous telemetry is opt-in only and can be enabled anytime from the Settings page.
+
+### Key Features
+
+1. **Multi-Host Scanning** – Monitor every Docker host from one unified dashboard
+1. **Lightweight Remote Agents** – Secure, zero-config connectivity between hosts
+1. **Simple Web Setup** – Add new hosts with just an IP and token
+1. **Automatic Discovery** – Background scans every few minutes (efault: 5)
+1. **Historical Insights** – Track what’s running, when, and where
+1. **Modern Web UI** – Responsive interface with live updates
+1. **Full REST API** – Query all container and host data programmatically
+1. **Container Control** – Start, stop, restart, remove containers, and view logs
+1. **Image Management** – List, remove, or prune images across hosts
+1. **Single-Container Deployment** – Everything you need in one small footprint (agents and aggregated stats available in separate containers)
+1. **Flexible Connectivity** – Agent (recommended), Unix socket, TCP, or SSH
+1. **Community / Private Telemetry (Optional)** – Discover popular and trending images worldwide
+
+# Quick Start With Docker Compose
+
 ### Server (required)
 ```
   census-server:
@@ -68,7 +89,7 @@ The easiest way to get started:
       start_period: 10s
 ```
 
-### Agent - to collect data from other hosts
+### Agent to collect data from other hosts
 ```
   census-agent:
     image: ghcr.io/selfhosters-cc/census-agent:latest
@@ -100,7 +121,7 @@ The easiest way to get started:
 
 ```
 
-#### Configuration
+#### Agent Configuration
 
 **Get the API token from logs:**
 
@@ -116,18 +137,19 @@ The easiest way to get started:
 ---
 ### Telemetry & Analytics
 Container Census includes an optional telemetry system to track anonymous container usage statistics. This helps understand trends and allows you to monitor your own infrastructure.
+![alt text](screenshots/telemetry-5.png)
 ![alt text](screenshots/telemetry-1.png)
 ![alt text](screenshots/telemetry-2.png)
 ![alt text](screenshots/telemetry-3.png)
 
 #### Key Features
 
-- 📊 **Anonymous data collection** - No personal information collected
-- 🔄 **Multi-endpoint support** - Send to public and/or private analytics servers
-- 🏢 **Self-hosted analytics** - Run your own telemetry collector
-- 📈 **Visual dashboards** - Charts showing popular images, growth trends
-- 🔒 **Opt-in by default** - Disabled unless explicitly enabled
-- 🌐 **Server aggregation** - Server collects stats from all agents before submission
+1. **Anonymous data collection** - No personal information collected
+1. **Multi-endpoint support** - Send to public and/or private analytics servers
+1. **Self-hosted analytics** - Run your own telemetry collector
+1. **Visual dashboards** - Charts showing popular images, growth trends
+1. **Opt-in by default** - Disabled unless explicitly enabled
+1. **Server aggregation** - Server collects stats from all agents before submission
 
 #### Run Your Own Analytics Server
 ```

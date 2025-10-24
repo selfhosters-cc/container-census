@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/container-census/container-census/internal/models"
@@ -108,6 +109,22 @@ func (db *DB) initSchema() error {
 		last_failure_reason TEXT,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
+
+	CREATE TABLE IF NOT EXISTS telemetry_submissions (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		endpoint_name TEXT NOT NULL,
+		endpoint_url TEXT NOT NULL,
+		started_at TIMESTAMP NOT NULL,
+		completed_at TIMESTAMP NOT NULL,
+		success BOOLEAN NOT NULL,
+		error TEXT,
+		hosts_count INTEGER,
+		containers_count INTEGER,
+		images_count INTEGER,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_telemetry_submissions_created ON telemetry_submissions(created_at DESC);
 	`
 
 	if _, err := db.conn.Exec(schema); err != nil {
@@ -528,6 +545,125 @@ func (db *DB) GetScanResults(limit int) ([]models.ScanResult, error) {
 	}
 
 	return results, rows.Err()
+}
+
+// SaveTelemetrySubmission saves a telemetry submission record
+func (db *DB) SaveTelemetrySubmission(submission *models.TelemetrySubmission) error {
+	_, err := db.conn.Exec(`
+		INSERT INTO telemetry_submissions (
+			endpoint_name, endpoint_url, started_at, completed_at, success, error,
+			hosts_count, containers_count, images_count
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, submission.EndpointName, submission.EndpointURL, submission.StartedAt,
+		submission.CompletedAt, submission.Success, submission.Error,
+		submission.HostsCount, submission.ContainersCount, submission.ImagesCount)
+	return err
+}
+
+// GetTelemetrySubmissions retrieves recent telemetry submissions
+func (db *DB) GetTelemetrySubmissions(limit int) ([]models.TelemetrySubmission, error) {
+	rows, err := db.conn.Query(`
+		SELECT id, endpoint_name, endpoint_url, started_at, completed_at, success, error,
+		       hosts_count, containers_count, images_count
+		FROM telemetry_submissions
+		ORDER BY started_at DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var submissions []models.TelemetrySubmission
+	for rows.Next() {
+		var s models.TelemetrySubmission
+		var errMsg sql.NullString
+
+		err := rows.Scan(&s.ID, &s.EndpointName, &s.EndpointURL, &s.StartedAt, &s.CompletedAt,
+			&s.Success, &errMsg, &s.HostsCount, &s.ContainersCount, &s.ImagesCount)
+		if err != nil {
+			return nil, err
+		}
+
+		if errMsg.Valid {
+			s.Error = errMsg.String
+		}
+
+		submissions = append(submissions, s)
+	}
+
+	return submissions, rows.Err()
+}
+
+// GetActivityLog retrieves unified activity log (scans + telemetry submissions)
+func (db *DB) GetActivityLog(limit int, activityType string) ([]models.ActivityLogEntry, error) {
+	var activities []models.ActivityLogEntry
+
+	// Get scan results if requested
+	if activityType == "all" || activityType == "scan" {
+		scans, err := db.GetScanResults(limit)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, scan := range scans {
+			duration := scan.CompletedAt.Sub(scan.StartedAt).Seconds()
+			details := map[string]interface{}{
+				"containers_found": scan.ContainersFound,
+				"host_id":          scan.HostID,
+			}
+
+			activities = append(activities, models.ActivityLogEntry{
+				Type:      "scan",
+				Timestamp: scan.StartedAt,
+				Target:    scan.HostName,
+				Duration:  duration,
+				Success:   scan.Success,
+				Error:     scan.Error,
+				Details:   details,
+			})
+		}
+	}
+
+	// Get telemetry submissions if requested
+	if activityType == "all" || activityType == "telemetry" {
+		submissions, err := db.GetTelemetrySubmissions(limit)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, sub := range submissions {
+			duration := sub.CompletedAt.Sub(sub.StartedAt).Seconds()
+			details := map[string]interface{}{
+				"hosts_count":      sub.HostsCount,
+				"containers_count": sub.ContainersCount,
+				"images_count":     sub.ImagesCount,
+				"endpoint_url":     sub.EndpointURL,
+			}
+
+			activities = append(activities, models.ActivityLogEntry{
+				Type:      "telemetry",
+				Timestamp: sub.StartedAt,
+				Target:    sub.EndpointName,
+				Duration:  duration,
+				Success:   sub.Success,
+				Error:     sub.Error,
+				Details:   details,
+			})
+		}
+	}
+
+	// Sort by timestamp descending (most recent first)
+	sort.Slice(activities, func(i, j int) bool {
+		return activities[i].Timestamp.After(activities[j].Timestamp)
+	})
+
+	// Limit the combined results
+	if len(activities) > limit {
+		activities = activities[:limit]
+	}
+
+	return activities, nil
 }
 
 // CleanupOldData removes container records older than the specified duration

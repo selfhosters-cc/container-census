@@ -20,6 +20,7 @@ type Submitter struct {
 	db             interface {
 		SaveTelemetrySuccess(endpointName, endpointURL string) error
 		SaveTelemetryFailure(endpointName, endpointURL, reason string) error
+		SaveTelemetrySubmission(submission *models.TelemetrySubmission) error
 		GetTelemetryStatus(endpointName string) (*models.TelemetryEndpoint, error)
 	}
 	circuitBreakerWindow time.Duration // Don't retry failed endpoints within this window
@@ -29,6 +30,7 @@ type Submitter struct {
 func NewSubmitter(config models.TelemetryConfig, db interface {
 	SaveTelemetrySuccess(endpointName, endpointURL string) error
 	SaveTelemetryFailure(endpointName, endpointURL, reason string) error
+	SaveTelemetrySubmission(submission *models.TelemetrySubmission) error
 	GetTelemetryStatus(endpointName string) (*models.TelemetryEndpoint, error)
 }) *Submitter {
 	return &Submitter{
@@ -84,11 +86,30 @@ func (s *Submitter) Submit(ctx context.Context, report *models.TelemetryReport) 
 		wg.Add(1)
 		go func(ep models.TelemetryEndpoint) {
 			defer wg.Done()
-			if err := s.submitToEndpoint(ctx, ep, report); err != nil {
+
+			// Track submission timing
+			startTime := time.Now()
+			err := s.submitToEndpoint(ctx, ep, report)
+			endTime := time.Now()
+
+			// Create submission log entry
+			submission := &models.TelemetrySubmission{
+				EndpointName:    ep.Name,
+				EndpointURL:     ep.URL,
+				StartedAt:       startTime,
+				CompletedAt:     endTime,
+				Success:         err == nil,
+				HostsCount:      report.HostCount,
+				ContainersCount: report.TotalContainers,
+				ImagesCount:     len(report.ImageStats),
+			}
+
+			if err != nil {
 				log.Printf("Failed to submit telemetry to %s (%s): %v", ep.Name, ep.URL, err)
 				errors <- fmt.Errorf("%s: %w", ep.Name, err)
+				submission.Error = err.Error()
 
-				// Record failure in database
+				// Record failure in status table
 				if s.db != nil {
 					if dbErr := s.db.SaveTelemetryFailure(ep.Name, ep.URL, err.Error()); dbErr != nil {
 						log.Printf("Failed to save telemetry failure status: %v", dbErr)
@@ -97,11 +118,18 @@ func (s *Submitter) Submit(ctx context.Context, report *models.TelemetryReport) 
 			} else {
 				log.Printf("Successfully submitted telemetry to %s (%s)", ep.Name, ep.URL)
 
-				// Record success in database
+				// Record success in status table
 				if s.db != nil {
 					if dbErr := s.db.SaveTelemetrySuccess(ep.Name, ep.URL); dbErr != nil {
 						log.Printf("Failed to save telemetry success status: %v", dbErr)
 					}
+				}
+			}
+
+			// Log submission to activity history
+			if s.db != nil {
+				if dbErr := s.db.SaveTelemetrySubmission(submission); dbErr != nil {
+					log.Printf("Failed to save telemetry submission log: %v", dbErr)
 				}
 			}
 		}(endpoint)

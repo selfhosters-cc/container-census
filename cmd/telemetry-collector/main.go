@@ -498,11 +498,28 @@ func (s *Server) handleTopImages(w http.ResponseWriter, r *http.Request) {
 
 	since := time.Now().AddDate(0, 0, -days)
 
+	// First, get total unique installations for percentage calculation
+	var totalInstallations int
+	totalQuery := `
+		SELECT COUNT(DISTINCT installation_id)
+		FROM telemetry_reports
+		WHERE timestamp >= $1
+	`
+	err := s.db.QueryRow(totalQuery, since).Scan(&totalInstallations)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get total installations: "+err.Error())
+		return
+	}
+
 	// Deduplicate by using only the most recent image stats per installation
 	// This prevents counting the same installation multiple times
 	// Apply normalization at query time to handle both old and new data
+	// Include installation count and adoption percentage
 	query := `
-		SELECT normalized_image, SUM(count) as total_count
+		SELECT
+			normalized_image,
+			SUM(count) as total_count,
+			COUNT(DISTINCT installation_id) as installation_count
 		FROM (
 			SELECT DISTINCT ON (installation_id, image)
 				installation_id,
@@ -538,16 +555,24 @@ func (s *Server) handleTopImages(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	type ImageCount struct {
-		Image string `json:"image"`
-		Count int    `json:"count"`
+		Image              string  `json:"image"`
+		Count              int     `json:"count"`
+		InstallationCount  int     `json:"installation_count"`
+		AdoptionPercentage float64 `json:"adoption_percentage"`
 	}
 
 	var results []ImageCount
 	for rows.Next() {
 		var ic ImageCount
-		if err := rows.Scan(&ic.Image, &ic.Count); err != nil {
+		if err := rows.Scan(&ic.Image, &ic.Count, &ic.InstallationCount); err != nil {
 			log.Printf("Scan error: %v", err)
 			continue
+		}
+		// Calculate adoption percentage
+		if totalInstallations > 0 {
+			ic.AdoptionPercentage = float64(ic.InstallationCount) / float64(totalInstallations) * 100
+			// Round to 1 decimal place
+			ic.AdoptionPercentage = float64(int(ic.AdoptionPercentage*10)) / 10
 		}
 		results = append(results, ic)
 	}
@@ -824,12 +849,13 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 	`
 
 	type Summary struct {
-		Installations    int `json:"installations"`
-		TotalSubmissions int `json:"total_submissions"`
-		TotalContainers  int `json:"total_containers"`
-		TotalHosts       int `json:"total_hosts"`
-		TotalAgents      int `json:"total_agents"`
-		UniqueImages     int `json:"unique_images"`
+		Installations          int     `json:"installations"`
+		TotalSubmissions       int     `json:"total_submissions"`
+		TotalContainers        int     `json:"total_containers"`
+		AvgContainersPerInstall float64 `json:"avg_containers_per_install"`
+		TotalHosts             int     `json:"total_hosts"`
+		TotalAgents            int     `json:"total_agents"`
+		UniqueImages           int     `json:"unique_images"`
 	}
 
 	var summary Summary
@@ -844,6 +870,13 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to query installation stats: "+err.Error())
 		return
+	}
+
+	// Calculate average containers per installation
+	if summary.Installations > 0 {
+		summary.AvgContainersPerInstall = float64(summary.TotalContainers) / float64(summary.Installations)
+		// Round to 1 decimal place
+		summary.AvgContainersPerInstall = float64(int(summary.AvgContainersPerInstall*10)) / 10
 	}
 
 	// Get unique images count
