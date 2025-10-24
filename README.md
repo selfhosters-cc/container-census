@@ -3,7 +3,7 @@
 
 **Container Census** is a lightweight, Go-powered tool that automatically scans your Docker environment across one or many hosts and gives you a clear, historical view of everything running in your stack.
 
-Community stats on container usage can be found here: [Selfhosters Stats]([https://selfhosters.cc])
+Community stats on container usage can be found here: [Selfhosters Stats](https://selfhosters.cc/stats)
 
 ##### View / Manage Containers
 ![Main server page](screenshots/server-01.png)
@@ -18,7 +18,7 @@ Community stats on container usage can be found here: [Selfhosters Stats]([https
 ![Hosts view](screenshots/server-05.png)
 
 ##### Manage Telemetry Collection
-Can enable public collection ([Selfhosters.cc]([https://selfhosters.cc])) or send telemetry information to your own private collector.
+Can enable public collection ([Selfhosters Stats](https://selfhosters.cc/stats)) or send telemetry information to your own private collector.
 
 ![Telemetry settings view](screenshots/server-07.png)
 
