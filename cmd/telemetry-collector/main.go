@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -163,6 +164,7 @@ func (s *Server) setupRoutes() {
 	s.router.HandleFunc("/api/stats/geography", s.apiKeyMiddleware(s.handleGeography)).Methods("GET", "OPTIONS")
 	s.router.HandleFunc("/api/stats/connection-metrics", s.apiKeyMiddleware(s.handleConnectionMetrics)).Methods("GET", "OPTIONS")
 	s.router.HandleFunc("/api/stats/recent-events", s.apiKeyMiddleware(s.handleRecentEvents)).Methods("GET", "OPTIONS")
+	s.router.HandleFunc("/api/stats/database-view", s.apiKeyMiddleware(s.handleDatabaseView)).Methods("GET", "OPTIONS")
 
 	// Static files for analytics dashboard - protected if auth is enabled
 	if s.config.AuthEnabled {
@@ -1461,6 +1463,218 @@ func (s *Server) handleRecentEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, events)
+}
+
+// Get raw database view for debugging and monitoring
+func (s *Server) handleDatabaseView(w http.ResponseWriter, r *http.Request) {
+	table := r.URL.Query().Get("table")
+	limit := getQueryInt(r, "limit", 100)
+	offset := getQueryInt(r, "offset", 0)
+	sortBy := r.URL.Query().Get("sort_by")
+	sortOrder := r.URL.Query().Get("sort_order")
+	installationFilter := r.URL.Query().Get("installation_id")
+
+	// Validate table name to prevent SQL injection
+	validTables := map[string]bool{
+		"telemetry_reports": true,
+		"image_stats":       true,
+		"submission_events": true,
+	}
+
+	if table == "" {
+		table = "telemetry_reports"
+	}
+
+	if !validTables[table] {
+		respondError(w, http.StatusBadRequest, "Invalid table name")
+		return
+	}
+
+	// Default sort
+	if sortBy == "" {
+		if table == "submission_events" {
+			sortBy = "id"
+		} else {
+			sortBy = "timestamp"
+		}
+	}
+
+	if sortOrder == "" {
+		sortOrder = "DESC"
+	} else {
+		sortOrder = strings.ToUpper(sortOrder)
+		if sortOrder != "ASC" && sortOrder != "DESC" {
+			sortOrder = "DESC"
+		}
+	}
+
+	// Build query based on table
+	var query string
+	var countQuery string
+	var args []interface{}
+	argNum := 1
+
+	whereClause := ""
+	if installationFilter != "" {
+		whereClause = fmt.Sprintf(" WHERE installation_id = $%d", argNum)
+		args = append(args, installationFilter)
+		argNum++
+	}
+
+	switch table {
+	case "telemetry_reports":
+		// Validate sort column for telemetry_reports
+		validSortCols := map[string]bool{
+			"id": true, "installation_id": true, "timestamp": true,
+			"version": true, "total_containers": true, "host_count": true,
+		}
+		if !validSortCols[sortBy] {
+			sortBy = "timestamp"
+		}
+
+		query = fmt.Sprintf(`
+			SELECT id, installation_id, version, timestamp, host_count, agent_count,
+			       total_containers, scan_interval, image_stats, agent_versions,
+			       containers_running, containers_stopped, containers_paused, containers_other,
+			       avg_cpu_percent, avg_memory_bytes, total_memory_limit,
+			       avg_restarts, high_restart_containers, total_image_size, unique_images,
+			       timezone, compose_project_count, containers_in_compose,
+			       network_count, custom_network_count, shared_volume_count,
+			       containers_with_deps, total_dependencies, avg_connections_per_container,
+			       created_at
+			FROM telemetry_reports
+			%s
+			ORDER BY %s %s
+			LIMIT $%d OFFSET $%d
+		`, whereClause, sortBy, sortOrder, argNum, argNum+1)
+
+		countQuery = fmt.Sprintf("SELECT COUNT(*) FROM telemetry_reports%s", whereClause)
+
+	case "image_stats":
+		// Validate sort column for image_stats
+		validSortCols := map[string]bool{
+			"id": true, "installation_id": true, "timestamp": true,
+			"image": true, "count": true, "size_bytes": true,
+		}
+		if !validSortCols[sortBy] {
+			sortBy = "timestamp"
+		}
+
+		query = fmt.Sprintf(`
+			SELECT id, installation_id, timestamp, image, count, size_bytes, created_at
+			FROM image_stats
+			%s
+			ORDER BY %s %s
+			LIMIT $%d OFFSET $%d
+		`, whereClause, sortBy, sortOrder, argNum, argNum+1)
+
+		countQuery = fmt.Sprintf("SELECT COUNT(*) FROM image_stats%s", whereClause)
+
+	case "submission_events":
+		// Validate sort column for submission_events
+		validSortCols := map[string]bool{
+			"id": true, "installation_id": true, "timestamp": true,
+			"event_type": true, "containers": true, "hosts": true,
+		}
+		if !validSortCols[sortBy] {
+			sortBy = "id"
+		}
+
+		query = fmt.Sprintf(`
+			SELECT id, installation_id, event_type, timestamp, containers, hosts, created_at
+			FROM submission_events
+			%s
+			ORDER BY %s %s
+			LIMIT $%d OFFSET $%d
+		`, whereClause, sortBy, sortOrder, argNum, argNum+1)
+
+		countQuery = fmt.Sprintf("SELECT COUNT(*) FROM submission_events%s", whereClause)
+	}
+
+	args = append(args, limit, offset)
+
+	// Execute main query
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Query failed: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	// Get column names
+	columns, err := rows.Columns()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get columns: "+err.Error())
+		return
+	}
+
+	// Scan results into generic map structure
+	var results []map[string]interface{}
+	for rows.Next() {
+		// Create a slice of interface{} to scan into
+		values := make([]interface{}, len(columns))
+		valuePtrs := make([]interface{}, len(columns))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			log.Printf("Scan error: %v", err)
+			continue
+		}
+
+		// Convert to map
+		rowMap := make(map[string]interface{})
+		for i, col := range columns {
+			val := values[i]
+
+			// Handle special types
+			switch v := val.(type) {
+			case []byte:
+				// Try to parse as JSON if it's a JSONB column
+				if col == "image_stats" || col == "agent_versions" {
+					var jsonData interface{}
+					if err := json.Unmarshal(v, &jsonData); err == nil {
+						rowMap[col] = jsonData
+					} else {
+						rowMap[col] = string(v)
+					}
+				} else {
+					rowMap[col] = string(v)
+				}
+			case time.Time:
+				rowMap[col] = v.Format(time.RFC3339)
+			case nil:
+				rowMap[col] = nil
+			default:
+				rowMap[col] = v
+			}
+		}
+
+		results = append(results, rowMap)
+	}
+
+	// Get total count
+	var totalCount int
+	countArgs := args[:len(args)-2] // Remove limit and offset
+	err = s.db.QueryRow(countQuery, countArgs...).Scan(&totalCount)
+	if err != nil {
+		log.Printf("Count query error: %v", err)
+		totalCount = len(results)
+	}
+
+	// Return results with metadata
+	response := map[string]interface{}{
+		"table":   table,
+		"records": results,
+		"pagination": map[string]interface{}{
+			"total":  totalCount,
+			"limit":  limit,
+			"offset": offset,
+		},
+	}
+
+	respondJSON(w, http.StatusOK, response)
 }
 
 // checkForUpdates checks for new versions and logs a warning if an update is available

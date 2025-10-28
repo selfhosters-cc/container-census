@@ -661,3 +661,244 @@ footer p {
         min-width: 100px;
     }
 }
+
+/* ========== Database Viewer Styles ========== */
+
+.database-viewer {
+    background: white;
+    border-radius: 12px;
+    padding: 30px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.db-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    margin-bottom: 20px;
+    padding-bottom: 20px;
+    border-bottom: 2px solid #f0f0f0;
+}
+
+.control-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    align-items: center;
+}
+
+.control-group label {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    font-weight: 500;
+    color: #333;
+}
+
+.control-group select,
+.control-group input[type="text"] {
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 14px;
+    min-width: 200px;
+    transition: border-color 0.2s;
+}
+
+.control-group select:focus,
+.control-group input[type="text"]:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+.control-group button {
+    padding: 8px 16px;
+    background: #667eea;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.control-group button:hover {
+    background: #5568d3;
+    transform: translateY(-1px);
+}
+
+.auto-refresh-control {
+    display: flex;
+    align-items: center;
+}
+
+.auto-refresh-control label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-weight: 500;
+    color: #666;
+}
+
+.auto-refresh-control input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+.db-info {
+    margin-bottom: 15px;
+    padding: 10px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    font-size: 14px;
+    color: #666;
+}
+
+.db-table-wrapper {
+    min-height: 400px;
+    max-height: 800px;
+    overflow-y: auto;
+    margin-bottom: 20px;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+}
+
+.database-content {
+    padding: 15px;
+}
+
+.db-record {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    margin-bottom: 12px;
+    overflow: hidden;
+    transition: all 0.2s;
+}
+
+.db-record:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.db-record.event-new {
+    border-left: 4px solid #52b788;
+}
+
+.db-record.event-update {
+    border-left: 4px solid #4ECDC4;
+}
+
+.db-record-header {
+    padding: 15px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #f8f9fa;
+    transition: background 0.2s;
+}
+
+.db-record-header:hover {
+    background: #f0f2f5;
+}
+
+.db-record-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    flex: 1;
+    font-size: 14px;
+}
+
+.db-field {
+    display: inline-block;
+}
+
+.db-field strong {
+    color: #666;
+    margin-right: 5px;
+}
+
+.event-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.event-badge.event-new {
+    background: #52b788;
+    color: white;
+}
+
+.event-badge.event-update {
+    background: #4ECDC4;
+    color: white;
+}
+
+.expand-icon {
+    color: #667eea;
+    font-size: 18px;
+    transition: transform 0.2s;
+    min-width: 24px;
+    text-align: center;
+}
+
+.db-record-details {
+    border-top: 1px solid #e0e0e0;
+    padding: 15px;
+    background: #fafbfc;
+}
+
+.json-view {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 12px;
+    background: #2d3748;
+    color: #e2e8f0;
+    padding: 15px;
+    border-radius: 6px;
+    overflow-x: auto;
+    white-space: pre;
+    margin: 0;
+    line-height: 1.5;
+}
+
+.loading-message,
+.empty-message,
+.error-message {
+    text-align: center;
+    padding: 40px;
+    color: #666;
+    font-size: 16px;
+}
+
+.error-message {
+    color: #e74c3c;
+}
+
+/* Responsive design for database viewer */
+@media (max-width: 768px) {
+    .control-group {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .control-group select,
+    .control-group input[type="text"],
+    .control-group button {
+        width: 100%;
+    }
+
+    .db-record-summary {
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .json-view {
+        font-size: 10px;
+    }
+}

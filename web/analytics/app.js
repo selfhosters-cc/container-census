@@ -1123,7 +1123,9 @@ function showTab(tabName, clickedButton) {
         // Fallback: find button by tab name
         const targetButton = tabName === 'charts' ?
             document.querySelector('.tab-button[onclick*="charts"]') :
-            document.querySelector('.tab-button[onclick*="images"]');
+            tabName === 'images' ?
+            document.querySelector('.tab-button[onclick*="images"]') :
+            document.querySelector('.tab-button[onclick*="database"]');
         if (targetButton) {
             targetButton.classList.add('active');
         }
@@ -1141,6 +1143,12 @@ function showTab(tabName, clickedButton) {
         // Load image data if not already loaded
         if (imageDetailsData.length === 0) {
             loadImageDetails();
+        }
+    } else if (tabName === 'database') {
+        document.getElementById('databaseTab').classList.add('active');
+        // Load database view if not already loaded
+        if (!dbDataLoaded) {
+            loadDatabaseView();
         }
     }
 }
@@ -1343,3 +1351,251 @@ function updatePaginationButtons() {
     const totalPages = Math.max(1, maxPage + 1);
     document.getElementById('pageInfo').textContent = `Page ${pageNum} of ${totalPages}`;
 }
+
+// ========== Database Viewer Functions ==========
+
+let dbData = [];
+let dbCurrentPage = 0;
+let dbPageSize = 50;
+let dbDataLoaded = false;
+let dbAutoRefreshInterval = null;
+
+async function loadDatabaseView() {
+    const table = document.getElementById('dbTableSelect').value;
+    const installationFilter = document.getElementById('dbInstallationFilter').value;
+
+    // For telemetry_reports, sort by timestamp to show recently updated records first
+    const sortBy = (table === 'telemetry_reports') ? 'timestamp' :
+                   (table === 'submission_events') ? 'id' : 'timestamp';
+
+    const params = new URLSearchParams({
+        table: table,
+        limit: dbPageSize,
+        offset: dbCurrentPage * dbPageSize,
+        sort_by: sortBy,
+        sort_order: 'DESC'
+    });
+
+    if (installationFilter) {
+        params.append('installation_id', installationFilter);
+    }
+
+    try {
+        const response = await fetch(`/api/stats/database-view?${params}`);
+        if (!response.ok) throw new Error('Failed to fetch database view');
+
+        const data = await response.json();
+        dbData = data;
+        dbDataLoaded = true;
+
+        renderDatabaseView(data);
+    } catch (error) {
+        console.error('Failed to load database view:', error);
+        document.getElementById('databaseContent').innerHTML =
+            '<p class="error-message">Failed to load data: ' + error.message + '</p>';
+    }
+}
+
+function renderDatabaseView(data) {
+    const container = document.getElementById('databaseContent');
+    const records = data.records || [];
+
+    if (records.length === 0) {
+        container.innerHTML = '<p class="empty-message">No records found</p>';
+        updateDbRecordCount(0, 0);
+        updateDbPaginationButtons();
+        return;
+    }
+
+    // Update record count
+    const total = data.pagination.total;
+    const showing = records.length;
+    updateDbRecordCount(showing, total);
+
+    // Render records as expandable cards
+    container.innerHTML = records.map((record, index) => {
+        const recordId = `db-record-${index}`;
+        return renderDatabaseRecord(record, recordId, data.table);
+    }).join('');
+
+    updateDbPaginationButtons();
+}
+
+function renderDatabaseRecord(record, recordId, tableName) {
+    // Get key fields for summary
+    let summary = '';
+    let eventClass = '';
+
+    switch (tableName) {
+        case 'telemetry_reports':
+            summary = `
+                <div class="db-record-summary">
+                    <span class="db-field"><strong>ID:</strong> ${record.id}</span>
+                    <span class="db-field"><strong>Installation:</strong> ${truncateId(record.installation_id)}</span>
+                    <span class="db-field"><strong>Version:</strong> ${record.version || 'N/A'}</span>
+                    <span class="db-field"><strong>Containers:</strong> ${record.total_containers}</span>
+                    <span class="db-field"><strong>Hosts:</strong> ${record.host_count}</span>
+                    <span class="db-field"><strong>Last Updated:</strong> ${formatTimestamp(record.timestamp)}</span>
+                </div>
+            `;
+            break;
+
+        case 'submission_events':
+            eventClass = record.event_type === 'new' ? 'event-new' : 'event-update';
+            summary = `
+                <div class="db-record-summary ${eventClass}">
+                    <span class="db-field"><strong>ID:</strong> ${record.id}</span>
+                    <span class="db-field"><strong>Type:</strong> <span class="event-badge ${eventClass}">${record.event_type.toUpperCase()}</span></span>
+                    <span class="db-field"><strong>Installation:</strong> ${truncateId(record.installation_id)}</span>
+                    <span class="db-field"><strong>Containers:</strong> ${record.containers}</span>
+                    <span class="db-field"><strong>Hosts:</strong> ${record.hosts}</span>
+                    <span class="db-field"><strong>Timestamp:</strong> ${formatTimestamp(record.timestamp)}</span>
+                </div>
+            `;
+            break;
+
+        case 'image_stats':
+            summary = `
+                <div class="db-record-summary">
+                    <span class="db-field"><strong>ID:</strong> ${record.id}</span>
+                    <span class="db-field"><strong>Image:</strong> ${record.image}</span>
+                    <span class="db-field"><strong>Count:</strong> ${record.count}</span>
+                    <span class="db-field"><strong>Installation:</strong> ${truncateId(record.installation_id)}</span>
+                    <span class="db-field"><strong>Timestamp:</strong> ${formatTimestamp(record.timestamp)}</span>
+                </div>
+            `;
+            break;
+    }
+
+    return `
+        <div class="db-record ${eventClass}">
+            <div class="db-record-header" onclick="toggleDbRecord('${recordId}')">
+                ${summary}
+                <span class="expand-icon" id="${recordId}-icon">▼</span>
+            </div>
+            <div class="db-record-details" id="${recordId}" style="display: none;">
+                <pre class="json-view">${formatJson(record)}</pre>
+            </div>
+        </div>
+    `;
+}
+
+function toggleDbRecord(recordId) {
+    const details = document.getElementById(recordId);
+    const icon = document.getElementById(`${recordId}-icon`);
+
+    if (details.style.display === 'none') {
+        details.style.display = 'block';
+        icon.textContent = '▲';
+    } else {
+        details.style.display = 'none';
+        icon.textContent = '▼';
+    }
+}
+
+function formatJson(obj) {
+    return JSON.stringify(obj, null, 2);
+}
+
+function formatTimestamp(timestamp) {
+    if (!timestamp) return 'N/A';
+
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diff = now - date;
+
+    // Show relative time if recent
+    if (diff < 60000) { // < 1 minute
+        return 'Just now';
+    } else if (diff < 3600000) { // < 1 hour
+        const mins = Math.floor(diff / 60000);
+        return `${mins}m ago`;
+    } else if (diff < 86400000) { // < 1 day
+        const hours = Math.floor(diff / 3600000);
+        return `${hours}h ago`;
+    }
+
+    // Otherwise show formatted date
+    return date.toLocaleString();
+}
+
+function truncateId(id) {
+    if (!id) return 'N/A';
+    return id.length > 12 ? id.substring(0, 12) + '...' : id;
+}
+
+function updateDbRecordCount(showing, total) {
+    const start = dbCurrentPage * dbPageSize + 1;
+    const end = dbCurrentPage * dbPageSize + showing;
+    document.getElementById('dbRecordCount').textContent =
+        `Showing ${start}-${end} of ${total} records`;
+}
+
+function updateDbPaginationButtons() {
+    const hasPrevious = dbCurrentPage > 0;
+    const hasNext = dbData.pagination && (dbCurrentPage + 1) * dbPageSize < dbData.pagination.total;
+
+    document.getElementById('dbPrevPage').disabled = !hasPrevious;
+    document.getElementById('dbNextPage').disabled = !hasNext;
+
+    const pageNum = dbCurrentPage + 1;
+    const totalPages = dbData.pagination ? Math.ceil(dbData.pagination.total / dbPageSize) : 1;
+    document.getElementById('dbPageInfo').textContent = `Page ${pageNum} of ${totalPages}`;
+}
+
+function changeDbPage(delta) {
+    dbCurrentPage = Math.max(0, dbCurrentPage + delta);
+    loadDatabaseView();
+}
+
+function toggleAutoRefresh() {
+    const checkbox = document.getElementById('dbAutoRefresh');
+
+    if (checkbox.checked) {
+        // Start auto-refresh
+        dbAutoRefreshInterval = setInterval(() => {
+            loadDatabaseView();
+        }, 5000);
+        console.log('Database auto-refresh enabled (5s interval)');
+    } else {
+        // Stop auto-refresh
+        if (dbAutoRefreshInterval) {
+            clearInterval(dbAutoRefreshInterval);
+            dbAutoRefreshInterval = null;
+        }
+        console.log('Database auto-refresh disabled');
+    }
+}
+
+function exportDatabaseView() {
+    if (!dbData || !dbData.records || dbData.records.length === 0) {
+        alert('No data to export');
+        return;
+    }
+
+    const exportData = {
+        table: dbData.table,
+        exported_at: new Date().toISOString(),
+        total_records: dbData.pagination.total,
+        records: dbData.records
+    };
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `census-${dbData.table}-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    console.log('Exported database view to JSON');
+}
+
+// Clean up auto-refresh on page unload
+window.addEventListener('beforeunload', () => {
+    if (dbAutoRefreshInterval) {
+        clearInterval(dbAutoRefreshInterval);
+    }
+});

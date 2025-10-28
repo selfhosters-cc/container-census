@@ -73,6 +73,7 @@
         <div class="tabs">
             <button class="tab-button active" onclick="showTab('charts', this)">Charts</button>
             <button class="tab-button" onclick="showTab('images', this)">Container Images</button>
+            <button class="tab-button" onclick="showTab('database', this)">Database</button>
         </div>
 
         <div id="chartsTab" class="tab-content active">
@@ -178,6 +179,54 @@
                     <button id="prevPage" onclick="changePage(-1)" disabled>← Previous</button>
                     <span id="pageInfo">Page 1</span>
                     <button id="nextPage" onclick="changePage(1)">Next →</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="databaseTab" class="tab-content">
+            <div class="database-viewer">
+                <div class="db-controls">
+                    <div class="control-group">
+                        <label>
+                            Table:
+                            <select id="dbTableSelect" onchange="loadDatabaseView()">
+                                <option value="telemetry_reports">Telemetry Reports</option>
+                                <option value="submission_events">Submission Events</option>
+                                <option value="image_stats">Image Stats</option>
+                            </select>
+                        </label>
+
+                        <label>
+                            Installation ID:
+                            <input type="text" id="dbInstallationFilter" placeholder="Filter by ID..." onchange="loadDatabaseView()">
+                        </label>
+
+                        <button onclick="loadDatabaseView()">🔄 Refresh</button>
+                        <button onclick="exportDatabaseView()">💾 Export JSON</button>
+                    </div>
+
+                    <div class="auto-refresh-control">
+                        <label>
+                            <input type="checkbox" id="dbAutoRefresh" onchange="toggleAutoRefresh()">
+                            Auto-refresh (5s)
+                        </label>
+                    </div>
+                </div>
+
+                <div class="db-info">
+                    <span id="dbRecordCount">0 records</span>
+                </div>
+
+                <div class="db-table-wrapper">
+                    <div id="databaseContent" class="database-content">
+                        <p class="loading-message">Select a table and click refresh to view data</p>
+                    </div>
+                </div>
+
+                <div class="pagination">
+                    <button id="dbPrevPage" onclick="changeDbPage(-1)" disabled>← Previous</button>
+                    <span id="dbPageInfo">Page 1</span>
+                    <button id="dbNextPage" onclick="changeDbPage(1)" disabled>Next →</button>
                 </div>
             </div>
         </div>
