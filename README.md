@@ -15,7 +15,6 @@ Community stats on container usage can be found here: [Selfhosters Stats](https:
 ##### View History of Container
 ![History view](screenshots/server-08.png)
 
-
 ##### Manage / Prune Images
 ![Image view](screenshots/server-04.png)
 
@@ -285,6 +284,7 @@ Use the interactive `build-all-images.sh` script in the scripts folder.
 - Ensure Docker socket is mounted: `-v /var/run/docker.sock:/var/run/docker.sock`
 - Check socket permissions
 - Verify Docker is running on the host
+- Ensure DOCKER_GID is set accurately.  Defaults to 999. Confirm value on your system with `stat -c '%g' /var/run/docker.sock` and set the value in your compose file
 
 ### Permission denied
 

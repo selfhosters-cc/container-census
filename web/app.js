@@ -1758,7 +1758,11 @@ function renderTimeline(events) {
         let details = '';
         if (event.old_state && event.new_state) {
             details = `<span class="state-badge state-${event.old_state}">${event.old_state}</span> → <span class="state-badge state-${event.new_state}">${event.new_state}</span>`;
+        } else if (event.old_image_tag && event.new_image_tag) {
+            // New format: show both tag and SHA
+            details = `<code>${event.old_image_tag}</code> <span class="text-muted">(${event.old_image_sha})</span> → <code>${event.new_image_tag}</code> <span class="text-muted">(${event.new_image_sha})</span>`;
         } else if (event.old_image && event.new_image) {
+            // Fallback to old format for backward compatibility
             details = `<code>${event.old_image}</code> → <code>${event.new_image}</code>`;
         } else if (event.restart_count) {
             details = `<strong>${event.restart_count} restart(s)</strong>`;

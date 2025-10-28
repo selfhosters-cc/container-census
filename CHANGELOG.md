@@ -40,11 +40,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Improved agent token logging for easier retrieval (`grep "API Token:"` works for both new and existing tokens)
 - Updated README.md with agent volume mount instructions for token persistence
-- **Enhanced container lifecycle timeline display**:
-  - First detected events now show initial state: "Container 'name' first detected (running)" or "(stopped)"
-  - Added "last seen" event showing most recent observation and total scan count
-  - Added comprehensive summary banner with statistics (total observations, state changes, image updates, current status)
-  - Timeline now clearly shows container activity over time
 - **Implemented automatic database cleanup routine**:
   - Removes redundant scan records older than 7 days while preserving important lifecycle events
   - Keeps first scan, last scan, state changes, image changes, and gap indicators

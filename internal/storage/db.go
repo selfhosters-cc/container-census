@@ -905,6 +905,7 @@ func (db *DB) GetContainerLifecycleEvents(containerName string, hostID int64) ([
 			scanned_at,
 			LAG(state) OVER (ORDER BY scanned_at) as prev_state,
 			LAG(image_id) OVER (ORDER BY scanned_at) as prev_image_id,
+			LAG(image) OVER (ORDER BY scanned_at) as prev_image,
 			LAG(scanned_at) OVER (ORDER BY scanned_at) as prev_scan_time
 		FROM containers
 		WHERE name = ? AND host_id = ?
@@ -927,12 +928,12 @@ func (db *DB) GetContainerLifecycleEvents(containerName string, hostID int64) ([
 		totalScans++
 		var id, name, image, imageID, state string
 		var scannedAtRaw interface{}
-		var prevState, prevImageID sql.NullString
+		var prevState, prevImageID, prevImage sql.NullString
 		var prevScanTimeRaw sql.NullString
 
 		err := rows.Scan(
 			&id, &name, &image, &imageID, &state, &scannedAtRaw,
-			&prevState, &prevImageID, &prevScanTimeRaw,
+			&prevState, &prevImageID, &prevImage, &prevScanTimeRaw,
 		)
 		if err != nil {
 			return nil, err
@@ -1031,11 +1032,25 @@ func (db *DB) GetContainerLifecycleEvents(containerName string, hostID int64) ([
 
 		// Image update detected
 		if prevImageID.Valid && prevImageID.String != imageID {
+			// Truncate SHAs to 12 characters for display
+			oldSHA := prevImageID.String
+			if len(oldSHA) > 12 {
+				oldSHA = oldSHA[:12]
+			}
+			newSHA := imageID
+			if len(newSHA) > 12 {
+				newSHA = newSHA[:12]
+			}
+
 			events = append(events, models.ContainerLifecycleEvent{
 				Timestamp:   scannedAt,
 				EventType:   "image_updated",
-				OldImage:    prevImageID.String[:12],
-				NewImage:    imageID[:12],
+				OldImage:    oldSHA,                  // Kept for backward compatibility
+				NewImage:    newSHA,                  // Kept for backward compatibility
+				OldImageTag: prevImage.String,        // Full image name with tag
+				NewImageTag: image,                   // Full image name with tag
+				OldImageSHA: oldSHA,                  // Truncated SHA
+				NewImageSHA: newSHA,                  // Truncated SHA
 				Description: fmt.Sprintf("Image updated to '%s'", image),
 			})
 		}

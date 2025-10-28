@@ -267,14 +267,18 @@ type TelemetryStats struct {
 
 // ContainerLifecycleEvent represents a single lifecycle event for a container
 type ContainerLifecycleEvent struct {
-	Timestamp   time.Time `json:"timestamp"`
-	EventType   string    `json:"event_type"` // "first_seen", "started", "stopped", "restarted", "image_updated", "disappeared"
-	OldState    string    `json:"old_state,omitempty"`
-	NewState    string    `json:"new_state,omitempty"`
-	OldImage    string    `json:"old_image,omitempty"`
-	NewImage    string    `json:"new_image,omitempty"`
-	Description string    `json:"description"`
-	RestartCount int      `json:"restart_count,omitempty"`
+	Timestamp    time.Time `json:"timestamp"`
+	EventType    string    `json:"event_type"` // "first_seen", "started", "stopped", "restarted", "image_updated", "disappeared"
+	OldState     string    `json:"old_state,omitempty"`
+	NewState     string    `json:"new_state,omitempty"`
+	OldImage     string    `json:"old_image,omitempty"`     // Deprecated: kept for backward compatibility, contains SHA
+	NewImage     string    `json:"new_image,omitempty"`     // Deprecated: kept for backward compatibility, contains SHA
+	OldImageTag  string    `json:"old_image_tag,omitempty"` // Full image name with tag (e.g., "nginx:1.25.3")
+	NewImageTag  string    `json:"new_image_tag,omitempty"` // Full image name with tag (e.g., "nginx:1.25.4")
+	OldImageSHA  string    `json:"old_image_sha,omitempty"` // Truncated SHA (12 chars)
+	NewImageSHA  string    `json:"new_image_sha,omitempty"` // Truncated SHA (12 chars)
+	Description  string    `json:"description"`
+	RestartCount int       `json:"restart_count,omitempty"`
 }
 
 // ContainerLifecycleSummary represents a summary of a container's lifecycle
