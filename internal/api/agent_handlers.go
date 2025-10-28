@@ -81,6 +81,17 @@ func (s *Server) handleAddAgentHost(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusBadGateway, "Failed to connect to agent: "+err.Error())
 			return
 		}
+
+		// Also verify authentication
+		if err := s.scanner.VerifyAgentAuth(ctx, host); err != nil {
+			if strings.Contains(err.Error(), "401") || strings.Contains(err.Error(), "authentication failed") {
+				respondError(w, http.StatusUnauthorized, "Agent authentication failed - invalid API token")
+			} else {
+				respondError(w, http.StatusBadGateway, "Failed to verify agent authentication: "+err.Error())
+			}
+			return
+		}
+
 		host.AgentStatus = "online"
 		host.LastSeen = time.Now()
 	}
@@ -122,17 +133,34 @@ func (s *Server) handleTestAgentConnection(w http.ResponseWriter, r *http.Reques
 		AgentToken: req.AgentToken,
 	}
 
+	// First check if agent is reachable
 	if err := s.verifyAgentConnection(ctx, host); err != nil {
 		respondJSON(w, http.StatusOK, map[string]interface{}{
 			"success": false,
-			"error":   err.Error(),
+			"error":   "Connection failed: " + err.Error(),
 		})
+		return
+	}
+
+	// Then verify authentication
+	if err := s.scanner.VerifyAgentAuth(ctx, host); err != nil {
+		if strings.Contains(err.Error(), "401") || strings.Contains(err.Error(), "authentication failed") {
+			respondJSON(w, http.StatusOK, map[string]interface{}{
+				"success": false,
+				"error":   "Authentication failed - invalid API token",
+			})
+		} else {
+			respondJSON(w, http.StatusOK, map[string]interface{}{
+				"success": false,
+				"error":   "Authentication check failed: " + err.Error(),
+			})
+		}
 		return
 	}
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
-		"message": "Agent is reachable",
+		"message": "Agent is reachable and authentication successful",
 	})
 }
 

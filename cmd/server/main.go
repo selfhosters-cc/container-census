@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -108,6 +109,9 @@ func main() {
 
 	// Start daily version check
 	go runDailyVersionCheck(ctx)
+
+	// Start daily database cleanup
+	go runDailyDatabaseCleanup(ctx, db)
 
 	// Start HTTP server
 	go func() {
@@ -248,10 +252,33 @@ func performScan(ctx context.Context, db *storage.DB, scan *scanner.Scanner) {
 			result.Success = false
 			result.Error = err.Error()
 			log.Printf("Scan failed for host %s: %v", host.Name, err)
+
+			// Update agent status if this is an auth failure
+			if host.HostType == "agent" && strings.Contains(err.Error(), "401") {
+				host.AgentStatus = "auth_failed"
+				if updateErr := db.UpdateHost(host); updateErr != nil {
+					log.Printf("Failed to update host status for %s: %v", host.Name, updateErr)
+				}
+			} else if host.HostType == "agent" {
+				// Other failure - mark as offline
+				host.AgentStatus = "offline"
+				if updateErr := db.UpdateHost(host); updateErr != nil {
+					log.Printf("Failed to update host status for %s: %v", host.Name, updateErr)
+				}
+			}
 		} else {
 			result.Success = true
 			result.ContainersFound = len(containers)
 			log.Printf("Scan completed for host %s: found %d containers", host.Name, len(containers))
+
+			// Update agent status to online on successful scan
+			if host.HostType == "agent" && host.AgentStatus != "online" {
+				host.AgentStatus = "online"
+				host.LastSeen = time.Now()
+				if updateErr := db.UpdateHost(host); updateErr != nil {
+					log.Printf("Failed to update host status for %s: %v", host.Name, updateErr)
+				}
+			}
 
 			// Save containers
 			if err := db.SaveContainers(containers); err != nil {
@@ -293,6 +320,33 @@ func runDailyVersionCheck(ctx context.Context) {
 			return
 		case <-ticker.C:
 			checkForUpdates()
+		}
+	}
+}
+
+// runDailyDatabaseCleanup performs database cleanup of redundant scans once per day
+func runDailyDatabaseCleanup(ctx context.Context, db *storage.DB) {
+	// Run first cleanup after 1 hour (let system stabilize)
+	time.Sleep(1 * time.Hour)
+
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	// Cleanup scans older than 7 days
+	cleanupOlderThan := 7
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			log.Printf("Starting database cleanup (removing redundant scans older than %d days)...", cleanupOlderThan)
+			deleted, err := db.CleanupRedundantScans(cleanupOlderThan)
+			if err != nil {
+				log.Printf("Database cleanup failed: %v", err)
+			} else {
+				log.Printf("Database cleanup completed: removed %d redundant scan records", deleted)
+			}
 		}
 	}
 }

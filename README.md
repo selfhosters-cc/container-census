@@ -1,4 +1,5 @@
 # Container Census
+[Changelog](CHANGELOG.md)
 ### Discover. Visualize. Track. Compare.
 
 **Container Census** is a lightweight, Go-powered tool that automatically scans your Docker environment across one or many hosts and gives you a clear, historical view of everything running in your stack.
@@ -10,6 +11,10 @@ Community stats on container usage can be found here: [Selfhosters Stats](https:
 
 ##### Visualize relationships / networks / links / dependencies
 ![Graph view](screenshots/server-02.png)
+
+##### View History of Container
+![History view](screenshots/server-08.png)
+
 
 ##### Manage / Prune Images
 ![Image view](screenshots/server-04.png)
@@ -109,8 +114,13 @@ Anonymous telemetry is opt-in only and can be enabled anytime from the Settings 
       # Docker socket for local container management
       - /var/run/docker.sock:/var/run/docker.sock
 
+      # Persistent data directory for API token
+      # IMPORTANT: Mount this volume to persist the token across container restarts
+      - ./census/agent:/app/data
+
     environment:
-      API_TOKEN: ${AGENT_API_TOKEN:-}
+      # Optional: Set a specific API token (otherwise auto-generated and persisted)
+      # API_TOKEN: ${AGENT_API_TOKEN:-}
       PORT: 9876
       TZ: ${TZ:-UTC}
 
@@ -124,6 +134,15 @@ Anonymous telemetry is opt-in only and can be enabled anytime from the Settings 
 ```
 
 #### Agent Configuration
+
+**API Token Persistence:**
+
+The agent automatically generates a secure API token on first startup and persists it to `/app/data/agent-token`. To ensure the token survives container restarts and upgrades:
+
+1. **Mount a volume** at `/app/data` (recommended - shown in docker-compose example above)
+2. **Or set API_TOKEN** environment variable explicitly
+
+Without a mounted volume, the agent will generate a new token on each restart, requiring you to update the token in the census server UI.
 
 **Get the API token from logs:**
 

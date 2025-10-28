@@ -29,6 +29,7 @@
             <button class="tab-btn" data-tab="images">Images</button>
             <button class="tab-btn" data-tab="graph">Graph</button>
             <button class="tab-btn" data-tab="hosts">Hosts</button>
+            <button class="tab-btn" data-tab="history">History</button>
             <button class="tab-btn" data-tab="activity">Activity Log</button>
             <button class="tab-btn" data-tab="settings">Settings</button>
         </nav>
@@ -225,6 +226,34 @@
             </div>
         </div>
 
+        <div id="historyTab" class="tab-content">
+            <div class="history-section">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2 style="margin: 0;">📜 Container Lifecycle History</h2>
+                    <select id="historyHostFilter" class="filter-select">
+                        <option value="">All Hosts</option>
+                    </select>
+                </div>
+                <div class="history-stats" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px;">
+                    <div class="stat-card">
+                        <div class="stat-value" id="historyTotalContainers">-</div>
+                        <div class="stat-label">Total Tracked</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="historyActiveContainers">-</div>
+                        <div class="stat-label">Currently Active</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="historyInactiveContainers">-</div>
+                        <div class="stat-label">Inactive</div>
+                    </div>
+                </div>
+                <div id="historyBody" class="history-cards-container">
+                    <div class="loading">Loading...</div>
+                </div>
+            </div>
+        </div>
+
         <div id="activityTab" class="tab-content">
             <div class="activity-log-section">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
@@ -310,6 +339,7 @@
                                     </label>
                                 </div>
                             </div>
+                            <button onclick="testCollector()" class="btn btn-secondary" style="margin-right: 10px;">Test Connection</button>
                             <button onclick="addCollector()" class="btn btn-primary">Add Collector</button>
                             <span id="collectorSaveStatus" class="save-status-inline"></span>
                         </div>
@@ -385,6 +415,21 @@
                 <button type="button" id="testAgentBtn" class="btn btn-secondary">Test Connection</button>
                 <button type="button" id="cancelAgentBtn" class="btn btn-secondary">Cancel</button>
                 <button type="submit" form="addAgentForm" id="saveAgentBtn" class="btn btn-primary">Add Agent</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Container Timeline Modal -->
+    <div id="timelineModal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3>📅 Lifecycle Timeline: <span id="timelineContainerName"></span></h3>
+                <button class="close-btn" onclick="closeTimelineModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="timelineContent" class="timeline-content">
+                    <div class="loading">Loading timeline...</div>
+                </div>
             </div>
         </div>
     </div>

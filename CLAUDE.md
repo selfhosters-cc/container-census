@@ -113,6 +113,14 @@ Connection type is auto-detected from address prefix in `cmd/server/main.go:dete
 - `/api/stats/*` endpoints are **always public** (read-only)
 - Basic Auth **only** protects static dashboard files when `COLLECTOR_AUTH_ENABLED=true`
 
+**Census Agent** (`cmd/agent/main.go`):
+- Token-based authentication for all `/api/*` endpoints via `X-API-Token` header
+- Auto-generates secure token on first startup using crypto/rand (32 bytes, hex-encoded)
+- Persists token to `/app/data/agent-token` for survival across restarts/upgrades
+- Token file created with 0600 permissions for security
+- If token file cannot be created (no volume mounted), logs warning and generates ephemeral token
+- Public endpoints: `/health`, `/info` (no auth required)
+
 #### Database Deduplication Strategy
 Telemetry collector uses 7-day deduplication windows:
 - If installation submits within 7 days → **UPDATE** existing record

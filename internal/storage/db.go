@@ -787,3 +787,357 @@ func (db *DB) ClearTelemetryFailure(endpointName string) error {
 	`, now, endpointName)
 	return err
 }
+
+// Container lifecycle operations
+
+// GetContainerLifecycleSummaries returns lifecycle summaries for all containers
+func (db *DB) GetContainerLifecycleSummaries(limit int, hostFilter int64) ([]models.ContainerLifecycleSummary, error) {
+	// Group by container name instead of ID to consolidate restarts/rebuilds
+	// Use CTE with window functions for better performance
+	query := `
+		WITH latest_per_name AS (
+			SELECT
+				name,
+				host_id,
+				id,
+				image,
+				host_name,
+				state,
+				scanned_at,
+				ROW_NUMBER() OVER (PARTITION BY name, host_id ORDER BY scanned_at DESC) as rn
+			FROM containers
+			WHERE (? = 0 OR host_id = ?)
+		),
+		host_latest AS (
+			SELECT host_id, MAX(scanned_at) as max_scan
+			FROM containers
+			GROUP BY host_id
+		)
+		SELECT
+			l.id,
+			c.name,
+			l.image,
+			c.host_id,
+			l.host_name,
+			MIN(c.scanned_at) as first_seen,
+			MAX(c.scanned_at) as last_seen,
+			l.state as current_state,
+			COUNT(*) as total_scans,
+			COUNT(DISTINCT c.state) - 1 as state_changes,
+			COUNT(DISTINCT c.image_id) - 1 as image_updates,
+			0 as restart_events,
+			CASE WHEN MAX(c.scanned_at) = h.max_scan THEN 1 ELSE 0 END as is_active
+		FROM containers c
+		INNER JOIN latest_per_name l ON c.name = l.name AND c.host_id = l.host_id AND l.rn = 1
+		INNER JOIN host_latest h ON c.host_id = h.host_id
+		WHERE (? = 0 OR c.host_id = ?)
+		GROUP BY c.name, c.host_id, l.id, l.image, l.host_name, l.state, h.max_scan
+		ORDER BY last_seen DESC
+		LIMIT ?
+	`
+
+	rows, err := db.conn.Query(query, hostFilter, hostFilter, hostFilter, hostFilter, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var summaries []models.ContainerLifecycleSummary
+	for rows.Next() {
+		var s models.ContainerLifecycleSummary
+		var isActive int
+		var firstSeenStr, lastSeenStr interface{}
+
+		err := rows.Scan(
+			&s.ContainerID, &s.ContainerName, &s.Image,
+			&s.HostID, &s.HostName,
+			&firstSeenStr, &lastSeenStr, &s.CurrentState,
+			&s.TotalScans,
+			&s.StateChanges, &s.ImageUpdates, &s.RestartEvents,
+			&isActive,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		// Parse timestamps - try multiple formats
+		switch v := firstSeenStr.(type) {
+		case string:
+			for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05.999999999-07:00", "2006-01-02 15:04:05"} {
+				if t, err := time.Parse(layout, v); err == nil {
+					s.FirstSeen = t
+					break
+				}
+			}
+		case time.Time:
+			s.FirstSeen = v
+		}
+
+		switch v := lastSeenStr.(type) {
+		case string:
+			for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05.999999999-07:00", "2006-01-02 15:04:05"} {
+				if t, err := time.Parse(layout, v); err == nil {
+					s.LastSeen = t
+					break
+				}
+			}
+		case time.Time:
+			s.LastSeen = v
+		}
+
+		s.IsActive = isActive == 1
+		summaries = append(summaries, s)
+	}
+
+	return summaries, rows.Err()
+}
+
+// GetContainerLifecycleEvents returns detailed lifecycle events for a specific container
+// Accepts container name instead of ID to show events across all container IDs with that name
+func (db *DB) GetContainerLifecycleEvents(containerName string, hostID int64) ([]models.ContainerLifecycleEvent, error) {
+	query := `
+		SELECT
+			id,
+			name,
+			image,
+			image_id,
+			state,
+			scanned_at,
+			LAG(state) OVER (ORDER BY scanned_at) as prev_state,
+			LAG(image_id) OVER (ORDER BY scanned_at) as prev_image_id,
+			LAG(scanned_at) OVER (ORDER BY scanned_at) as prev_scan_time
+		FROM containers
+		WHERE name = ? AND host_id = ?
+		ORDER BY scanned_at ASC
+	`
+
+	rows, err := db.conn.Query(query, containerName, hostID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []models.ContainerLifecycleEvent
+	var firstSeen = true
+	var lastScanTime time.Time
+	var lastState string
+	var totalScans int
+
+	for rows.Next() {
+		totalScans++
+		var id, name, image, imageID, state string
+		var scannedAtRaw interface{}
+		var prevState, prevImageID sql.NullString
+		var prevScanTimeRaw sql.NullString
+
+		err := rows.Scan(
+			&id, &name, &image, &imageID, &state, &scannedAtRaw,
+			&prevState, &prevImageID, &prevScanTimeRaw,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		// Parse scanned_at - try multiple formats
+		var scannedAt time.Time
+		switch v := scannedAtRaw.(type) {
+		case string:
+			for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05.999999999-07:00", "2006-01-02 15:04:05"} {
+				if t, err := time.Parse(layout, v); err == nil {
+					scannedAt = t
+					break
+				}
+			}
+		case time.Time:
+			scannedAt = v
+		}
+
+		// Parse prev_scan_time
+		var prevScanTime sql.NullTime
+		if prevScanTimeRaw.Valid {
+			for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05.999999999-07:00", "2006-01-02 15:04:05"} {
+				if t, err := time.Parse(layout, prevScanTimeRaw.String); err == nil {
+					prevScanTime = sql.NullTime{Time: t, Valid: true}
+					break
+				}
+			}
+		}
+
+		// First seen event
+		if firstSeen {
+			stateDesc := state
+			if state == "running" {
+				stateDesc = "running"
+			} else if state == "exited" {
+				stateDesc = "stopped"
+			}
+			events = append(events, models.ContainerLifecycleEvent{
+				Timestamp:   scannedAt,
+				EventType:   "first_seen",
+				NewState:    state,
+				NewImage:    image,
+				Description: fmt.Sprintf("Container '%s' first detected (%s)", name, stateDesc),
+			})
+			firstSeen = false
+			continue
+		}
+
+		// Detect disappearance (gap > 2 hours indicates actual downtime)
+		if prevScanTime.Valid {
+			gap := scannedAt.Sub(prevScanTime.Time)
+			if gap > 2*time.Hour { // Only flag significant gaps (container likely removed/stopped)
+				events = append(events, models.ContainerLifecycleEvent{
+					Timestamp:   prevScanTime.Time,
+					EventType:   "disappeared",
+					OldState:    prevState.String,
+					Description: fmt.Sprintf("Container disappeared (not seen for %s)", gap.Round(time.Minute)),
+				})
+				events = append(events, models.ContainerLifecycleEvent{
+					Timestamp:   scannedAt,
+					EventType:   "reappeared",
+					NewState:    state,
+					Description: "Container reappeared in scan",
+				})
+			}
+		}
+
+		// State change detected
+		if prevState.Valid && prevState.String != state {
+			eventType := "state_change"
+			description := fmt.Sprintf("State changed from '%s' to '%s'", prevState.String, state)
+
+			if prevState.String == "exited" && state == "running" {
+				eventType = "started"
+				description = "Container started"
+			} else if prevState.String == "running" && state == "exited" {
+				eventType = "stopped"
+				description = "Container stopped"
+			} else if prevState.String == "running" && state == "paused" {
+				eventType = "paused"
+				description = "Container paused"
+			} else if prevState.String == "paused" && state == "running" {
+				eventType = "resumed"
+				description = "Container resumed"
+			}
+
+			events = append(events, models.ContainerLifecycleEvent{
+				Timestamp:   scannedAt,
+				EventType:   eventType,
+				OldState:    prevState.String,
+				NewState:    state,
+				Description: description,
+			})
+		}
+
+		// Image update detected
+		if prevImageID.Valid && prevImageID.String != imageID {
+			events = append(events, models.ContainerLifecycleEvent{
+				Timestamp:   scannedAt,
+				EventType:   "image_updated",
+				OldImage:    prevImageID.String[:12],
+				NewImage:    imageID[:12],
+				Description: fmt.Sprintf("Image updated to '%s'", image),
+			})
+		}
+
+		// Track last scan for final event
+		lastScanTime = scannedAt
+		lastState = state
+	}
+
+	// Add last_seen event if we have data
+	if totalScans > 0 {
+		stateDesc := lastState
+		if lastState == "running" {
+			stateDesc = "running"
+		} else if lastState == "exited" {
+			stateDesc = "stopped"
+		}
+
+		events = append(events, models.ContainerLifecycleEvent{
+			Timestamp:   lastScanTime,
+			EventType:   "last_seen",
+			NewState:    lastState,
+			Description: fmt.Sprintf("Last observed (%s) - seen %d times total", stateDesc, totalScans),
+		})
+	}
+
+	return events, rows.Err()
+}
+
+// CleanupRedundantScans removes redundant container scan records while preserving lifecycle milestones
+// This reduces database size by keeping only: first scan, last scan, state changes, image changes, and gap indicators
+func (db *DB) CleanupRedundantScans(olderThanDays int) (int, error) {
+	// Strategy:
+	// 1. For each container (id, host_id combination)
+	// 2. Find all scans older than olderThanDays
+	// 3. Keep: first scan, last scan, and any scan where state/image changed or gap > 2 hours
+	// 4. Delete all redundant middle scans
+
+	// First, find containers with redundant scans
+	query := `
+		WITH container_groups AS (
+			SELECT
+				id,
+				host_id,
+				COUNT(*) as scan_count,
+				MIN(scanned_at) as first_scan,
+				MAX(scanned_at) as last_scan
+			FROM containers
+			WHERE scanned_at < datetime('now', '-' || ? || ' days')
+			GROUP BY id, host_id
+			HAVING scan_count > 10  -- Only cleanup containers with >10 scans
+		),
+		scans_with_changes AS (
+			SELECT
+				c.rowid,
+				c.id,
+				c.host_id,
+				c.scanned_at,
+				c.state,
+				c.image_id,
+				LAG(c.state) OVER (PARTITION BY c.id, c.host_id ORDER BY c.scanned_at) as prev_state,
+				LAG(c.image_id) OVER (PARTITION BY c.id, c.host_id ORDER BY c.scanned_at) as prev_image_id,
+				LAG(c.scanned_at) OVER (PARTITION BY c.id, c.host_id ORDER BY c.scanned_at) as prev_scan_time,
+				cg.first_scan,
+				cg.last_scan
+			FROM containers c
+			INNER JOIN container_groups cg ON c.id = cg.id AND c.host_id = cg.host_id
+		),
+		important_scans AS (
+			SELECT rowid
+			FROM scans_with_changes
+			WHERE
+				-- Keep first scan
+				scanned_at = first_scan
+				-- Keep last scan
+				OR scanned_at = last_scan
+				-- Keep state changes
+				OR (prev_state IS NOT NULL AND state != prev_state)
+				-- Keep image changes
+				OR (prev_image_id IS NOT NULL AND image_id != prev_image_id)
+				-- Keep scans after gaps > 2 hours
+				OR (prev_scan_time IS NOT NULL AND
+					(julianday(scanned_at) - julianday(prev_scan_time)) * 24 > 2)
+		)
+		DELETE FROM containers
+		WHERE rowid IN (
+			SELECT sc.rowid
+			FROM scans_with_changes sc
+			LEFT JOIN important_scans i ON sc.rowid = i.rowid
+			WHERE i.rowid IS NULL
+		)
+	`
+
+	result, err := db.conn.Exec(query, olderThanDays)
+	if err != nil {
+		return 0, fmt.Errorf("failed to cleanup redundant scans: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+
+	return int(rowsAffected), nil
+}

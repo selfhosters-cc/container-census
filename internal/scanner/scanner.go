@@ -299,6 +299,28 @@ func (s *Scanner) verifyAgentConnection(ctx context.Context, address string) err
 	return nil
 }
 
+// VerifyAgentAuth checks if agent auth token is valid by testing an authenticated endpoint
+func (s *Scanner) VerifyAgentAuth(ctx context.Context, host models.Host) error {
+	// Test the /api/containers endpoint which requires authentication
+	resp, err := s.agentRequest(ctx, host, "GET", "/api/containers", nil)
+	if err != nil {
+		return fmt.Errorf("failed to connect to agent: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("authentication failed (401): %s", string(body))
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("agent returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
 // Container Management Operations
 
 // StartContainer starts a container on a specific host

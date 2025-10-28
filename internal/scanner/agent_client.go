@@ -68,6 +68,9 @@ func (s *Scanner) scanAgentHost(ctx context.Context, host models.Host) ([]models
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("agent returned status %d: %s (API token mismatch - please verify the token is correct)", resp.StatusCode, string(body))
+		}
 		return nil, fmt.Errorf("agent returned status %d: %s", resp.StatusCode, string(body))
 	}
 

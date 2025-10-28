@@ -264,3 +264,32 @@ type TelemetryStats struct {
 	ImageStatsJSON  string    `json:"-"` // Stored as JSON in DB
 	AgentVersionsJSON string  `json:"-"` // Stored as JSON in DB
 }
+
+// ContainerLifecycleEvent represents a single lifecycle event for a container
+type ContainerLifecycleEvent struct {
+	Timestamp   time.Time `json:"timestamp"`
+	EventType   string    `json:"event_type"` // "first_seen", "started", "stopped", "restarted", "image_updated", "disappeared"
+	OldState    string    `json:"old_state,omitempty"`
+	NewState    string    `json:"new_state,omitempty"`
+	OldImage    string    `json:"old_image,omitempty"`
+	NewImage    string    `json:"new_image,omitempty"`
+	Description string    `json:"description"`
+	RestartCount int      `json:"restart_count,omitempty"`
+}
+
+// ContainerLifecycleSummary represents a summary of a container's lifecycle
+type ContainerLifecycleSummary struct {
+	ContainerID     string    `json:"container_id"`
+	ContainerName   string    `json:"container_name"`
+	Image           string    `json:"image"`
+	HostID          int64     `json:"host_id"`
+	HostName        string    `json:"host_name"`
+	FirstSeen       time.Time `json:"first_seen"`
+	LastSeen        time.Time `json:"last_seen"`
+	CurrentState    string    `json:"current_state"`
+	StateChanges    int       `json:"state_changes"`
+	ImageUpdates    int       `json:"image_updates"`
+	RestartEvents   int       `json:"restart_events"`
+	IsActive        bool      `json:"is_active"` // seen in most recent scan
+	TotalScans      int       `json:"total_scans"`
+}

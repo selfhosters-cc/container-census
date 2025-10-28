@@ -145,6 +145,8 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/containers/graph", s.handleGetContainerGraph).Methods("GET")
 	api.HandleFunc("/containers/host/{id}", s.handleGetContainersByHost).Methods("GET")
 	api.HandleFunc("/containers/history", s.handleGetContainersHistory).Methods("GET")
+	api.HandleFunc("/containers/lifecycle", s.handleGetContainerLifecycles).Methods("GET")
+	api.HandleFunc("/containers/lifecycle/{host_id}/{container_name}", s.handleGetContainerLifecycleEvents).Methods("GET")
 	api.HandleFunc("/containers/{host_id}/{container_id}/start", s.handleStartContainer).Methods("POST")
 	api.HandleFunc("/containers/{host_id}/{container_id}/stop", s.handleStopContainer).Methods("POST")
 	api.HandleFunc("/containers/{host_id}/{container_id}/restart", s.handleRestartContainer).Methods("POST")
@@ -178,6 +180,7 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/telemetry/schedule", s.handleGetTelemetrySchedule).Methods("GET")
 	api.HandleFunc("/telemetry/reset-circuit-breaker/{name}", s.handleResetCircuitBreaker).Methods("POST")
 	api.HandleFunc("/telemetry/debug-enabled", s.handleGetDebugEnabled).Methods("GET")
+	api.HandleFunc("/telemetry/test-endpoint", s.handleTestTelemetryEndpoint).Methods("POST")
 
 	// Serve static files (embedded web frontend) - also protected
 	s.router.PathPrefix("/").Handler(authMiddleware(http.FileServer(http.Dir("./web"))))
@@ -319,6 +322,56 @@ func (s *Server) handleGetContainersHistory(w http.ResponseWriter, r *http.Reque
 	}
 
 	respondJSON(w, http.StatusOK, containers)
+}
+
+func (s *Server) handleGetContainerLifecycles(w http.ResponseWriter, r *http.Request) {
+	// Parse query parameters
+	limitStr := r.URL.Query().Get("limit")
+	hostFilterStr := r.URL.Query().Get("host_id")
+
+	limit := 100 // default
+	if limitStr != "" {
+		parsedLimit, err := strconv.Atoi(limitStr)
+		if err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+
+	hostFilter := int64(0) // 0 means all hosts
+	if hostFilterStr != "" {
+		parsedHost, err := strconv.ParseInt(hostFilterStr, 10, 64)
+		if err == nil {
+			hostFilter = parsedHost
+		}
+	}
+
+	summaries, err := s.db.GetContainerLifecycleSummaries(limit, hostFilter)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get container lifecycles: "+err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, summaries)
+}
+
+func (s *Server) handleGetContainerLifecycleEvents(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	containerName := vars["container_name"]
+	hostIDStr := vars["host_id"]
+
+	hostID, err := strconv.ParseInt(hostIDStr, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid host ID")
+		return
+	}
+
+	events, err := s.db.GetContainerLifecycleEvents(containerName, hostID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get container lifecycle events: "+err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, events)
 }
 
 func (s *Server) handleGetContainerGraph(w http.ResponseWriter, r *http.Request) {
@@ -1019,11 +1072,16 @@ func (s *Server) handleSubmitTelemetry(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ctx := r.Context()
-	if err := scheduler.SubmitNow(ctx); err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to submit telemetry: "+err.Error())
-		return
-	}
+	// Trigger submission asynchronously so we don't block the HTTP response
+	// Use a background context with timeout instead of the request context
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+
+		if err := scheduler.SubmitNow(ctx); err != nil {
+			log.Printf("Manual telemetry submission failed: %v", err)
+		}
+	}()
 
 	respondJSON(w, http.StatusAccepted, map[string]string{
 		"message": "Telemetry submission triggered successfully",
@@ -1333,6 +1391,74 @@ func (s *Server) handleGetDebugEnabled(w http.ResponseWriter, r *http.Request) {
 
 	respondJSON(w, http.StatusOK, map[string]bool{
 		"debug_enabled": debugEnabled,
+	})
+}
+
+// handleTestTelemetryEndpoint tests a telemetry collector endpoint connection
+func (s *Server) handleTestTelemetryEndpoint(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		URL    string `json:"url"`
+		APIKey string `json:"api_key"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if req.URL == "" {
+		respondError(w, http.StatusBadRequest, "URL is required")
+		return
+	}
+
+	// Create a test telemetry report with minimal data
+	testReport := models.TelemetryReport{
+		InstallationID:  "test-connection",
+		Version:         version.Get(),
+		Timestamp:       time.Now(),
+		HostCount:       1,
+		TotalContainers: 0,
+		ImageStats:      []models.ImageStat{},
+		Timezone:        "UTC",
+	}
+
+	// Try to submit to the endpoint
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	jsonData, err := json.Marshal(testReport)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to create test payload")
+		return
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", req.URL, strings.NewReader(string(jsonData)))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid URL: "+err.Error())
+		return
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	if req.APIKey != "" {
+		httpReq.Header.Set("X-API-Key", req.APIKey)
+	}
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		respondError(w, http.StatusBadGateway, "Connection failed: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusAccepted {
+		respondError(w, http.StatusBadGateway, fmt.Sprintf("Collector returned status %d", resp.StatusCode))
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"message": "Connection successful",
+		"status":  fmt.Sprintf("%d", resp.StatusCode),
 	})
 }
 

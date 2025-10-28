@@ -50,6 +50,9 @@ COPY --from=builder /build/census-agent .
 # Copy version file
 COPY --from=builder /build/.version ./.version
 
+# Create data directory for token persistence
+RUN mkdir -p /app/data && chown census:census /app/data
+
 # Switch to non-root user
 USER census
 

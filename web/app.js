@@ -7,6 +7,7 @@ let graphData = null;
 let cy = null; // Cytoscape instance
 let autoRefreshInterval = null;
 let currentTab = 'containers';
+let lifecycles = [];
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -72,6 +73,9 @@ function setupEventListeners() {
     // Activity log filter
     document.getElementById('activityTypeFilter')?.addEventListener('change', loadActivityLog);
 
+    // History filter
+    document.getElementById('historyHostFilter')?.addEventListener('change', loadContainerHistory);
+
     // Graph selector handlers
     document.getElementById('composeProjectSelect')?.addEventListener('change', handleComposeProjectChange);
     document.getElementById('networkSelect')?.addEventListener('change', handleNetworkChange);
@@ -111,6 +115,8 @@ function switchTab(tab) {
         loadHosts().then(() => renderHosts(hosts));
     } else if (tab === 'graph') {
         loadGraph();
+    } else if (tab === 'history') {
+        loadContainerHistory();
     } else if (tab === 'activity') {
         loadActivityLog();
     } else if (tab === 'settings') {
@@ -737,11 +743,20 @@ function renderHosts(hostsData) {
     }
 
     tbody.innerHTML = hostsData.map(host => {
-        const statusBadge = host.enabled
-            ? (host.host_type === 'agent'
-                ? (host.agent_status === 'online' ? '<span class="badge badge-success">Online</span>' : '<span class="badge badge-warning">Offline</span>')
-                : '<span class="badge badge-success">Enabled</span>')
-            : '<span class="badge badge-secondary">Disabled</span>';
+        let statusBadge;
+        if (!host.enabled) {
+            statusBadge = '<span class="badge badge-secondary">Disabled</span>';
+        } else if (host.host_type === 'agent') {
+            if (host.agent_status === 'online') {
+                statusBadge = '<span class="badge badge-success">Online</span>';
+            } else if (host.agent_status === 'auth_failed') {
+                statusBadge = '<span class="badge badge-error" title="API token mismatch">Auth Failed</span>';
+            } else {
+                statusBadge = '<span class="badge badge-warning">Offline</span>';
+            }
+        } else {
+            statusBadge = '<span class="badge badge-success">Enabled</span>';
+        }
 
         // For agents, show precise datetime; for others, show relative time
         const lastSeen = host.last_seen
@@ -1375,6 +1390,50 @@ function getStatusClass(lastSuccess, lastFailure) {
     }
 }
 
+async function testCollector() {
+    const url = document.getElementById('collectorURL').value.trim();
+    const apiKey = document.getElementById('collectorAPIKey').value.trim();
+    const status = document.getElementById('collectorSaveStatus');
+
+    if (!url) {
+        status.textContent = '✗ URL is required to test';
+        status.className = 'save-status-inline error';
+        setTimeout(() => status.textContent = '', 3000);
+        return;
+    }
+
+    status.textContent = 'Testing connection...';
+    status.className = 'save-status-inline saving';
+
+    const testData = { url };
+    if (apiKey) {
+        testData.api_key = apiKey;
+    }
+
+    try {
+        const response = await fetch('/api/telemetry/test-endpoint', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(testData)
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            status.textContent = '✓ Connection successful!';
+            status.className = 'save-status-inline success';
+        } else {
+            status.textContent = '✗ ' + (result.error || 'Connection failed');
+            status.className = 'save-status-inline error';
+        }
+    } catch (error) {
+        status.textContent = '✗ Connection failed: ' + error.message;
+        status.className = 'save-status-inline error';
+    }
+
+    setTimeout(() => status.textContent = '', 5000);
+}
+
 async function addCollector() {
     const name = document.getElementById('collectorName').value.trim();
     const url = document.getElementById('collectorURL').value.trim();
@@ -1509,6 +1568,272 @@ async function resetCircuitBreaker(name) {
     } catch (error) {
         showNotification('Error resetting circuit breaker', 'error');
     }
+}
+
+// Container History Functions
+
+async function loadContainerHistory() {
+    try {
+        const hostFilter = document.getElementById('historyHostFilter')?.value || '';
+        const url = hostFilter ? `/api/containers/lifecycle?limit=200&host_id=${hostFilter}` : '/api/containers/lifecycle?limit=200';
+
+        const response = await fetch(url);
+        lifecycles = await response.json() || [];
+
+        // Update host filter dropdown if hosts are loaded
+        updateHistoryHostFilter();
+
+        // Render the history table
+        renderContainerHistory(lifecycles);
+
+        // Update stats
+        updateHistoryStats(lifecycles);
+    } catch (error) {
+        console.error('Error loading container history:', error);
+        document.getElementById('historyBody').innerHTML =
+            '<div class="error">Failed to load container history</div>';
+    }
+}
+
+function updateHistoryHostFilter() {
+    const select = document.getElementById('historyHostFilter');
+    if (!select || hosts.length === 0) return;
+
+    const currentValue = select.value;
+    select.innerHTML = '<option value="">All Hosts</option>' +
+        hosts.map(host => `<option value="${host.id}">${escapeHtml(host.name)}</option>`).join('');
+    select.value = currentValue;
+}
+
+function updateHistoryStats(lifecycles) {
+    const total = lifecycles.length;
+    const active = lifecycles.filter(l => l.is_active).length;
+    const inactive = total - active;
+
+    document.getElementById('historyTotalContainers').textContent = total;
+    document.getElementById('historyActiveContainers').textContent = active;
+    document.getElementById('historyInactiveContainers').textContent = inactive;
+}
+
+function renderContainerHistory(lifecycles) {
+    const container = document.getElementById('historyBody');
+
+    if (!lifecycles || lifecycles.length === 0) {
+        container.innerHTML = '<div class="loading">No container history available</div>';
+        return;
+    }
+
+    container.innerHTML = lifecycles.map(lifecycle => {
+        const firstSeen = new Date(lifecycle.first_seen);
+        const lastSeen = new Date(lifecycle.last_seen);
+        const lifetime = formatDuration(lastSeen - firstSeen);
+
+        const statusBadge = lifecycle.is_active
+            ? '<span class="state-badge state-running">Active</span>'
+            : '<span class="state-badge state-exited">Inactive</span>';
+
+        // State changes includes the initial detection (first_seen) + actual state changes
+        const stateChanges = 1 + (lifecycle.state_changes || 0);
+        const imageUpdates = lifecycle.image_updates || 0;
+        const restartEvents = lifecycle.restart_events || 0;
+
+        return `
+        <div class="history-card">
+            <div class="history-card-header">
+                <div class="history-card-title">
+                    <strong>${escapeHtml(lifecycle.container_name)}</strong>
+                    <span class="history-card-host">${escapeHtml(lifecycle.host_name)}</span>
+                </div>
+                <div class="history-card-actions">
+                    ${statusBadge}
+                    <button class="btn-icon btn-info" onclick="viewContainerTimeline(${lifecycle.host_id}, '${escapeAttr(lifecycle.container_id)}', '${escapeAttr(lifecycle.container_name)}')" title="View Timeline">📅</button>
+                </div>
+            </div>
+            <div class="history-card-body">
+                <div class="history-card-row">
+                    <div class="history-card-label">Image:</div>
+                    <div class="history-card-value"><code title="${escapeHtml(lifecycle.image)}">${escapeHtml(lifecycle.image)}</code></div>
+                </div>
+                <div class="history-card-row">
+                    <div class="history-card-label">First Seen:</div>
+                    <div class="history-card-value">${formatDateTime(lifecycle.first_seen)}</div>
+                    <div class="history-card-label">Last Seen:</div>
+                    <div class="history-card-value">${formatDateTime(lifecycle.last_seen)}</div>
+                </div>
+                <div class="history-card-row">
+                    <div class="history-card-label">Lifetime:</div>
+                    <div class="history-card-value">${lifetime}</div>
+                    <div class="history-card-label">State Changes:</div>
+                    <div class="history-card-value">${stateChanges}</div>
+                    <div class="history-card-label">Image Updates:</div>
+                    <div class="history-card-value">${imageUpdates}</div>
+                </div>
+            </div>
+        </div>
+        `;
+    }).join('');
+}
+
+async function viewContainerTimeline(hostId, containerId, containerName) {
+    document.getElementById('timelineContainerName').textContent = containerName;
+    document.getElementById('timelineContent').innerHTML = '<div class="loading">Loading timeline...</div>';
+    document.getElementById('timelineModal').classList.add('show');
+
+    try {
+        const response = await fetch(`/api/containers/lifecycle/${hostId}/${encodeURIComponent(containerName)}`);
+        const events = await response.json();
+
+        if (!events || events.length === 0) {
+            document.getElementById('timelineContent').innerHTML = '<p>No lifecycle events found for this container.</p>';
+            return;
+        }
+
+        renderTimeline(events);
+    } catch (error) {
+        console.error('Error loading timeline:', error);
+        document.getElementById('timelineContent').innerHTML = '<p class="error">Failed to load timeline events</p>';
+    }
+}
+
+function renderTimeline(events) {
+    if (!events || events.length === 0) {
+        document.getElementById('timelineContent').innerHTML = '<p>No lifecycle events found.</p>';
+        return;
+    }
+
+    // Calculate summary statistics
+    const firstEvent = events[0];
+    const lastEvent = events[events.length - 1];
+    // State changes includes first_seen + actual state transitions
+    const actualStateChanges = events.filter(e => e.event_type === 'started' || e.event_type === 'stopped' || e.event_type === 'state_change').length;
+    const stateChanges = 1 + actualStateChanges; // +1 for first_seen
+    const imageUpdates = events.filter(e => e.event_type === 'image_updated').length;
+
+    // Extract scan count from last_seen event if present
+    let totalScans = 'N/A';
+    if (lastEvent && lastEvent.event_type === 'last_seen') {
+        const match = lastEvent.description.match(/seen (\d+) times/);
+        if (match) {
+            totalScans = parseInt(match[1]);
+        }
+    }
+
+    // Calculate duration
+    const firstTime = new Date(firstEvent.timestamp);
+    const lastTime = new Date(lastEvent.timestamp);
+    const durationMs = lastTime - firstTime;
+    const durationDays = Math.floor(durationMs / (1000 * 60 * 60 * 24));
+    const durationText = durationDays > 0 ? `${durationDays} days` : 'same day';
+
+    // Determine status
+    const isActive = lastEvent.new_state === 'running';
+    const statusText = isActive ? 'Active (running)' : lastEvent.new_state === 'exited' ? 'Inactive (stopped)' : 'Unknown';
+    const statusClass = isActive ? 'badge-success' : 'badge-warning';
+
+    // Build summary banner
+    const summaryHTML = `
+        <div class="timeline-summary" style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
+            <div style="display: flex; align-items: center; margin-bottom: 12px;">
+                <span style="font-size: 24px; margin-right: 10px;">📊</span>
+                <div>
+                    <strong style="font-size: 16px;">Container History Summary</strong>
+                    <div style="color: #666; font-size: 13px; margin-top: 4px;">
+                        ${formatDate(firstEvent.timestamp)} to ${formatDate(lastEvent.timestamp)} (${durationText})
+                    </div>
+                </div>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; font-size: 14px;">
+                <div><strong>Total Observations:</strong> ${totalScans}</div>
+                <div><strong>State Changes:</strong> ${stateChanges}</div>
+                <div><strong>Image Updates:</strong> ${imageUpdates}</div>
+                <div><strong>Current Status:</strong> <span class="badge ${statusClass}">${statusText}</span></div>
+            </div>
+        </div>
+    `;
+
+    const timelineHTML = events.map(event => {
+        const eventIcon = getEventIcon(event.event_type);
+        const eventClass = getEventClass(event.event_type);
+
+        let details = '';
+        if (event.old_state && event.new_state) {
+            details = `<span class="state-badge state-${event.old_state}">${event.old_state}</span> → <span class="state-badge state-${event.new_state}">${event.new_state}</span>`;
+        } else if (event.old_image && event.new_image) {
+            details = `<code>${event.old_image}</code> → <code>${event.new_image}</code>`;
+        } else if (event.restart_count) {
+            details = `<strong>${event.restart_count} restart(s)</strong>`;
+        }
+
+        return `
+        <div class="timeline-event ${eventClass}">
+            <div class="timeline-marker">${eventIcon}</div>
+            <div class="timeline-content-box">
+                <div class="timeline-time">${formatDateTime(event.timestamp)}</div>
+                <div class="timeline-description">
+                    <strong>${event.description}</strong>
+                    ${details ? `<div class="timeline-details">${details}</div>` : ''}
+                </div>
+            </div>
+        </div>
+        `;
+    }).join('');
+
+    document.getElementById('timelineContent').innerHTML = `${summaryHTML}<div class="timeline">${timelineHTML}</div>`;
+}
+
+function getEventIcon(eventType) {
+    const icons = {
+        'first_seen': '🎉',
+        'started': '▶️',
+        'stopped': '⏹️',
+        'paused': '⏸️',
+        'resumed': '▶️',
+        'restarted': '⟳',
+        'image_updated': '📦',
+        'disappeared': '👻',
+        'reappeared': '✨',
+        'state_change': '🔄',
+        'last_seen': '📍'
+    };
+    return icons[eventType] || '•';
+}
+
+function getEventClass(eventType) {
+    const classes = {
+        'first_seen': 'event-success',
+        'started': 'event-success',
+        'stopped': 'event-warning',
+        'paused': 'event-info',
+        'resumed': 'event-success',
+        'restarted': 'event-warning',
+        'image_updated': 'event-info',
+        'disappeared': 'event-error',
+        'reappeared': 'event-success',
+        'state_change': 'event-info',
+        'last_seen': 'event-info'
+    };
+    return classes[eventType] || 'event-default';
+}
+
+function formatDuration(ms) {
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (days > 0) {
+        return `${days}d ${hours % 24}h`;
+    } else if (hours > 0) {
+        return `${hours}h ${minutes % 60}m`;
+    } else if (minutes > 0) {
+        return `${minutes}m`;
+    } else {
+        return `${seconds}s`;
+    }
+}
+
+function closeTimelineModal() {
+    document.getElementById('timelineModal').classList.remove('show');
 }
 
 // Graph Visualization Functions
