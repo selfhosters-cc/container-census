@@ -5,6 +5,22 @@ All notable changes to Container Census will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2025-10-28
+
+### Added
+
+- **Agent Token via Environment Variable**: Agent now supports setting API token via `API_TOKEN` environment variable
+  - Eliminates need to mount `/app/data` volume for token persistence
+  - Token priority: (1) `--token` flag, (2) `API_TOKEN` env var, (3) file, (4) auto-generate
+  - Simplifies deployment in environments where volume management is difficult
+  - Particularly useful in Kubernetes/orchestrated environments
+
+## [1.2.1] - 2025-10-28
+
+### Changed
+
+- **History Tab**: Timeline view now shows image version numbers (from -> to) when available
+
 ## [1.2.0] - 2025-10-28
 
 ### Added

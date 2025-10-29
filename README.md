@@ -113,13 +113,18 @@ Anonymous telemetry is opt-in only and can be enabled anytime from the Settings 
       # Docker socket for local container management
       - /var/run/docker.sock:/var/run/docker.sock
 
-      # Persistent data directory for API token
-      # IMPORTANT: Mount this volume to persist the token across container restarts
-      - ./census/agent:/app/data
+      # Optional: Persistent data directory for API token
+      # Only needed if NOT using API_TOKEN environment variable
+      # - ./census/agent:/app/data
 
     environment:
-      # Optional: Set a specific API token (otherwise auto-generated and persisted)
-      # API_TOKEN: ${AGENT_API_TOKEN:-}
+      # API Token (choose one method):
+      # Method 1: Set via environment variable (recommended - no volume needed)
+      API_TOKEN: ${AGENT_API_TOKEN:-your-secure-token-here}
+
+      # Method 2: Leave empty to auto-generate and persist to volume
+      # Requires mounting ./census/agent:/app/data volume above
+
       PORT: 9876
       TZ: ${TZ:-UTC}
 
@@ -134,22 +139,41 @@ Anonymous telemetry is opt-in only and can be enabled anytime from the Settings 
 
 #### Agent Configuration
 
-**API Token Persistence:**
+**API Token - Choose Your Method:**
 
-The agent automatically generates a secure API token on first startup and persists it to `/app/data/agent-token`. To ensure the token survives container restarts and upgrades:
+The agent supports multiple ways to configure the API token, in priority order:
 
-1. **Mount a volume** at `/app/data` (recommended - shown in docker-compose example above)
-2. **Or set API_TOKEN** environment variable explicitly
+1. **Environment Variable (Recommended)** - Set `API_TOKEN` environment variable
+   - No volume mount needed
+   - Perfect for Kubernetes, Docker Swarm, or managed container platforms
+   - Token persists as long as the environment variable is set
+   - Example: `API_TOKEN=your-secure-token-here`
 
-Without a mounted volume, the agent will generate a new token on each restart, requiring you to update the token in the census server UI.
+2. **File Persistence** - Mount volume at `/app/data`
+   - Token auto-generated on first startup
+   - Persisted to `/app/data/agent-token`
+   - Survives container restarts and upgrades
+   - Useful when you want the agent to manage its own token
 
-**Get the API token from logs:**
+3. **Command-line Flag** - Pass `--token` flag when running the container
+   - Example: `./census-agent --token=your-token`
+
+4. **Auto-generate (Ephemeral)** - No volume, no env var
+   - New token generated on each restart
+   - Requires updating the census server UI after each restart
+   - Not recommended for production
+
+**Get the API token:**
 
    ```bash
+   # If using auto-generated token (method 2 or 4)
    docker logs census-agent | grep "API Token"
+
+   # If using environment variable (method 1)
+   echo $AGENT_API_TOKEN
    ```
 
-**Add in the UI of the server:**
+**Add agent in the Census Server UI:**
    - Click **"+ Add Agent Host"** button
    - Enter host name, agent URL (`http://host-ip:9876`), and token
    - Click **"Test Connection"** then **"Add Agent"**

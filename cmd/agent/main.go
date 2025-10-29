@@ -28,8 +28,15 @@ func main() {
 	flag.Parse()
 
 	// Load or generate token
+	// Priority: 1. Command-line flag, 2. Environment variable, 3. File, 4. Generate new
 	if *apiToken == "" {
-		*apiToken = loadOrGenerateToken(*tokenFile)
+		// Check environment variable first
+		if envToken := os.Getenv("API_TOKEN"); envToken != "" {
+			*apiToken = envToken
+			log.Printf("Using API token from API_TOKEN environment variable")
+		} else {
+			*apiToken = loadOrGenerateToken(*tokenFile)
+		}
 	}
 
 	// Get hostname

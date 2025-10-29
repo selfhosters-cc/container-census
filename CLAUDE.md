@@ -115,10 +115,12 @@ Connection type is auto-detected from address prefix in `cmd/server/main.go:dete
 
 **Census Agent** (`cmd/agent/main.go`):
 - Token-based authentication for all `/api/*` endpoints via `X-API-Token` header
+- Token source priority: (1) `--token` flag, (2) `API_TOKEN` env var, (3) persisted file, (4) auto-generate
 - Auto-generates secure token on first startup using crypto/rand (32 bytes, hex-encoded)
 - Persists token to `/app/data/agent-token` for survival across restarts/upgrades
 - Token file created with 0600 permissions for security
-- If token file cannot be created (no volume mounted), logs warning and generates ephemeral token
+- If `API_TOKEN` env var is set, uses that token and skips file persistence (no volume needed)
+- If token file cannot be created (no volume mounted, no env var), logs warning and generates ephemeral token
 - Public endpoints: `/health`, `/info` (no auth required)
 
 #### Database Deduplication Strategy
@@ -183,7 +185,11 @@ Environment-only configuration:
 ### Agent
 Environment-only configuration:
 - `PORT` - Listen port (default 9876)
-- `API_TOKEN` - Auto-generated on first start, logged to stdout
+- `API_TOKEN` - API token for authentication. Priority order:
+  1. Command-line flag `--token`
+  2. Environment variable `API_TOKEN`
+  3. Persisted token file at `/app/data/agent-token`
+  4. Auto-generated (logged to stdout and saved to file if volume mounted)
 
 ## Common Development Patterns
 
