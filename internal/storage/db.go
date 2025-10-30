@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"time"
 
@@ -57,6 +58,7 @@ func (db *DB) initSchema() error {
 		agent_status TEXT DEFAULT 'unknown',
 		last_seen TIMESTAMP,
 		enabled BOOLEAN NOT NULL DEFAULT 1,
+		collect_stats BOOLEAN NOT NULL DEFAULT 1,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
@@ -78,6 +80,10 @@ func (db *DB) initSchema() error {
 		volumes TEXT,
 		links TEXT,
 		compose_project TEXT,
+		cpu_percent REAL,
+		memory_usage INTEGER,
+		memory_limit INTEGER,
+		memory_percent REAL,
 		PRIMARY KEY (id, host_id, scanned_at),
 		FOREIGN KEY (host_id) REFERENCES hosts(id) ON DELETE CASCADE
 	);
@@ -85,6 +91,25 @@ func (db *DB) initSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_containers_host_id ON containers(host_id);
 	CREATE INDEX IF NOT EXISTS idx_containers_scanned_at ON containers(scanned_at);
 	CREATE INDEX IF NOT EXISTS idx_containers_state ON containers(state);
+	CREATE INDEX IF NOT EXISTS idx_containers_stats ON containers(id, host_id, scanned_at, state);
+
+	CREATE TABLE IF NOT EXISTS container_stats_aggregates (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		container_id TEXT NOT NULL,
+		container_name TEXT NOT NULL,
+		host_id INTEGER NOT NULL,
+		host_name TEXT NOT NULL,
+		timestamp_hour TIMESTAMP NOT NULL,
+		avg_cpu_percent REAL,
+		avg_memory_usage INTEGER,
+		max_cpu_percent REAL,
+		max_memory_usage INTEGER,
+		sample_count INTEGER NOT NULL,
+		UNIQUE(container_id, host_id, timestamp_hour),
+		FOREIGN KEY (host_id) REFERENCES hosts(id) ON DELETE CASCADE
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_stats_aggregates ON container_stats_aggregates(container_id, host_id, timestamp_hour);
 
 	CREATE TABLE IF NOT EXISTS scan_results (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -192,6 +217,50 @@ func (db *DB) runMigrations() error {
 		}
 	}
 
+	// Check if collect_stats column exists in hosts table
+	var collectStatsExists int
+	err = db.conn.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('hosts') WHERE name='collect_stats'
+	`).Scan(&collectStatsExists)
+	if err != nil {
+		return err
+	}
+
+	if collectStatsExists == 0 {
+		if _, err := db.conn.Exec(`ALTER TABLE hosts ADD COLUMN collect_stats BOOLEAN NOT NULL DEFAULT 1`); err != nil {
+			if !isSQLiteColumnExistsError(err) {
+				return err
+			}
+		}
+	}
+
+	// Check if cpu_percent column exists in containers table (for stats monitoring)
+	var cpuPercentExists int
+	err = db.conn.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('containers') WHERE name='cpu_percent'
+	`).Scan(&cpuPercentExists)
+	if err != nil {
+		return err
+	}
+
+	if cpuPercentExists == 0 {
+		statsMigrations := []string{
+			`ALTER TABLE containers ADD COLUMN cpu_percent REAL`,
+			`ALTER TABLE containers ADD COLUMN memory_usage INTEGER`,
+			`ALTER TABLE containers ADD COLUMN memory_limit INTEGER`,
+			`ALTER TABLE containers ADD COLUMN memory_percent REAL`,
+		}
+
+		for _, migration := range statsMigrations {
+			if _, err := db.conn.Exec(migration); err != nil {
+				// Ignore "duplicate column" errors
+				if !isSQLiteStatsColumnExistsError(err) {
+					return err
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -213,14 +282,24 @@ func isSQLiteContainerColumnExistsError(err error) bool {
 		err.Error() == "duplicate column name: compose_project")
 }
 
+// isSQLiteStatsColumnExistsError checks if error is about duplicate stats column
+func isSQLiteStatsColumnExistsError(err error) bool {
+	return err != nil && (
+		err.Error() == "duplicate column name: cpu_percent" ||
+		err.Error() == "duplicate column name: memory_usage" ||
+		err.Error() == "duplicate column name: memory_limit" ||
+		err.Error() == "duplicate column name: memory_percent" ||
+		err.Error() == "duplicate column name: collect_stats")
+}
+
 // Host operations
 
 // AddHost adds a new host
 func (db *DB) AddHost(host models.Host) (int64, error) {
 	result, err := db.conn.Exec(
-		`INSERT INTO hosts (name, address, description, host_type, agent_token, agent_status, last_seen, enabled)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		host.Name, host.Address, host.Description, host.HostType, host.AgentToken, host.AgentStatus, host.LastSeen, host.Enabled,
+		`INSERT INTO hosts (name, address, description, host_type, agent_token, agent_status, last_seen, enabled, collect_stats)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		host.Name, host.Address, host.Description, host.HostType, host.AgentToken, host.AgentStatus, host.LastSeen, host.Enabled, host.CollectStats,
 	)
 	if err != nil {
 		return 0, err
@@ -231,7 +310,7 @@ func (db *DB) AddHost(host models.Host) (int64, error) {
 // GetHosts returns all hosts
 func (db *DB) GetHosts() ([]models.Host, error) {
 	rows, err := db.conn.Query(`
-		SELECT id, name, address, description, host_type, agent_token, agent_status, last_seen, enabled, created_at, updated_at
+		SELECT id, name, address, description, host_type, agent_token, agent_status, last_seen, enabled, collect_stats, created_at, updated_at
 		FROM hosts
 		ORDER BY name
 	`)
@@ -245,8 +324,9 @@ func (db *DB) GetHosts() ([]models.Host, error) {
 		var h models.Host
 		var lastSeen sql.NullTime
 		var agentToken, agentStatus sql.NullString
+		var collectStats sql.NullBool
 
-		if err := rows.Scan(&h.ID, &h.Name, &h.Address, &h.Description, &h.HostType, &agentToken, &agentStatus, &lastSeen, &h.Enabled, &h.CreatedAt, &h.UpdatedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.Name, &h.Address, &h.Description, &h.HostType, &agentToken, &agentStatus, &lastSeen, &h.Enabled, &collectStats, &h.CreatedAt, &h.UpdatedAt); err != nil {
 			return nil, err
 		}
 
@@ -258,6 +338,11 @@ func (db *DB) GetHosts() ([]models.Host, error) {
 		}
 		if lastSeen.Valid {
 			h.LastSeen = lastSeen.Time
+		}
+		if collectStats.Valid {
+			h.CollectStats = collectStats.Bool
+		} else {
+			h.CollectStats = true // Default to true
 		}
 
 		hosts = append(hosts, h)
@@ -271,11 +356,12 @@ func (db *DB) GetHost(id int64) (*models.Host, error) {
 	var h models.Host
 	var lastSeen sql.NullTime
 	var agentToken, agentStatus sql.NullString
+	var collectStats sql.NullBool
 
 	err := db.conn.QueryRow(`
-		SELECT id, name, address, description, host_type, agent_token, agent_status, last_seen, enabled, created_at, updated_at
+		SELECT id, name, address, description, host_type, agent_token, agent_status, last_seen, enabled, collect_stats, created_at, updated_at
 		FROM hosts WHERE id = ?
-	`, id).Scan(&h.ID, &h.Name, &h.Address, &h.Description, &h.HostType, &agentToken, &agentStatus, &lastSeen, &h.Enabled, &h.CreatedAt, &h.UpdatedAt)
+	`, id).Scan(&h.ID, &h.Name, &h.Address, &h.Description, &h.HostType, &agentToken, &agentStatus, &lastSeen, &h.Enabled, &collectStats, &h.CreatedAt, &h.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -289,6 +375,11 @@ func (db *DB) GetHost(id int64) (*models.Host, error) {
 	if lastSeen.Valid {
 		h.LastSeen = lastSeen.Time
 	}
+	if collectStats.Valid {
+		h.CollectStats = collectStats.Bool
+	} else {
+		h.CollectStats = true // Default to true
+	}
 
 	return &h, nil
 }
@@ -297,9 +388,9 @@ func (db *DB) GetHost(id int64) (*models.Host, error) {
 func (db *DB) UpdateHost(host models.Host) error {
 	_, err := db.conn.Exec(`
 		UPDATE hosts
-		SET name = ?, address = ?, description = ?, host_type = ?, agent_token = ?, agent_status = ?, last_seen = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
+		SET name = ?, address = ?, description = ?, host_type = ?, agent_token = ?, agent_status = ?, last_seen = ?, enabled = ?, collect_stats = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, host.Name, host.Address, host.Description, host.HostType, host.AgentToken, host.AgentStatus, host.LastSeen, host.Enabled, host.ID)
+	`, host.Name, host.Address, host.Description, host.HostType, host.AgentToken, host.AgentStatus, host.LastSeen, host.Enabled, host.CollectStats, host.ID)
 	return err
 }
 
@@ -325,8 +416,8 @@ func (db *DB) SaveContainers(containers []models.Container) error {
 
 	stmt, err := tx.Prepare(`
 		INSERT INTO containers
-		(id, name, image, image_id, state, status, ports, labels, created, host_id, host_name, scanned_at, networks, volumes, links, compose_project)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, name, image, image_id, state, status, ports, labels, created, host_id, host_name, scanned_at, networks, volumes, links, compose_project, cpu_percent, memory_usage, memory_limit, memory_percent)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return err
@@ -359,11 +450,27 @@ func (db *DB) SaveContainers(containers []models.Container) error {
 			return err
 		}
 
+		// Handle nullable stats fields
+		// Store stats if memory_limit is set (indicates stats were collected)
+		var cpuPercent, memoryPercent sql.NullFloat64
+		var memoryUsage, memoryLimit sql.NullInt64
+
+		if c.MemoryLimit > 0 {
+			// Stats were collected - store all values including 0
+			cpuPercent = sql.NullFloat64{Float64: c.CPUPercent, Valid: true}
+			memoryUsage = sql.NullInt64{Int64: c.MemoryUsage, Valid: true}
+			memoryLimit = sql.NullInt64{Int64: c.MemoryLimit, Valid: true}
+			memoryPercent = sql.NullFloat64{Float64: c.MemoryPercent, Valid: true}
+			log.Printf("DB: Saving stats for container %s (id=%s, host_id=%d, scanned_at=%v): CPU=%.2f%%, Memory=%dMB",
+				c.Name, c.ID, c.HostID, c.ScannedAt, c.CPUPercent, c.MemoryUsage/1024/1024)
+		}
+
 		_, err = stmt.Exec(
 			c.ID, c.Name, c.Image, c.ImageID, c.State, c.Status,
 			string(portsJSON), string(labelsJSON), c.Created,
 			c.HostID, c.HostName, c.ScannedAt,
 			string(networksJSON), string(volumesJSON), string(linksJSON), c.ComposeProject,
+			cpuPercent, memoryUsage, memoryLimit, memoryPercent,
 		)
 		if err != nil {
 			return err
@@ -378,7 +485,8 @@ func (db *DB) GetLatestContainers() ([]models.Container, error) {
 	query := `
 		SELECT c.id, c.name, c.image, c.image_id, c.state, c.status,
 		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at,
-		       c.networks, c.volumes, c.links, c.compose_project
+		       c.networks, c.volumes, c.links, c.compose_project,
+		       c.cpu_percent, c.memory_usage, c.memory_limit, c.memory_percent
 		FROM containers c
 		INNER JOIN (
 			SELECT host_id, MAX(scanned_at) as max_scan
@@ -402,7 +510,8 @@ func (db *DB) GetContainersByHost(hostID int64) ([]models.Container, error) {
 	query := `
 		SELECT c.id, c.name, c.image, c.image_id, c.state, c.status,
 		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at,
-		       c.networks, c.volumes, c.links, c.compose_project
+		       c.networks, c.volumes, c.links, c.compose_project,
+		       c.cpu_percent, c.memory_usage, c.memory_limit, c.memory_percent
 		FROM containers c
 		INNER JOIN (
 			SELECT MAX(scanned_at) as max_scan
@@ -427,7 +536,8 @@ func (db *DB) GetContainersHistory(start, end time.Time) ([]models.Container, er
 	query := `
 		SELECT id, name, image, image_id, state, status,
 		       ports, labels, created, host_id, host_name, scanned_at,
-		       networks, volumes, links, compose_project
+		       networks, volumes, links, compose_project,
+		       cpu_percent, memory_usage, memory_limit, memory_percent
 		FROM containers
 		WHERE scanned_at BETWEEN ? AND ?
 		ORDER BY scanned_at DESC, host_name, name
@@ -450,12 +560,15 @@ func (db *DB) scanContainers(rows *sql.Rows) ([]models.Container, error) {
 		var c models.Container
 		var portsJSON, labelsJSON, networksJSON, volumesJSON, linksJSON string
 		var composeProject sql.NullString
+		var cpuPercent, memoryPercent sql.NullFloat64
+		var memoryUsage, memoryLimit sql.NullInt64
 
 		err := rows.Scan(
 			&c.ID, &c.Name, &c.Image, &c.ImageID, &c.State, &c.Status,
 			&portsJSON, &labelsJSON, &c.Created,
 			&c.HostID, &c.HostName, &c.ScannedAt,
 			&networksJSON, &volumesJSON, &linksJSON, &composeProject,
+			&cpuPercent, &memoryUsage, &memoryLimit, &memoryPercent,
 		)
 		if err != nil {
 			return nil, err
@@ -489,6 +602,20 @@ func (db *DB) scanContainers(rows *sql.Rows) ([]models.Container, error) {
 
 		if composeProject.Valid {
 			c.ComposeProject = composeProject.String
+		}
+
+		// Populate stats fields
+		if cpuPercent.Valid {
+			c.CPUPercent = cpuPercent.Float64
+		}
+		if memoryUsage.Valid {
+			c.MemoryUsage = memoryUsage.Int64
+		}
+		if memoryLimit.Valid {
+			c.MemoryLimit = memoryLimit.Int64
+		}
+		if memoryPercent.Valid {
+			c.MemoryPercent = memoryPercent.Float64
 		}
 
 		containers = append(containers, c)
@@ -1155,4 +1282,236 @@ func (db *DB) CleanupRedundantScans(olderThanDays int) (int, error) {
 	}
 
 	return int(rowsAffected), nil
+}
+
+// Container stats operations
+
+// GetContainerStats returns time-series stats for a specific container
+// Combines both granular data (last hour) and aggregated data (older than 1 hour)
+func (db *DB) GetContainerStats(containerID string, hostID int64, hoursBack int) ([]models.ContainerStatsPoint, error) {
+	now := time.Now()
+	var startTime time.Time
+
+	if hoursBack == 0 {
+		// "all" - get everything
+		startTime = time.Time{} // Zero time will get all records
+	} else {
+		startTime = now.Add(-time.Duration(hoursBack) * time.Hour)
+	}
+
+	// Initialize as empty slice to ensure JSON returns [] instead of null when empty
+	allPoints := make([]models.ContainerStatsPoint, 0)
+
+	// Get granular data from containers table (last hour or within requested range)
+	// Use LIKE to handle both short and long container IDs
+	granularQuery := `
+		SELECT scanned_at, cpu_percent, memory_usage, memory_limit, memory_percent
+		FROM containers
+		WHERE (id = ? OR id LIKE ?) AND host_id = ? AND scanned_at >= ?
+		  AND (cpu_percent IS NOT NULL OR memory_usage IS NOT NULL)
+		ORDER BY scanned_at ASC
+	`
+
+	// Create LIKE pattern for short ID match (first 12 chars)
+	shortIDPattern := containerID[:12] + "%"
+	log.Printf("GetContainerStats: Querying for containerID='%s' (or '%s'), hostID=%d, startTime=%v", containerID, shortIDPattern, hostID, startTime)
+	rows, err := db.conn.Query(granularQuery, containerID, shortIDPattern, hostID, startTime)
+	if err != nil {
+		log.Printf("GetContainerStats: Query error: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	rowCount := 0
+	for rows.Next() {
+		rowCount++
+		var point models.ContainerStatsPoint
+		var cpuPercent, memoryPercent sql.NullFloat64
+		var memoryUsage, memoryLimit sql.NullInt64
+
+		err := rows.Scan(&point.Timestamp, &cpuPercent, &memoryUsage, &memoryLimit, &memoryPercent)
+		if err != nil {
+			return nil, err
+		}
+
+		if cpuPercent.Valid {
+			point.CPUPercent = cpuPercent.Float64
+		}
+		if memoryUsage.Valid {
+			point.MemoryUsage = memoryUsage.Int64
+		}
+		if memoryLimit.Valid {
+			point.MemoryLimit = memoryLimit.Int64
+		}
+		if memoryPercent.Valid {
+			point.MemoryPercent = memoryPercent.Float64
+		}
+
+		allPoints = append(allPoints, point)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	log.Printf("GetContainerStats: Found %d granular data points for containerID='%s', hostID=%d", rowCount, containerID, hostID)
+
+	// Get aggregated data if looking back more than 1 hour
+	if hoursBack == 0 || hoursBack > 1 {
+		aggregateQuery := `
+			SELECT timestamp_hour, avg_cpu_percent, avg_memory_usage, max_memory_usage
+			FROM container_stats_aggregates
+			WHERE (container_id = ? OR container_id LIKE ?) AND host_id = ? AND timestamp_hour >= ?
+			ORDER BY timestamp_hour ASC
+		`
+
+		aggRows, err := db.conn.Query(aggregateQuery, containerID, shortIDPattern, hostID, startTime)
+		if err != nil {
+			return nil, err
+		}
+		defer aggRows.Close()
+
+		for aggRows.Next() {
+			var point models.ContainerStatsPoint
+			var avgCPU, avgMemory, maxMemory sql.NullFloat64
+
+			err := aggRows.Scan(&point.Timestamp, &avgCPU, &avgMemory, &maxMemory)
+			if err != nil {
+				return nil, err
+			}
+
+			if avgCPU.Valid {
+				point.CPUPercent = avgCPU.Float64
+			}
+			if avgMemory.Valid {
+				point.MemoryUsage = int64(avgMemory.Float64)
+			}
+
+			allPoints = append(allPoints, point)
+		}
+
+		if err = aggRows.Err(); err != nil {
+			return nil, err
+		}
+	}
+
+	// Sort by timestamp
+	sort.Slice(allPoints, func(i, j int) bool {
+		return allPoints[i].Timestamp.Before(allPoints[j].Timestamp)
+	})
+
+	return allPoints, nil
+}
+
+// AggregateOldStats aggregates container stats older than 1 hour into hourly buckets
+// This reduces database size while preserving historical trends
+func (db *DB) AggregateOldStats() (int, error) {
+	// Find the cutoff time (1 hour ago)
+	cutoff := time.Now().Add(-1 * time.Hour)
+
+	// Aggregate stats into hourly buckets
+	query := `
+		INSERT OR REPLACE INTO container_stats_aggregates
+		(container_id, container_name, host_id, host_name, timestamp_hour, avg_cpu_percent, avg_memory_usage, max_cpu_percent, max_memory_usage, sample_count)
+		SELECT
+			id as container_id,
+			name as container_name,
+			host_id,
+			host_name,
+			datetime(strftime('%Y-%m-%d %H:00:00', scanned_at)) as timestamp_hour,
+			AVG(cpu_percent) as avg_cpu_percent,
+			AVG(memory_usage) as avg_memory_usage,
+			MAX(cpu_percent) as max_cpu_percent,
+			MAX(memory_usage) as max_memory_usage,
+			COUNT(*) as sample_count
+		FROM containers
+		WHERE scanned_at < ?
+		  AND (cpu_percent IS NOT NULL OR memory_usage IS NOT NULL)
+		GROUP BY id, name, host_id, host_name, timestamp_hour
+	`
+
+	result, err := db.conn.Exec(query, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("failed to aggregate stats: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+
+	// Delete the granular records that were aggregated
+	deleteQuery := `
+		DELETE FROM containers
+		WHERE scanned_at < ?
+		  AND (cpu_percent IS NOT NULL OR memory_usage IS NOT NULL)
+		  AND (id, host_id, datetime(strftime('%Y-%m-%d %H:00:00', scanned_at))) IN (
+			SELECT container_id, host_id, timestamp_hour
+			FROM container_stats_aggregates
+		)
+	`
+
+	_, err = db.conn.Exec(deleteQuery, cutoff)
+	if err != nil {
+		return int(rowsAffected), fmt.Errorf("failed to delete aggregated granular records: %w", err)
+	}
+
+	return int(rowsAffected), nil
+}
+
+// GetCurrentStatsForAllContainers returns the latest stats for all running containers
+// Used for Prometheus /metrics endpoint
+func (db *DB) GetCurrentStatsForAllContainers() ([]models.Container, error) {
+	query := `
+		SELECT c.id, c.name, c.image, c.host_id, c.host_name,
+		       c.cpu_percent, c.memory_usage, c.memory_limit, c.memory_percent, c.state
+		FROM containers c
+		INNER JOIN (
+			SELECT id, host_id, MAX(scanned_at) as max_scan
+			FROM containers
+			WHERE state = 'running'
+			GROUP BY id, host_id
+		) latest ON c.id = latest.id AND c.host_id = latest.host_id AND c.scanned_at = latest.max_scan
+		WHERE c.state = 'running'
+		  AND (c.cpu_percent IS NOT NULL OR c.memory_usage IS NOT NULL)
+		ORDER BY c.host_name, c.name
+	`
+
+	rows, err := db.conn.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var containers []models.Container
+	for rows.Next() {
+		var c models.Container
+		var cpuPercent, memoryPercent sql.NullFloat64
+		var memoryUsage, memoryLimit sql.NullInt64
+
+		err := rows.Scan(
+			&c.ID, &c.Name, &c.Image, &c.HostID, &c.HostName,
+			&cpuPercent, &memoryUsage, &memoryLimit, &memoryPercent, &c.State,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if cpuPercent.Valid {
+			c.CPUPercent = cpuPercent.Float64
+		}
+		if memoryUsage.Valid {
+			c.MemoryUsage = memoryUsage.Int64
+		}
+		if memoryLimit.Valid {
+			c.MemoryLimit = memoryLimit.Int64
+		}
+		if memoryPercent.Valid {
+			c.MemoryPercent = memoryPercent.Float64
+		}
+
+		containers = append(containers, c)
+	}
+
+	return containers, rows.Err()
 }

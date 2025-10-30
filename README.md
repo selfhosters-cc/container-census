@@ -43,10 +43,12 @@ Anonymous telemetry is opt-in only and can be enabled anytime from the Settings 
 1. **Multi-Host Scanning** – Monitor every Docker host from one unified dashboard
 1. **Lightweight Remote Agents** – Secure, zero-config connectivity between hosts
 1. **Simple Web Setup** – Add new hosts with just an IP and token
-1. **Automatic Discovery** – Background scans every few minutes (efault: 5)
-1. **Historical Insights** – Track what’s running, when, and where
+1. **Automatic Discovery** – Background scans every few minutes (default: 5)
+1. **CPU & Memory Monitoring** – Real-time resource usage tracking with historical trends
+1. **Historical Insights** – Track what's running, when, and where
 1. **Modern Web UI** – Responsive interface with live updates
 1. **Full REST API** – Query all container and host data programmatically
+1. **Prometheus Metrics** – Export metrics for Grafana and monitoring tools
 1. **Container Control** – Start, stop, restart, remove containers, and view logs
 1. **Image Management** – List, remove, or prune images across hosts
 1. **Single-Container Deployment** – Everything you need in one small footprint (agents and aggregated stats available in separate containers)
@@ -252,6 +254,50 @@ Container Census includes an optional telemetry system to track anonymous contai
 open http://localhost:8081
 ```
 
+## CPU & Memory Monitoring
+
+Container Census includes comprehensive resource monitoring with historical trending capabilities:
+
+### Features
+
+- **Real-time Stats Collection** - CPU and memory usage collected during each scan
+- **Per-Host Configuration** - Enable/disable stats collection for each host individually
+- **Two-tier Data Retention**:
+  - Granular data: All scans kept for 1 hour
+  - Aggregated data: Hourly averages kept for 2 weeks
+- **Interactive Charts** - View trends over 1h, 24h, 7d, or all time
+- **Sparkline Previews** - Quick glance at trends in the monitoring grid
+- **Prometheus Metrics** - Export to Grafana and other monitoring tools
+- **All Connection Types** - Works with local socket, agents, TCP, and SSH
+
+### Configuration
+
+**Enable stats collection per host:**
+1. Navigate to the **Hosts** tab
+2. Click on the stats badge for any host to toggle collection
+3. Stats collection begins on the next scan
+
+**Adjust scan interval:**
+1. Navigate to the **Settings** tab
+2. Select desired interval (1-15 minutes)
+3. Click **Save Interval**
+
+**Note:** Stats collection adds minimal overhead but can be disabled for low-resource hosts.
+
+### Viewing Stats
+
+**Monitoring Tab:**
+- Grid view of all running containers with stats enabled
+- Mini sparkline charts showing recent CPU and memory trends
+- Quick summary of current usage
+- Filter to show only containers from enabled hosts
+
+**Detailed Stats Modal:**
+- Click **View Detailed Stats** on any container
+- Select time range: 1 hour, 24 hours, 7 days, or all time
+- Dual-axis charts with CPU % and Memory MB
+- Average, minimum, and maximum values displayed
+
 ## API Endpoints for the Server
 
 ### Hosts
@@ -264,6 +310,16 @@ open http://localhost:8081
 - `GET /api/containers` - Get latest containers from all hosts
 - `GET /api/containers/host/{id}` - Get containers for specific host
 - `GET /api/containers/history?start=TIME&end=TIME` - Get historical container data
+
+### Resource Monitoring
+
+- `GET /api/containers/{host_id}/{container_id}/stats?range={1h|24h|7d|all}` - Get container stats history
+- `GET /api/metrics` - Prometheus-formatted metrics endpoint
+
+### Configuration
+
+- `GET /api/config` - Get current configuration including scanner interval
+- `POST /api/config/scanner` - Update scanner interval (JSON: `{"interval_seconds": 300}`)
 
 ### Scanning
 

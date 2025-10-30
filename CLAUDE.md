@@ -13,7 +13,7 @@ Container Census is a multi-host Docker monitoring system written in Go. It cons
 ## Build and Development Commands
 
 ### Prerequisites
-- Go 1.21+ with CGO enabled (required for SQLite)
+- Go 1.23+ with CGO enabled (required for SQLite) and GOTOOLCHAIN=auto
 - Docker socket GID must be determined: `stat -c '%g' /var/run/docker.sock`
 
 ### Local Development
@@ -49,11 +49,29 @@ DOCKER_GID=$(stat -c '%g' /var/run/docker.sock) docker-compose up -d
 ```
 
 ### Building Container Images
-```bash
-# Interactive script (easiest - recommended)
-./scripts/build-all-images.sh
 
-# Manual builds using docker buildx (for multi-architecture support)
+**Interactive Build Script (Recommended)**
+```bash
+./scripts/build-all-images.sh
+```
+
+This interactive script (`scripts/build-all-images.sh`) provides a guided build experience:
+- **Version Management**: Auto-increment (patch/minor/major), keep current, or custom
+- **Selective Building**: Build server, agent, telemetry collector, or all
+- **Multi-Architecture**: Single platform (linux/amd64 or linux/arm64) or both
+- **Registry Push**: Optional push to Docker Hub, GHCR, or custom registry
+- **GitHub Release**: Automated release creation via `gh` CLI
+- **Compose Generation**: Creates docker-compose.yml with appropriate image tags
+
+The script uses Docker buildx for multi-architecture support and handles:
+- Builder creation/configuration
+- Version embedding (reads/writes `.version` file)
+- Single-platform builds with `--load` (images available locally)
+- Multi-platform builds (cache only, requires push for local use)
+- Registry authentication and pushing
+
+**Manual Builds**
+```bash
 # Single platform (local use):
 docker buildx build --platform linux/amd64 --build-arg DOCKER_GID=999 -t container-census:latest --load .
 docker buildx build --platform linux/amd64 --build-arg DOCKER_GID=999 -f Dockerfile.agent -t census-agent:latest --load .
@@ -67,6 +85,8 @@ docker build --build-arg DOCKER_GID=$(stat -c '%g' /var/run/docker.sock) -t cont
 docker build --build-arg DOCKER_GID=$(stat -c '%g' /var/run/docker.sock) -f Dockerfile.agent -t census-agent:latest .
 docker build -f Dockerfile.telemetry-collector -t telemetry-collector:latest .
 ```
+
+**Note on Multi-Platform Builds**: Multi-arch images built with `--platform linux/amd64,linux/arm64` are stored in buildx cache but won't appear in `docker images` until pushed to a registry and pulled back. Use single-platform builds with `--load` for immediate local availability.
 
 ## Architecture
 
@@ -140,6 +160,59 @@ Implementation: `cmd/telemetry-collector/main.go:saveTelemetry()`
 5. **Dashboard queries**: Uses `DISTINCT ON` to show latest per installation
 
 Server reads `TZ` environment variable and includes timezone in reports for privacy-friendly geographic distribution.
+
+#### CPU and Memory Monitoring Architecture
+
+Container Census supports optional resource usage monitoring with trending capabilities, configurable per-host.
+
+**Data Collection**:
+- **Opt-in per host**: `CollectStats` boolean field on Host model (default: true)
+- **Running containers only**: Stats collected only for containers in "running" state
+- **Scanner integration**: `internal/scanner/scanner.go` calls Docker `ContainerStats()` API
+- **Agent support**: Agent responds to `?stats=true` query parameter on `/api/containers` endpoint
+- **All connection types**: Works with unix://, agent://, tcp://, and ssh:// connections
+
+**Data Storage - Two-Tier Retention**:
+- **Granular data** (last 1 hour): Full-resolution scans stored in `containers` table
+  - Columns: `cpu_percent`, `memory_usage`, `memory_limit`, `memory_percent`
+  - Collected at scan interval (default: once per minute, configurable)
+- **Aggregated data** (1 hour - 2 weeks): Hourly averages in `container_stats_aggregates` table
+  - Columns: `avg_cpu_percent`, `avg_memory_usage`, `max_cpu_percent`, `max_memory_usage`, `sample_count`
+  - One row per container per hour
+  - Unique constraint: `(container_id, host_id, timestamp_hour)`
+- **Automatic aggregation**: Hourly job (`storage.AggregateOldStats()`) converts granular → aggregated
+- **Cleanup**: Records older than 2 weeks are deleted
+
+**API Endpoints**:
+1. **`GET /api/containers`**: Returns latest container state including current CPU/memory stats
+2. **`GET /api/containers/{hostId}/{containerId}/stats?range=1h|24h|7d|all`**: Time-series data
+   - Automatically combines granular + aggregated data
+   - Returns array of `ContainerStatsPoint` with timestamp, CPU%, memory usage/limit
+3. **`GET /metrics`**: Prometheus-compatible metrics endpoint
+   - Format: `census_container_cpu_percent`, `census_container_memory_bytes`, `census_container_memory_limit_bytes`
+   - Labels: `container_name`, `container_id`, `host_name`, `image`
+   - Only includes running containers with stats
+
+**Frontend Visualization**:
+- **Chart.js 4.4.0** used for all charts (matches analytics dashboard)
+- **Containers table**: CPU/Memory columns with current values and inline sparklines (1-hour)
+- **Stats modal**: Detailed CPU/memory line charts with time range selector (1h/24h/7d/All)
+- **Monitoring tab**: Grid view of all running containers with trend charts
+- **Auto-refresh**: 30-second refresh when modal is open
+
+**Performance Considerations**:
+- Stats collection adds ~100-200ms per running container to scan time
+- Host-level opt-out via `CollectStats=false` disables collection entirely
+- Scanner continues successfully even if stats collection fails for individual containers
+- Errors logged but don't block scan completion
+
+**Implementation Files**:
+- Models: `internal/models/models.go` (Host.CollectStats, ContainerStatsPoint)
+- Scanner: `internal/scanner/scanner.go` (stats collection logic)
+- Agent: `internal/agent/agent.go` (stats query parameter support)
+- Storage: `internal/storage/db.go` (schema, aggregation, queries)
+- API: `internal/api/handlers.go` (stats and metrics endpoints)
+- Frontend: `web/app.js`, `web/index.html` (charts and visualizations)
 
 ### Package Structure
 

@@ -109,6 +109,8 @@ function switchTab(tab) {
     // Auto-refresh data when switching to a tab
     if (tab === 'containers') {
         loadContainers();
+    } else if (tab === 'monitoring') {
+        loadMonitoringData();
     } else if (tab === 'images') {
         loadImages();
     } else if (tab === 'hosts') {
@@ -121,6 +123,300 @@ function switchTab(tab) {
         loadActivityLog();
     } else if (tab === 'settings') {
         loadCollectors();
+    }
+}
+
+// Monitoring Tab
+async function loadMonitoringData() {
+    try {
+        // Load both containers and hosts
+        await Promise.all([loadContainers(), loadHosts()]);
+
+        // Get enabled host IDs to filter containers
+        const enabledHostIds = new Set(hosts.filter(h => h.enabled).map(h => h.id));
+
+        console.log('Enabled hosts:', Array.from(enabledHostIds));
+
+        // Filter to running containers from enabled hosts only
+        const runningContainers = containers.filter(c =>
+            c.state === 'running' && enabledHostIds.has(c.host_id)
+        );
+
+        console.log('Total containers:', containers.length);
+        console.log('Running containers (from enabled hosts):', runningContainers.length);
+        console.log('Containers with CPU stats:', runningContainers.filter(c => c.cpu_percent).length);
+        console.log('Containers with memory stats:', runningContainers.filter(c => c.memory_usage).length);
+
+        renderMonitoringGrid(runningContainers);
+
+        // Populate host filter
+        const hostFilter = document.getElementById('monitoringHostFilter');
+        if (hostFilter) {
+            const uniqueHosts = [...new Set(runningContainers.map(c => c.host_name))];
+            hostFilter.innerHTML = '<option value="">All Hosts</option>' +
+                uniqueHosts.map(h => `<option value="${h}">${escapeHtml(h)}</option>`).join('');
+
+            hostFilter.onchange = () => {
+                const selectedHost = hostFilter.value;
+                const filtered = selectedHost ?
+                    runningContainers.filter(c => c.host_name === selectedHost) :
+                    runningContainers;
+                renderMonitoringGrid(filtered);
+            };
+        }
+    } catch (error) {
+        console.error('Error loading monitoring data:', error);
+        document.getElementById('monitoringGrid').innerHTML = '<div class="error">Failed to load monitoring data</div>';
+    }
+}
+
+function renderMonitoringGrid(containersToRender) {
+    const grid = document.getElementById('monitoringGrid');
+
+    if (containersToRender.length === 0) {
+        grid.innerHTML = '<div class="loading">No running containers found</div>';
+        return;
+    }
+
+    grid.innerHTML = containersToRender.map((container, index) => {
+        // Stats are available if memory_limit is set (since we removed omitempty, it's always present if stats were collected)
+        const hasStats = container.memory_limit > 0;
+        const cpuDisplay = hasStats ? container.cpu_percent.toFixed(1) + '%' : '-';
+        const memoryMB = hasStats ? (container.memory_usage / 1024 / 1024).toFixed(0) : '-';
+        const limitMB = hasStats ? (container.memory_limit / 1024 / 1024).toFixed(0) : '?';
+        const memoryPercent = hasStats ? container.memory_percent.toFixed(1) + '%' : '-';
+
+        const cardId = `monitoring-card-${index}`;
+        const chartId = `monitoring-chart-${index}`;
+
+        // Debug logging
+        if (container.host_id !== 1) { // Log non-local containers
+            console.log(`Container ${container.name} (host: ${container.host_name}, hostId: ${container.host_id}):`, {
+                cpu_percent: container.cpu_percent,
+                memory_usage: container.memory_usage,
+                memory_limit: container.memory_limit,
+                hasStats: hasStats,
+                willRenderChart: hasStats
+            });
+        }
+
+        return `
+            <div class="monitoring-card" id="${cardId}">
+                <div class="monitoring-card-header">
+                    <div>
+                        <div class="monitoring-card-title">${escapeHtml(container.name)}</div>
+                        <div class="monitoring-card-host">📍 ${escapeHtml(container.host_name)}</div>
+                        <div class="monitoring-card-host">🖼️ ${escapeHtml(container.image)}</div>
+                    </div>
+                </div>
+                <div class="monitoring-card-stats">
+                    <div class="monitoring-stat">
+                        <div class="monitoring-stat-label">CPU Usage</div>
+                        <div class="monitoring-stat-value">${cpuDisplay}</div>
+                    </div>
+                    <div class="monitoring-stat">
+                        <div class="monitoring-stat-label">Memory</div>
+                        <div class="monitoring-stat-value">${memoryMB} MB</div>
+                        <div class="monitoring-stat-label" style="margin-top: 5px;">of ${limitMB} MB (${memoryPercent})</div>
+                    </div>
+                </div>
+                ${hasStats ? `
+                    <div class="monitoring-chart">
+                        <canvas id="${chartId}"></canvas>
+                        <div id="${chartId}-placeholder" style="display: none; text-align: center; color: #999; padding: 20px; font-size: 12px;">
+                            Collecting data... Check back in a few minutes
+                        </div>
+                    </div>
+                ` : ''}
+                ${hasStats ? `
+                    <button class="btn btn-primary stats-btn-${index}" data-index="${index}">
+                        📊 View Detailed Stats
+                    </button>
+                ` : `
+                    <button class="btn btn-secondary" disabled title="Stats collection not enabled or no data yet">
+                        📊 No Stats Available
+                    </button>
+                `}
+            </div>
+        `;
+    }).join('');
+
+    // Add event listeners to stats buttons and render mini charts
+    containersToRender.forEach((container, index) => {
+        const hasStats = container.memory_limit > 0;
+        if (hasStats) {
+            const btn = document.querySelector(`.stats-btn-${index}`);
+            if (btn) {
+                btn.addEventListener('click', () => {
+                    console.log('Opening stats modal for:', container.name, 'hostId:', container.host_id, 'containerId:', container.id);
+                    openStatsModal(container.host_id, container.id, container.name);
+                });
+            }
+
+            // Render mini sparkline chart
+            renderMiniChart(`monitoring-chart-${index}`, container.host_id, container.id);
+        }
+    });
+}
+
+// Render mini sparkline chart for monitoring cards
+async function renderMiniChart(canvasId, hostId, containerId) {
+    try {
+        // Fetch last hour of stats for sparkline
+        const url = `/api/containers/${hostId}/${containerId}/stats?range=1h`;
+        console.log(`Fetching stats from: ${url}`);
+        const response = await fetch(url);
+        if (!response.ok) {
+            console.error(`Failed to fetch stats for ${canvasId}: ${response.status} ${response.statusText}`);
+            return;
+        }
+
+        const stats = await response.json();
+        console.log(`Stats for ${canvasId}:`, stats ? stats.length : 'null', 'data points');
+
+        const canvas = document.getElementById(canvasId);
+        const placeholder = document.getElementById(`${canvasId}-placeholder`);
+
+        if (!canvas) return;
+
+        if (!stats || stats.length === 0) {
+            console.warn(`No stats data available for ${canvasId} - showing placeholder`);
+            // Hide canvas and show placeholder message
+            canvas.style.display = 'none';
+            if (placeholder) {
+                placeholder.style.display = 'block';
+            }
+            return;
+        }
+
+        // Hide placeholder if data exists
+        if (placeholder) {
+            placeholder.style.display = 'none';
+        }
+        canvas.style.display = 'block';
+
+        const ctx = canvas.getContext('2d');
+
+        // Take last 20 points for sparkline
+        const recentStats = stats.slice(-20);
+        const cpuData = recentStats.map(s => s.cpu_percent || 0);
+        const memoryData = recentStats.map(s => (s.memory_usage || 0) / 1024 / 1024);
+
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: recentStats.map(() => ''),
+                datasets: [
+                    {
+                        label: 'CPU %',
+                        data: cpuData,
+                        borderColor: 'rgb(75, 192, 192)',
+                        backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        tension: 0.4,
+                        yAxisID: 'y'
+                    },
+                    {
+                        label: 'Memory MB',
+                        data: memoryData,
+                        borderColor: 'rgb(255, 99, 132)',
+                        backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        tension: 0.4,
+                        yAxisID: 'y1'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: {
+                            boxWidth: 12,
+                            padding: 8,
+                            font: {
+                                size: 11
+                            }
+                        }
+                    },
+                    tooltip: {
+                        enabled: true,
+                        mode: 'index',
+                        intersect: false,
+                        callbacks: {
+                            label: function(context) {
+                                let label = context.dataset.label || '';
+                                if (label) {
+                                    label += ': ';
+                                }
+                                if (context.parsed.y !== null) {
+                                    label += context.parsed.y.toFixed(2);
+                                    if (context.dataset.yAxisID === 'y') {
+                                        label += '%';
+                                    } else {
+                                        label += ' MB';
+                                    }
+                                }
+                                return label;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        display: false
+                    },
+                    y: {
+                        display: true,
+                        beginAtZero: true,
+                        position: 'left',
+                        title: {
+                            display: true,
+                            text: 'CPU %',
+                            font: {
+                                size: 10
+                            }
+                        },
+                        ticks: {
+                            font: {
+                                size: 9
+                            }
+                        }
+                    },
+                    y1: {
+                        display: true,
+                        beginAtZero: true,
+                        position: 'right',
+                        title: {
+                            display: true,
+                            text: 'Memory MB',
+                            font: {
+                                size: 10
+                            }
+                        },
+                        ticks: {
+                            font: {
+                                size: 9
+                            }
+                        },
+                        grid: {
+                            drawOnChartArea: false
+                        }
+                    }
+                }
+            }
+        });
+    } catch (error) {
+        console.error('Error rendering mini chart:', error);
     }
 }
 
@@ -584,13 +880,31 @@ function renderContainers(containersToRender) {
     const tbody = document.getElementById('containersBody');
 
     if (containersToRender.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="loading">No containers found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="loading">No containers found</td></tr>';
         return;
     }
 
     tbody.innerHTML = containersToRender.map(container => {
         const isRunning = container.state === 'running';
         const isStopped = container.state === 'exited';
+        const hasStats = container.cpu_percent > 0 || container.memory_usage > 0;
+
+        // Format CPU
+        let cpuDisplay = '-';
+        if (container.cpu_percent > 0) {
+            cpuDisplay = container.cpu_percent.toFixed(1) + '%';
+        }
+
+        // Format Memory
+        let memoryDisplay = '-';
+        if (container.memory_usage > 0) {
+            const memoryMB = (container.memory_usage / 1024 / 1024).toFixed(0);
+            const limitMB = container.memory_limit > 0 ? (container.memory_limit / 1024 / 1024).toFixed(0) : '?';
+            memoryDisplay = `${memoryMB} / ${limitMB} MB`;
+            if (container.memory_percent > 0) {
+                memoryDisplay += ` (${container.memory_percent.toFixed(1)}%)`;
+            }
+        }
 
         return `
         <tr>
@@ -598,10 +912,15 @@ function renderContainers(containersToRender) {
             <td>${escapeHtml(container.name)}</td>
             <td><code>${escapeHtml(container.image)}</code></td>
             <td><span class="state-badge state-${container.state}">${container.state}</span></td>
+            <td class="stats-cell">${cpuDisplay}</td>
+            <td class="stats-cell">${memoryDisplay}</td>
             <td>${escapeHtml(container.status)}</td>
             <td class="port-list">${formatPorts(container.ports)}</td>
             <td class="time-ago">${formatDate(container.created)}</td>
             <td class="actions">
+                ${hasStats && isRunning ? `
+                    <button class="btn-icon btn-stats" onclick="openStatsModal(${container.host_id}, '${escapeAttr(container.id)}', '${escapeAttr(container.name)}')" title="View Stats">📊</button>
+                ` : ''}
                 ${isRunning ? `
                     <button class="btn-icon btn-stop" onclick="stopContainer(${container.host_id}, '${escapeAttr(container.id)}', '${escapeAttr(container.name)}')" title="Stop">⏹</button>
                     <button class="btn-icon btn-restart" onclick="restartContainer(${container.host_id}, '${escapeAttr(container.id)}', '${escapeAttr(container.name)}')" title="Restart">⟳</button>
@@ -612,6 +931,9 @@ function renderContainers(containersToRender) {
                 <button class="btn-icon btn-logs" onclick="viewLogs(${container.host_id}, '${escapeAttr(container.id)}', '${escapeAttr(container.name)}')" title="View Logs">📋</button>
                 ${isStopped ? `
                     <button class="btn-icon btn-delete" onclick="removeContainer(${container.host_id}, '${escapeAttr(container.id)}', '${escapeAttr(container.name)}')" title="Remove">🗑</button>
+                ` : ''}
+                ${hasStats && isRunning ? `
+                    <button class="btn-icon btn-timeline" onclick="showContainerTimeline(${container.host_id}, '${escapeAttr(container.name)}')" title="View Timeline">📅</button>
                 ` : ''}
             </td>
         </tr>
@@ -738,7 +1060,7 @@ function renderHosts(hostsData) {
     const tbody = document.getElementById('hostsBody');
 
     if (!hostsData || hostsData.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="loading">No hosts configured</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="loading">No hosts configured</td></tr>';
         return;
     }
 
@@ -772,12 +1094,17 @@ function renderHosts(hostsData) {
             'unknown': '❓'
         }[hostType] || '❓';
 
+        const statsCollectionBadge = host.collect_stats
+            ? '<span class="badge badge-success" style="cursor: pointer;" onclick="toggleStatsCollection(' + host.id + ', false)" title="Click to disable stats collection">✓ Enabled</span>'
+            : '<span class="badge badge-secondary" style="cursor: pointer;" onclick="toggleStatsCollection(' + host.id + ', true)" title="Click to enable stats collection">Disabled</span>';
+
         return `
         <tr>
             <td><strong>${escapeHtml(host.name)}</strong></td>
             <td>${typeIcon} ${escapeHtml(hostType)}</td>
             <td><code>${escapeHtml(host.address)}</code></td>
             <td>${statusBadge}</td>
+            <td>${statsCollectionBadge}</td>
             <td>${escapeHtml(host.description || '-')}</td>
             <td class="time-ago">${lastSeen}</td>
             <td class="actions">
@@ -805,6 +1132,29 @@ async function toggleHost(hostId, enable) {
 
         if (response.ok) {
             showNotification(`Host ${enable ? 'enabled' : 'disabled'} successfully`, 'success');
+            loadData();
+        } else {
+            const error = await response.json();
+            showNotification('Error: ' + (error.error || 'Failed to update host'), 'error');
+        }
+    } catch (error) {
+        showNotification('Error: ' + error.message, 'error');
+    }
+}
+
+async function toggleStatsCollection(hostId, enable) {
+    try {
+        const host = hosts.find(h => h.id === hostId);
+        if (!host) return;
+
+        const response = await fetch(`/api/hosts/${hostId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...host, collect_stats: enable })
+        });
+
+        if (response.ok) {
+            showNotification(`Stats collection ${enable ? 'enabled' : 'disabled'} successfully`, 'success');
             loadData();
         } else {
             const error = await response.json();
@@ -1089,7 +1439,8 @@ async function handleAddAgent(e) {
         name: document.getElementById('agentName').value,
         address: address,
         agent_token: document.getElementById('agentToken').value,
-        description: document.getElementById('agentDescription').value
+        description: document.getElementById('agentDescription').value,
+        collect_stats: document.getElementById('agentCollectStats').checked
     };
 
     const saveBtn = document.getElementById('saveAgentBtn');
@@ -1144,6 +1495,60 @@ async function loadTelemetrySettings() {
     }
 }
 
+async function loadScannerSettings() {
+    try {
+        const response = await fetch('/api/config');
+        const config = await response.json();
+
+        const intervalSeconds = config.scanner?.interval_seconds || 300;
+        const dropdown = document.getElementById('scanInterval');
+        if (dropdown) {
+            dropdown.value = intervalSeconds.toString();
+            console.log('Loaded scanner interval:', intervalSeconds, 'seconds');
+        }
+    } catch (error) {
+        console.error('Failed to load scanner settings:', error);
+    }
+}
+
+async function saveScanInterval() {
+    const status = document.getElementById('scanIntervalSaveStatus');
+    const intervalSeconds = parseInt(document.getElementById('scanInterval').value);
+
+    status.textContent = 'Saving...';
+    status.className = 'save-status-inline saving';
+
+    try {
+        const response = await fetch('/api/config/scanner', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                interval_seconds: intervalSeconds
+            })
+        });
+
+        if (response.ok) {
+            status.textContent = '✓ Saved';
+            status.className = 'save-status-inline success';
+            showNotification('Scan interval updated successfully', 'success');
+        } else {
+            const error = await response.json();
+            status.textContent = '✗ Failed';
+            status.className = 'save-status-inline error';
+            showNotification('Failed to update scan interval: ' + (error.error || 'Unknown error'), 'error');
+        }
+    } catch (error) {
+        status.textContent = '✗ Error';
+        status.className = 'save-status-inline error';
+        console.error('Failed to save scan interval:', error);
+    }
+
+    setTimeout(() => {
+        status.textContent = '';
+        status.className = 'save-status-inline';
+    }, 3000);
+}
+
 async function saveTelemetryFrequency() {
     const status = document.getElementById('frequencySaveStatus');
     const intervalHours = parseInt(document.getElementById('telemetryFrequency').value);
@@ -1195,6 +1600,7 @@ async function saveTelemetryFrequency() {
 // Initialize settings when switching to settings tab
 document.addEventListener('DOMContentLoaded', () => {
     // Load settings immediately on page load
+    loadScannerSettings();
     loadTelemetrySettings();
 
     // Load settings when settings tab is clicked
@@ -1202,6 +1608,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (settingsTab) {
         settingsTab.addEventListener('click', () => {
             setTimeout(() => {
+                loadScannerSettings();
                 loadTelemetrySettings();
                 loadCollectors();
             }, 100);
@@ -2511,3 +2918,261 @@ function toggleEdgeLabels() {
         cy.edges().removeClass('no-label');
     }
 }
+
+// Stats Modal
+let statsCharts = { cpu: null, memory: null };
+let currentStatsContainer = null;
+let currentStatsRange = '1h';
+
+function openStatsModal(hostId, containerId, containerName) {
+    console.log('openStatsModal called with:', { hostId, containerId, containerName });
+
+    currentStatsContainer = { hostId, containerId, containerName };
+    currentStatsRange = '1h';
+
+    const modal = document.getElementById('statsModal');
+    const nameElement = document.getElementById('statsContainerName');
+
+    if (!modal) {
+        console.error('Stats modal element not found!');
+        return;
+    }
+
+    if (!nameElement) {
+        console.error('Stats container name element not found!');
+        return;
+    }
+
+    nameElement.textContent = containerName;
+
+    // Use the 'show' class instead of style.display
+    modal.classList.add('show');
+    modal.style.display = ''; // Clear any inline style
+
+    console.log('Modal displayed with show class');
+
+    // Reset range buttons
+    document.querySelectorAll('.stats-range-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.range === '1h');
+    });
+
+    // Add click handlers for range buttons
+    document.querySelectorAll('.stats-range-btn').forEach(btn => {
+        btn.onclick = () => changeStatsRange(btn.dataset.range);
+    });
+
+    loadStatsData();
+}
+
+function closeStatsModal() {
+    const modal = document.getElementById('statsModal');
+    if (modal) {
+        modal.classList.remove('show');
+    }
+
+    // Destroy charts
+    if (statsCharts.cpu) {
+        statsCharts.cpu.destroy();
+        statsCharts.cpu = null;
+    }
+    if (statsCharts.memory) {
+        statsCharts.memory.destroy();
+        statsCharts.memory = null;
+    }
+
+    currentStatsContainer = null;
+}
+
+function changeStatsRange(range) {
+    currentStatsRange = range;
+
+    // Update active button
+    document.querySelectorAll('.stats-range-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.range === range);
+    });
+
+    loadStatsData();
+}
+
+async function loadStatsData() {
+    if (!currentStatsContainer) {
+        console.error('No current stats container set');
+        return;
+    }
+
+    const { hostId, containerId } = currentStatsContainer;
+    const url = `/api/containers/${hostId}/${containerId}/stats?range=${currentStatsRange}`;
+
+    console.log('Loading stats from:', url);
+
+    try {
+        const response = await fetch(url);
+        console.log('Stats response status:', response.status);
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Stats API error:', errorText);
+            throw new Error(`Failed to load stats: ${response.status} ${errorText}`);
+        }
+
+        const stats = await response.json();
+        console.log('Stats data received:', stats);
+
+        if (!stats || !Array.isArray(stats) || stats.length === 0) {
+            document.getElementById('statsContent').innerHTML = '<div class="loading">No stats data available for this time range. Stats collection may need more time to gather data.</div>';
+            return;
+        }
+
+        renderStatsCharts(stats);
+        updateStatsSummary(stats);
+    } catch (error) {
+        console.error('Error loading stats:', error);
+        document.getElementById('statsContent').innerHTML = `<div class="error">Failed to load stats data: ${error.message}</div>`;
+    }
+}
+
+function renderStatsCharts(stats) {
+    // Destroy existing charts
+    if (statsCharts.cpu) statsCharts.cpu.destroy();
+    if (statsCharts.memory) statsCharts.memory.destroy();
+
+    // Prepare data
+    const labels = stats.map(s => new Date(s.timestamp).toLocaleString());
+    const cpuData = stats.map(s => s.cpu_percent || 0);
+    const memoryData = stats.map(s => (s.memory_usage || 0) / 1024 / 1024); // Convert to MB
+    const memoryLimitData = stats.map(s => (s.memory_limit || 0) / 1024 / 1024);
+
+    // CPU Chart
+    const cpuCtx = document.getElementById('cpuChart').getContext('2d');
+    statsCharts.cpu = new Chart(cpuCtx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'CPU %',
+                data: cpuData,
+                borderColor: 'rgb(75, 192, 192)',
+                backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                tension: 0.4,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'CPU Usage Over Time'
+                },
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    max: 100,
+                    title: {
+                        display: true,
+                        text: 'CPU %'
+                    }
+                },
+                x: {
+                    ticks: {
+                        maxTicksLimit: 10
+                    }
+                }
+            }
+        }
+    });
+
+    // Memory Chart
+    const memoryCtx = document.getElementById('memoryChart').getContext('2d');
+    const datasets = [{
+        label: 'Memory Usage (MB)',
+        data: memoryData,
+        borderColor: 'rgb(255, 99, 132)',
+        backgroundColor: 'rgba(255, 99, 132, 0.2)',
+        tension: 0.4,
+        fill: true
+    }];
+
+    // Add memory limit line if available
+    const hasLimit = memoryLimitData.some(l => l > 0);
+    if (hasLimit) {
+        datasets.push({
+            label: 'Memory Limit (MB)',
+            data: memoryLimitData,
+            borderColor: 'rgb(255, 159, 64)',
+            backgroundColor: 'rgba(255, 159, 64, 0.1)',
+            borderDash: [5, 5],
+            tension: 0,
+            fill: false
+        });
+    }
+
+    statsCharts.memory = new Chart(memoryCtx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: datasets
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'Memory Usage Over Time'
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: 'Memory (MB)'
+                    }
+                },
+                x: {
+                    ticks: {
+                        maxTicksLimit: 10
+                    }
+                }
+            }
+        }
+    });
+}
+
+function updateStatsSummary(stats) {
+    const cpuValues = stats.map(s => s.cpu_percent || 0).filter(v => v > 0);
+    const memoryValues = stats.map(s => s.memory_usage || 0).filter(v => v > 0);
+
+    // CPU stats
+    const avgCpu = cpuValues.length > 0 ? cpuValues.reduce((a, b) => a + b, 0) / cpuValues.length : 0;
+    const maxCpu = cpuValues.length > 0 ? Math.max(...cpuValues) : 0;
+
+    document.getElementById('avgCpu').textContent = avgCpu.toFixed(1) + '%';
+    document.getElementById('maxCpu').textContent = maxCpu.toFixed(1) + '%';
+
+    // Memory stats
+    const avgMemory = memoryValues.length > 0 ? memoryValues.reduce((a, b) => a + b, 0) / memoryValues.length : 0;
+    const maxMemory = memoryValues.length > 0 ? Math.max(...memoryValues) : 0;
+
+    const formatMemory = (bytes) => {
+        const mb = bytes / 1024 / 1024;
+        if (mb > 1024) {
+            return (mb / 1024).toFixed(2) + ' GB';
+        }
+        return mb.toFixed(0) + ' MB';
+    };
+
+    document.getElementById('avgMemory').textContent = formatMemory(avgMemory);
+    document.getElementById('maxMemory').textContent = formatMemory(maxMemory);
+}
+
+// Close modal when clicking outside
+document.getElementById('statsModal')?.addEventListener('click', (e) => {
+    if (e.target.classList.contains('modal')) closeStatsModal();
+});

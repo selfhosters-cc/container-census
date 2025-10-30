@@ -1,7 +1,8 @@
 # Multi-stage build for Container Census
 
 # Stage 1: Build the Go binary
-FROM golang:1.21-alpine AS builder
+FROM golang:1.23-alpine AS builder
+ENV GOTOOLCHAIN=auto
 
 # Install build dependencies
 # Note: sqlite requires specific build tags on Alpine
@@ -23,7 +24,7 @@ COPY . .
 RUN go mod tidy -e
 
 # Build the binary with proper tags for Alpine
-RUN CGO_ENABLED=1 GOOS=linux go build -tags "sqlite_omit_load_extension" -o census ./cmd/server
+RUN CGO_ENABLED=1 GOOS=linux go build -buildvcs=false -tags "sqlite_omit_load_extension" -o census ./cmd/server
 
 # Stage 2: Create minimal runtime image
 FROM alpine:latest

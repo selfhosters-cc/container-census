@@ -2,7 +2,8 @@
 # Multi-stage build for Container Census Agent
 
 # Stage 1: Build the Go binary
-FROM golang:1.21-alpine AS builder
+FROM golang:1.23-alpine AS builder
+ENV GOTOOLCHAIN=auto
 
 # Install build dependencies
 RUN apk add --no-cache git gcc musl-dev
@@ -23,7 +24,7 @@ COPY . .
 RUN go mod tidy -e
 
 # Build the agent binary
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o census-agent ./cmd/agent
+RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags="-w -s" -o census-agent ./cmd/agent
 
 # Stage 2: Create minimal runtime image
 FROM alpine:latest

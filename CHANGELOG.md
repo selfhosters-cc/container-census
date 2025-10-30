@@ -5,6 +5,98 @@ All notable changes to Container Census will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2025-10-30
+
+### Added
+
+- **CPU & Memory Monitoring**: Comprehensive resource usage tracking with historical trends
+  - Real-time CPU and memory stats collected during each scan
+  - Two-tier data retention: granular data (1 hour) + hourly aggregates (2 weeks)
+  - Per-host stats collection toggle - enable/disable for each host individually
+  - Interactive time-series charts with time range selection (1h, 24h, 7d, all)
+  - Mini sparkline charts in monitoring grid for quick trend visualization
+  - Dual-axis charts showing CPU % and Memory MB on separate scales
+  - Stats summary showing average, min, and max values
+  - Works with all connection types: local socket, agents, TCP, and SSH
+  - Background job for automatic hourly aggregation and cleanup
+  - Database schema with `container_stats_aggregates` table for long-term storage
+
+- **Prometheus Metrics Endpoint**: Export metrics for Grafana integration
+  - `/api/metrics` endpoint in Prometheus text format
+  - Exports `census_container_cpu_percent` and `census_container_memory_bytes`
+  - Labels include container name, host name, and image
+  - Compatible with Prometheus scraping and Grafana dashboards
+
+- **Monitoring Tab**: New dedicated tab for resource monitoring
+  - Grid layout showing all running containers with stats enabled
+  - Real-time CPU and memory usage display
+  - Mini sparkline charts showing recent trends (last 20 data points)
+  - "View Detailed Stats" button opens modal with full time-series data
+  - Filters to show only containers from enabled hosts
+
+- **Scanner Interval Configuration**: UI control for scan frequency
+  - Settings tab now includes scanner interval selector
+  - Options: 1, 2, 5, 10, or 15 minutes
+  - Changes take effect on next scan cycle
+  - Persisted to configuration file
+  - API endpoint: `POST /api/config/scanner`
+
+- **Stats Collection API Endpoints**:
+  - `GET /api/containers/{host_id}/{container_id}/stats?range={1h|24h|7d|all}` - Historical stats
+  - `GET /api/config` - Get current configuration including scanner interval
+  - `POST /api/config/scanner` - Update scanner interval
+
+### Changed
+
+- **Agent Stats Collection**: Improved concurrent collection for better performance
+  - Changed from sequential to parallel stats collection using goroutines
+  - Prevents timeout issues when scanning hosts with many containers
+  - Uses `sync.WaitGroup` for safe concurrent collection
+
+- **Docker Stats Method**: Switched to streaming stats for accurate CPU measurement
+  - Uses Docker API `stream=true` parameter to get two samples
+  - Calculates CPU percentage from delta between samples
+  - Fixes issue where single-shot stats always returned 0% CPU
+  - Implemented in both scanner (local) and agent (remote) code paths
+
+- **Database Storage**: Enhanced stats field handling
+  - Removed `omitempty` JSON tags from stats fields to always include zero values
+  - Uses `sql.NullFloat64` and `sql.NullInt64` for proper NULL handling
+  - Stores all stats values including 0% CPU (previously skipped)
+  - Added migration for new columns: `cpu_percent`, `memory_usage`, `memory_limit`, `memory_percent`
+
+- **Host Management UI**: Added visual indicators for stats collection status
+  - Clickable badges to toggle stats collection per host
+  - "✓ Enabled" (green) and "Disabled" (gray) badges
+  - Immediate visual feedback when toggling
+
+### Fixed
+
+- **Monitoring Tab Filtering**: Fixed containers not appearing from remote hosts
+  - Changed filter from stats-based to state-based (all running containers)
+  - Added enabled-host filtering to exclude disabled hosts
+  - Stats-less containers now show placeholders instead of being hidden
+
+- **Stats Modal Display**: Fixed modal not opening when clicking "View Detailed Stats"
+  - Changed from `style.display = 'block'` to CSS class-based approach
+  - Uses `.modal.show { display: flex !important; }` for proper display
+  - Fixed button click handlers using programmatic event listeners
+
+- **CPU Always Showing 0%**: Fixed streaming stats implementation
+  - Root cause: Single-shot stats have zero/stale delta in `PreCPUStats`
+  - Solution: Read two consecutive samples from streaming stats API
+  - Properly calculates CPU delta across ~1 second interval
+
+- **Database Storage of Zero Values**: Fixed 0% CPU not being saved
+  - Changed storage condition from checking `CPUPercent > 0` to `MemoryLimit > 0`
+  - Zero CPU values are valid data (idle containers) and now properly stored
+  - Charts now display accurate data including idle periods
+
+- **Agent Stats Timeout**: Fixed timeout errors with large container counts
+  - Implemented concurrent collection instead of sequential
+  - Reduced total collection time significantly
+  - No longer hits 30-second scanner timeout with 20+ containers
+
 ## [1.2.2] - 2025-10-28
 
 ### Added

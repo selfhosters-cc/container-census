@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Container Census</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
 </head>
 <body>
     <div class="container">
@@ -26,6 +27,7 @@
 
         <nav class="tabs">
             <button class="tab-btn active" data-tab="containers">Containers</button>
+            <button class="tab-btn" data-tab="monitoring">Monitoring</button>
             <button class="tab-btn" data-tab="images">Images</button>
             <button class="tab-btn" data-tab="graph">Graph</button>
             <button class="tab-btn" data-tab="hosts">Hosts</button>
@@ -77,6 +79,8 @@
                                 <th>Name</th>
                                 <th>Image</th>
                                 <th>State</th>
+                                <th>CPU %</th>
+                                <th>Memory</th>
                                 <th>Status</th>
                                 <th>Ports</th>
                                 <th>Created</th>
@@ -85,10 +89,24 @@
                         </thead>
                         <tbody id="containersBody">
                             <tr>
-                                <td colspan="8" class="loading">Loading...</td>
+                                <td colspan="10" class="loading">Loading...</td>
                             </tr>
                         </tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="monitoringTab" class="tab-content">
+            <div class="monitoring-section">
+                <h2>Resource Monitoring</h2>
+                <div class="monitoring-filters">
+                    <select id="monitoringHostFilter" class="filter-select">
+                        <option value="">All Hosts</option>
+                    </select>
+                </div>
+                <div id="monitoringGrid" class="monitoring-grid">
+                    <div class="loading">Loading...</div>
                 </div>
             </div>
         </div>
@@ -211,6 +229,7 @@
                                 <th>Type</th>
                                 <th>Address</th>
                                 <th>Status</th>
+                                <th>Stats Collection</th>
                                 <th>Description</th>
                                 <th>Last Seen</th>
                                 <th>Actions</th>
@@ -218,7 +237,7 @@
                         </thead>
                         <tbody id="hostsBody">
                             <tr>
-                                <td colspan="7" class="loading">Loading...</td>
+                                <td colspan="8" class="loading">Loading...</td>
                             </tr>
                         </tbody>
                     </table>
@@ -289,6 +308,29 @@
         <div id="settingsTab" class="tab-content">
             <div class="settings-section">
                 <h2>Settings</h2>
+
+                <div class="settings-card">
+                    <h3>🔍 Scanner Configuration</h3>
+                    <p class="settings-description">
+                        Configure how frequently Container Census scans your hosts for container information and resource usage.
+                    </p>
+                    <div class="alert alert-info" style="margin-bottom: 15px; padding: 12px; background: #e3f2fd; border: 1px solid #90caf9; border-radius: 4px; font-size: 14px;">
+                        <strong>ℹ️ Note:</strong> Lower intervals provide more real-time data but increase CPU/disk usage. Higher intervals reduce overhead but provide less granular data.
+                    </div>
+
+                    <div class="frequency-group" style="margin-bottom: 20px;">
+                        <label for="scanInterval" class="frequency-label">Scan Interval:</label>
+                        <select id="scanInterval" class="frequency-select">
+                            <option value="60">Every 1 minute</option>
+                            <option value="120">Every 2 minutes</option>
+                            <option value="300">Every 5 minutes (recommended)</option>
+                            <option value="600">Every 10 minutes</option>
+                            <option value="900">Every 15 minutes</option>
+                        </select>
+                        <button onclick="saveScanInterval()" class="btn btn-primary" style="margin-left: 10px;">Save Interval</button>
+                        <span id="scanIntervalSaveStatus" class="save-status-inline"></span>
+                    </div>
+                </div>
 
                 <div class="settings-card">
                     <h3>📊 Telemetry Collectors</h3>
@@ -408,6 +450,13 @@
                         <label for="agentDescription">Description</label>
                         <input type="text" id="agentDescription" placeholder="Optional description">
                     </div>
+                    <div class="form-group">
+                        <label style="display: flex; align-items: center; cursor: pointer;">
+                            <input type="checkbox" id="agentCollectStats" style="margin-right: 8px; cursor: pointer;">
+                            <span>Enable CPU/Memory Stats Collection</span>
+                        </label>
+                        <small>Collect resource usage statistics during scans (requires Docker API access)</small>
+                    </div>
                     <div id="agentTestResult" class="alert" style="display: none;"></div>
                 </form>
             </div>
@@ -434,10 +483,56 @@
         </div>
     </div>
 
+    <!-- Stats Modal -->
+    <div id="statsModal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3>📊 Resource Stats: <span id="statsContainerName"></span></h3>
+                <button class="close-btn" onclick="closeStatsModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="stats-time-range">
+                    <button class="stats-range-btn active" data-range="1h">1 Hour</button>
+                    <button class="stats-range-btn" data-range="24h">24 Hours</button>
+                    <button class="stats-range-btn" data-range="7d">7 Days</button>
+                    <button class="stats-range-btn" data-range="all">All Time</button>
+                </div>
+                <div id="statsContent" class="stats-content">
+                    <div class="stats-summary">
+                        <div class="stat-box">
+                            <div class="stat-label">Avg CPU</div>
+                            <div class="stat-value" id="avgCpu">-</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">Max CPU</div>
+                            <div class="stat-value" id="maxCpu">-</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">Avg Memory</div>
+                            <div class="stat-value" id="avgMemory">-</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">Max Memory</div>
+                            <div class="stat-value" id="maxMemory">-</div>
+                        </div>
+                    </div>
+                    <div class="stats-charts">
+                        <div class="chart-container">
+                            <canvas id="cpuChart"></canvas>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="memoryChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Cytoscape.js for graph visualization -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.29.2/cytoscape.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
-    <script src="app.js?v=8"></script>
+    <script src="app.js?v=9"></script>
 </body>
 </html>

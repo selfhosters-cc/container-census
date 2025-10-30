@@ -441,9 +441,9 @@ if [ "$BUILD_SUCCESS" = true ]; then
         echo ""
         print_info "GitHub Release Creation"
         echo ""
-        read -p "Create GitHub Release for v${NEW_VERSION}? (Y/n): " create_release
+        read -p "Create GitHub Release for v${NEW_VERSION}? (y/N): " create_release
 
-        if [[ ! $create_release =~ ^[Nn]$ ]]; then
+        if [[ $create_release =~ ^[Yy]$ ]]; then
             # Check if gh CLI is installed
             if command -v gh &> /dev/null; then
                 print_info "Creating GitHub release v${NEW_VERSION}..."

@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -21,6 +22,31 @@ import (
 	"github.com/container-census/container-census/internal/telemetry"
 	"github.com/container-census/container-census/internal/version"
 )
+
+// Global scan interval that can be updated dynamically
+var (
+	scanIntervalMu     sync.RWMutex
+	scanIntervalValue  int
+	scanIntervalChange = make(chan int, 1)
+)
+
+func getScanInterval() int {
+	scanIntervalMu.RLock()
+	defer scanIntervalMu.RUnlock()
+	return scanIntervalValue
+}
+
+func setScanInterval(val int) {
+	scanIntervalMu.Lock()
+	scanIntervalValue = val
+	scanIntervalMu.Unlock()
+
+	// Non-blocking send to notify scanner
+	select {
+	case scanIntervalChange <- val:
+	default:
+	}
+}
 
 func main() {
 	log.Printf("Starting Container Census v%s...", version.Get())
@@ -61,6 +87,10 @@ func main() {
 	scan := scanner.New(cfg.Scanner.TimeoutSeconds)
 	log.Println("Scanner initialized")
 
+	// Initialize scan interval
+	setScanInterval(cfg.Scanner.IntervalSeconds)
+	log.Printf("Scan interval set to %d seconds", cfg.Scanner.IntervalSeconds)
+
 	// Initialize API server with authentication config
 	authConfig := convertAuthConfig(cfg.Server.Auth)
 	if authConfig.Enabled {
@@ -70,6 +100,7 @@ func main() {
 	}
 
 	apiServer := api.New(db, scan, configPath, cfg.Scanner.IntervalSeconds, authConfig)
+	apiServer.SetScanIntervalCallback(setScanInterval) // Allow API to update scan interval dynamically
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 
 	server := &http.Server{
@@ -112,6 +143,9 @@ func main() {
 
 	// Start daily database cleanup
 	go runDailyDatabaseCleanup(ctx, db)
+
+	// Start hourly stats aggregation
+	go runHourlyStatsAggregation(ctx, db)
 
 	// Start HTTP server
 	go func() {
@@ -207,7 +241,8 @@ func detectHostType(address string) string {
 
 // runPeriodicScans runs scans at regular intervals
 func runPeriodicScans(ctx context.Context, db *storage.DB, scan *scanner.Scanner, intervalSeconds int) {
-	ticker := time.NewTicker(time.Duration(intervalSeconds) * time.Second)
+	currentInterval := getScanInterval()
+	ticker := time.NewTicker(time.Duration(currentInterval) * time.Second)
 	defer ticker.Stop()
 
 	// Run initial scan
@@ -219,6 +254,11 @@ func runPeriodicScans(ctx context.Context, db *storage.DB, scan *scanner.Scanner
 		case <-ctx.Done():
 			log.Println("Stopping periodic scans")
 			return
+		case newInterval := <-scanIntervalChange:
+			// Interval changed - recreate ticker
+			ticker.Stop()
+			ticker = time.NewTicker(time.Duration(newInterval) * time.Second)
+			log.Printf("Scan interval changed to %d seconds (will take effect on next scan)", newInterval)
 		case <-ticker.C:
 			log.Println("Running periodic scan...")
 			performScan(ctx, db, scan)
@@ -346,6 +386,31 @@ func runDailyDatabaseCleanup(ctx context.Context, db *storage.DB) {
 				log.Printf("Database cleanup failed: %v", err)
 			} else {
 				log.Printf("Database cleanup completed: removed %d redundant scan records", deleted)
+			}
+		}
+	}
+}
+
+// runHourlyStatsAggregation performs stats aggregation every hour
+// Converts granular stats older than 1 hour into hourly aggregates to save space
+func runHourlyStatsAggregation(ctx context.Context, db *storage.DB) {
+	// Run first aggregation after 1 hour (let system collect some data first)
+	time.Sleep(1 * time.Hour)
+
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			log.Println("Starting stats aggregation (converting granular data older than 1 hour to hourly aggregates)...")
+			aggregated, err := db.AggregateOldStats()
+			if err != nil {
+				log.Printf("Stats aggregation failed: %v", err)
+			} else if aggregated > 0 {
+				log.Printf("Stats aggregation completed: created/updated %d hourly aggregate records", aggregated)
 			}
 		}
 	}

@@ -60,7 +60,13 @@ func (s *Scanner) agentRequest(ctx context.Context, host models.Host, method, pa
 }
 
 func (s *Scanner) scanAgentHost(ctx context.Context, host models.Host) ([]models.Container, error) {
-	resp, err := s.agentRequest(ctx, host, "GET", "/api/containers", nil)
+	// Add stats query parameter if enabled for this host
+	path := "/api/containers"
+	if host.CollectStats {
+		path += "?stats=true"
+	}
+
+	resp, err := s.agentRequest(ctx, host, "GET", path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to agent: %w", err)
 	}

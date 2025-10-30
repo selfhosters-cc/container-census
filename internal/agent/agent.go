@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/container-census/container-census/internal/models"
@@ -159,7 +160,9 @@ func (a *Agent) handleListContainers(w http.ResponseWriter, r *http.Request) {
 
 	// Convert to our model
 	result := make([]models.Container, 0, len(containers))
-	now := time.Now()
+	// Use UTC to ensure consistency across timezones
+	now := time.Now().UTC()
+	collectStats := r.URL.Query().Get("stats") == "true"
 
 	for _, c := range containers {
 		ports := make([]models.PortMapping, 0)
@@ -225,7 +228,7 @@ func (a *Agent) handleListContainers(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		result = append(result, models.Container{
+		container := models.Container{
 			ID:             c.ID,
 			Name:           name,
 			Image:          c.Image,
@@ -241,7 +244,98 @@ func (a *Agent) handleListContainers(w http.ResponseWriter, r *http.Request) {
 			Volumes:        volumes,
 			Links:          links,
 			ComposeProject: composeProject,
-		})
+		}
+
+		result = append(result, container)
+	}
+
+	// Collect stats concurrently for all running containers if requested
+	if collectStats {
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+
+		for i := range result {
+			if result[i].State != "running" {
+				continue
+			}
+
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+
+				containerID := result[idx].ID
+				containerName := result[idx].Name
+
+				// Use streaming stats to get two samples
+				statsStream, err := a.dockerClient.ContainerStats(ctx, containerID, true)
+				if err != nil {
+					log.Printf("Failed to collect stats for container %s: %v", containerName, err)
+					return
+				}
+				defer statsStream.Body.Close()
+
+				// Read first sample (baseline)
+				var baseline types.StatsJSON
+				decoder := json.NewDecoder(statsStream.Body)
+				if err := decoder.Decode(&baseline); err != nil {
+					log.Printf("Failed to decode first sample for container %s: %v", containerName, err)
+					return
+				}
+
+				// Read second sample (current)
+				var current types.StatsJSON
+				if err := decoder.Decode(&current); err != nil {
+					log.Printf("Failed to decode second sample for container %s: %v", containerName, err)
+					return
+				}
+
+				// Calculate CPU percentage using delta between the two samples
+				cpuDelta := float64(current.CPUStats.CPUUsage.TotalUsage - baseline.CPUStats.CPUUsage.TotalUsage)
+				systemDelta := float64(current.CPUStats.SystemUsage - baseline.CPUStats.SystemUsage)
+
+				// Get number of CPUs - try multiple sources
+				numCPUs := uint64(len(current.CPUStats.CPUUsage.PercpuUsage))
+				if numCPUs == 0 && current.CPUStats.OnlineCPUs > 0 {
+					numCPUs = uint64(current.CPUStats.OnlineCPUs)
+				}
+				if numCPUs == 0 {
+					// Fallback: assume at least 1 CPU for calculation
+					numCPUs = 1
+				}
+
+				// Debug logging for CPU calculation
+				log.Printf("DEBUG %s: cpuDelta=%.0f, systemDelta=%.0f, numCPUs=%d, OnlineCPUs=%d, PercpuLen=%d",
+					containerName, cpuDelta, systemDelta, numCPUs,
+					current.CPUStats.OnlineCPUs, len(current.CPUStats.CPUUsage.PercpuUsage))
+
+				var cpuPercent float64
+				if systemDelta > 0 && cpuDelta > 0 {
+					cpuPercent = (cpuDelta / systemDelta) * float64(numCPUs) * 100.0
+				}
+
+				// Memory stats (from the latest sample)
+				memoryUsage := int64(current.MemoryStats.Usage)
+				memoryLimit := int64(current.MemoryStats.Limit)
+				var memoryPercent float64
+				if current.MemoryStats.Limit > 0 {
+					memoryPercent = float64(current.MemoryStats.Usage) / float64(current.MemoryStats.Limit) * 100.0
+				}
+
+				// Debug logging
+				log.Printf("Stats collected for %s: CPU=%.2f%%, Memory=%dMB/%dMB (%.1f%%)",
+					containerName, cpuPercent, memoryUsage/1024/1024, memoryLimit/1024/1024, memoryPercent)
+
+				// Update the container in the result slice (thread-safe)
+				mu.Lock()
+				result[idx].CPUPercent = cpuPercent
+				result[idx].MemoryUsage = memoryUsage
+				result[idx].MemoryLimit = memoryLimit
+				result[idx].MemoryPercent = memoryPercent
+				mu.Unlock()
+			}(i)
+		}
+
+		wg.Wait()
 	}
 
 	respondJSON(w, http.StatusOK, result)

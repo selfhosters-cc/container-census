@@ -1,0 +1,9 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY test-cpu-load.py .
+
+RUN chmod +x test-cpu-load.py
+
+CMD ["python3", "-u", "test-cpu-load.py"]

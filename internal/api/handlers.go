@@ -24,16 +24,17 @@ import (
 
 // Server handles HTTP requests
 type Server struct {
-	db                 *storage.DB
-	scanner            *scanner.Scanner
-	router             *mux.Router
-	configPath         string
-	telemetryScheduler *telemetry.Scheduler
-	telemetryContext   context.Context
-	telemetryCancel    context.CancelFunc
-	telemetryMutex     sync.Mutex
-	scanInterval       int
-	authConfig         auth.Config
+	db                    *storage.DB
+	scanner               *scanner.Scanner
+	router                *mux.Router
+	configPath            string
+	telemetryScheduler    *telemetry.Scheduler
+	telemetryContext      context.Context
+	telemetryCancel       context.CancelFunc
+	telemetryMutex        sync.Mutex
+	scanInterval          int
+	authConfig            auth.Config
+	setScanIntervalFunc   func(int) // Callback to update scan interval
 }
 
 // TelemetryScheduler interface for submitting telemetry on demand
@@ -55,6 +56,11 @@ func New(db *storage.DB, scanner *scanner.Scanner, configPath string, scanInterv
 
 	s.setupRoutes()
 	return s
+}
+
+// SetScanIntervalCallback sets the callback function to update scan interval dynamically
+func (s *Server) SetScanIntervalCallback(callback func(int)) {
+	s.setScanIntervalFunc = callback
 }
 
 // SetTelemetryScheduler sets the telemetry scheduler for on-demand submissions
@@ -147,11 +153,15 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/containers/history", s.handleGetContainersHistory).Methods("GET")
 	api.HandleFunc("/containers/lifecycle", s.handleGetContainerLifecycles).Methods("GET")
 	api.HandleFunc("/containers/lifecycle/{host_id}/{container_name}", s.handleGetContainerLifecycleEvents).Methods("GET")
+	api.HandleFunc("/containers/{host_id}/{container_id}/stats", s.handleGetContainerStats).Methods("GET")
 	api.HandleFunc("/containers/{host_id}/{container_id}/start", s.handleStartContainer).Methods("POST")
 	api.HandleFunc("/containers/{host_id}/{container_id}/stop", s.handleStopContainer).Methods("POST")
 	api.HandleFunc("/containers/{host_id}/{container_id}/restart", s.handleRestartContainer).Methods("POST")
 	api.HandleFunc("/containers/{host_id}/{container_id}", s.handleRemoveContainer).Methods("DELETE")
 	api.HandleFunc("/containers/{host_id}/{container_id}/logs", s.handleGetLogs).Methods("GET")
+
+	// Prometheus metrics endpoint (protected)
+	api.HandleFunc("/metrics", s.handlePrometheusMetrics).Methods("GET")
 
 	// Image endpoints
 	api.HandleFunc("/images", s.handleGetImages).Methods("GET")
@@ -168,6 +178,7 @@ func (s *Server) setupRoutes() {
 
 	// Config endpoints
 	api.HandleFunc("/config", s.handleGetConfig).Methods("GET")
+	api.HandleFunc("/config/scanner", s.handleUpdateScanner).Methods("POST")
 	api.HandleFunc("/config/telemetry", s.handleUpdateTelemetry).Methods("POST")
 	api.HandleFunc("/config/telemetry/endpoints", s.handleGetTelemetryEndpoints).Methods("GET")
 	api.HandleFunc("/config/telemetry/endpoints", s.handleAddTelemetryEndpoint).Methods("POST")
@@ -1094,6 +1105,50 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, cfg)
 }
 
+// handleUpdateScanner updates scanner settings
+func (s *Server) handleUpdateScanner(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		IntervalSeconds int `json:"interval_seconds"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	if req.IntervalSeconds < 30 {
+		respondError(w, http.StatusBadRequest, "Interval must be at least 30 seconds")
+		return
+	}
+
+	// Load current config
+	cfg, _ := config.LoadOrDefault(s.configPath)
+
+	// Update scan interval
+	cfg.Scanner.IntervalSeconds = req.IntervalSeconds
+
+	// Save configuration
+	if err := config.Save(s.configPath, cfg); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to save configuration: "+err.Error())
+		return
+	}
+
+	log.Printf("Scanner interval updated to %d seconds", req.IntervalSeconds)
+
+	// Update the scanner's interval in memory
+	s.scanInterval = req.IntervalSeconds
+
+	// If callback is set, notify the background scanner to update its ticker
+	if s.setScanIntervalFunc != nil {
+		s.setScanIntervalFunc(req.IntervalSeconds)
+		log.Printf("Notified background scanner of interval change")
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"message": "Scanner interval updated successfully. Will take effect on next scan cycle.",
+	})
+}
+
 // handleUpdateTelemetry updates telemetry settings
 func (s *Server) handleUpdateTelemetry(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -1485,4 +1540,97 @@ func (s *Server) handleGetTelemetrySchedule(w http.ResponseWriter, r *http.Reque
 
 	scheduleInfo := s.telemetryScheduler.GetScheduleInfo()
 	respondJSON(w, http.StatusOK, scheduleInfo)
+}
+
+// handleGetContainerStats returns time-series stats for a specific container
+func (s *Server) handleGetContainerStats(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	hostIDStr := vars["host_id"]
+	containerID := vars["container_id"]
+
+	hostID, err := strconv.ParseInt(hostIDStr, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid host ID")
+		return
+	}
+
+	// Parse time range parameter
+	rangeParam := r.URL.Query().Get("range")
+	var hoursBack int
+
+	switch rangeParam {
+	case "1h":
+		hoursBack = 1
+	case "24h":
+		hoursBack = 24
+	case "7d":
+		hoursBack = 24 * 7 // 168 hours
+	case "all", "":
+		hoursBack = 0 // 0 means all data
+	default:
+		respondError(w, http.StatusBadRequest, "Invalid range parameter. Use: 1h, 24h, 7d, or all")
+		return
+	}
+
+	stats, err := s.db.GetContainerStats(containerID, hostID, hoursBack)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get container stats: "+err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, stats)
+}
+
+// handlePrometheusMetrics returns Prometheus-compatible metrics for all running containers
+func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request) {
+	containers, err := s.db.GetCurrentStatsForAllContainers()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get container stats: "+err.Error())
+		return
+	}
+
+	// Build Prometheus-format metrics
+	var metrics strings.Builder
+
+	// Write HELP and TYPE for each metric
+	metrics.WriteString("# HELP census_container_cpu_percent Container CPU usage percentage\n")
+	metrics.WriteString("# TYPE census_container_cpu_percent gauge\n")
+
+	for _, c := range containers {
+		if c.CPUPercent > 0 {
+			metrics.WriteString(fmt.Sprintf(
+				"census_container_cpu_percent{container_name=\"%s\",container_id=\"%s\",host_name=\"%s\",image=\"%s\"} %.2f\n",
+				c.Name, c.ID[:12], c.HostName, c.Image, c.CPUPercent,
+			))
+		}
+	}
+
+	metrics.WriteString("\n# HELP census_container_memory_bytes Container memory usage in bytes\n")
+	metrics.WriteString("# TYPE census_container_memory_bytes gauge\n")
+
+	for _, c := range containers {
+		if c.MemoryUsage > 0 {
+			metrics.WriteString(fmt.Sprintf(
+				"census_container_memory_bytes{container_name=\"%s\",container_id=\"%s\",host_name=\"%s\",image=\"%s\"} %d\n",
+				c.Name, c.ID[:12], c.HostName, c.Image, c.MemoryUsage,
+			))
+		}
+	}
+
+	metrics.WriteString("\n# HELP census_container_memory_limit_bytes Container memory limit in bytes\n")
+	metrics.WriteString("# TYPE census_container_memory_limit_bytes gauge\n")
+
+	for _, c := range containers {
+		if c.MemoryLimit > 0 {
+			metrics.WriteString(fmt.Sprintf(
+				"census_container_memory_limit_bytes{container_name=\"%s\",container_id=\"%s\",host_name=\"%s\",image=\"%s\"} %d\n",
+				c.Name, c.ID[:12], c.HostName, c.Image, c.MemoryLimit,
+			))
+		}
+	}
+
+	// Write response with Prometheus content type
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(metrics.String()))
 }

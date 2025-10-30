@@ -4,17 +4,18 @@ import "time"
 
 // Host represents a Docker host to scan
 type Host struct {
-	ID          int64     `json:"id"`
-	Name        string    `json:"name"`
-	Address     string    `json:"address"`      // e.g., "tcp://host:2376", "ssh://user@host", "agent://host:9876"
-	Description string    `json:"description"`
-	HostType    string    `json:"host_type"`    // unix, tcp, ssh, agent
-	AgentToken  string    `json:"agent_token,omitempty"` // API token for agent authentication
-	AgentStatus string    `json:"agent_status,omitempty"` // online, offline, unknown
-	LastSeen    time.Time `json:"last_seen,omitempty"`
-	Enabled     bool      `json:"enabled"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID           int64     `json:"id"`
+	Name         string    `json:"name"`
+	Address      string    `json:"address"`      // e.g., "tcp://host:2376", "ssh://user@host", "agent://host:9876"
+	Description  string    `json:"description"`
+	HostType     string    `json:"host_type"`    // unix, tcp, ssh, agent
+	AgentToken   string    `json:"agent_token,omitempty"` // API token for agent authentication
+	AgentStatus  string    `json:"agent_status,omitempty"` // online, offline, unknown
+	LastSeen     time.Time `json:"last_seen,omitempty"`
+	Enabled      bool      `json:"enabled"`
+	CollectStats bool      `json:"collect_stats"` // whether to collect CPU/memory stats for this host
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // Container represents a Docker container found on a host
@@ -33,11 +34,11 @@ type Container struct {
 	HostID       int64             `json:"host_id"`
 	HostName     string            `json:"host_name"`
 	ScannedAt    time.Time         `json:"scanned_at"`
-	// Resource usage stats (optional, may be zero if not collected)
-	CPUPercent    float64 `json:"cpu_percent,omitempty"`
-	MemoryUsage   int64   `json:"memory_usage,omitempty"`   // bytes
-	MemoryLimit   int64   `json:"memory_limit,omitempty"`   // bytes
-	MemoryPercent float64 `json:"memory_percent,omitempty"`
+	// Resource usage stats (may be zero if not collected or if container is idle)
+	CPUPercent    float64 `json:"cpu_percent"`
+	MemoryUsage   int64   `json:"memory_usage"`   // bytes
+	MemoryLimit   int64   `json:"memory_limit"`   // bytes
+	MemoryPercent float64 `json:"memory_percent"`
 	// Connection information for graph visualization
 	Networks       []string      `json:"networks,omitempty"`        // Network names this container is connected to
 	Volumes        []VolumeMount `json:"volumes,omitempty"`         // Volume mounts
@@ -296,4 +297,13 @@ type ContainerLifecycleSummary struct {
 	RestartEvents   int       `json:"restart_events"`
 	IsActive        bool      `json:"is_active"` // seen in most recent scan
 	TotalScans      int       `json:"total_scans"`
+}
+
+// ContainerStatsPoint represents a single data point for container resource usage
+type ContainerStatsPoint struct {
+	Timestamp     time.Time `json:"timestamp"`
+	CPUPercent    float64   `json:"cpu_percent"`
+	MemoryUsage   int64     `json:"memory_usage"`   // bytes
+	MemoryLimit   int64     `json:"memory_limit"`   // bytes
+	MemoryPercent float64   `json:"memory_percent"`
 }

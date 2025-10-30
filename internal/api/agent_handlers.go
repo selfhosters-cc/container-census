@@ -33,10 +33,11 @@ func detectHostType(address string) string {
 // handleAddAgentHost adds a new agent-based host
 func (s *Server) handleAddAgentHost(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name        string `json:"name"`
-		Address     string `json:"address"`
-		Description string `json:"description"`
-		AgentToken  string `json:"agent_token"`
+		Name         string `json:"name"`
+		Address      string `json:"address"`
+		Description  string `json:"description"`
+		AgentToken   string `json:"agent_token"`
+		CollectStats bool   `json:"collect_stats"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -66,13 +67,14 @@ func (s *Server) handleAddAgentHost(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	host := models.Host{
-		Name:        req.Name,
-		Address:     req.Address,
-		Description: req.Description,
-		HostType:    hostType,
-		AgentToken:  req.AgentToken,
-		AgentStatus: "unknown",
-		Enabled:     true,
+		Name:         req.Name,
+		Address:      req.Address,
+		Description:  req.Description,
+		HostType:     hostType,
+		AgentToken:   req.AgentToken,
+		AgentStatus:  "unknown",
+		Enabled:      true,
+		CollectStats: req.CollectStats,
 	}
 
 	// Try to ping the agent

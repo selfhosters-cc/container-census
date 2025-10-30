@@ -2,11 +2,13 @@ package scanner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/container-census/container-census/internal/models"
@@ -65,7 +67,8 @@ func (s *Scanner) ScanHost(ctx context.Context, host models.Host) ([]models.Cont
 
 	// Convert to our model
 	result := make([]models.Container, 0, len(containers))
-	now := time.Now()
+	// Use UTC to ensure consistency across timezones
+	now := time.Now().UTC()
 
 	for _, c := range containers {
 		// Parse port mappings
@@ -157,35 +160,96 @@ func (s *Scanner) ScanHost(ctx context.Context, host models.Host) ([]models.Cont
 			ComposeProject: composeProject,
 		}
 
-		// Optionally collect resource stats for running containers
-		// This is commented out by default as it adds overhead
-		// Uncomment if you want to collect resource usage
-		/*
-		if c.State == "running" {
-			stats, err := dockerClient.ContainerStats(ctx, c.ID, false)
-			if err == nil {
-				defer stats.Body.Close()
-				var v types.StatsJSON
-				if err := json.NewDecoder(stats.Body).Decode(&v); err == nil {
-					// Calculate CPU percentage
-					cpuDelta := float64(v.CPUStats.CPUUsage.TotalUsage - v.PreCPUStats.CPUUsage.TotalUsage)
-					systemDelta := float64(v.CPUStats.SystemUsage - v.PreCPUStats.SystemUsage)
-					if systemDelta > 0 && cpuDelta > 0 {
-						container.CPUPercent = (cpuDelta / systemDelta) * float64(len(v.CPUStats.CPUUsage.PercpuUsage)) * 100.0
-					}
-
-					// Memory stats
-					container.MemoryUsage = int64(v.MemoryStats.Usage)
-					container.MemoryLimit = int64(v.MemoryStats.Limit)
-					if v.MemoryStats.Limit > 0 {
-						container.MemoryPercent = float64(v.MemoryStats.Usage) / float64(v.MemoryStats.Limit) * 100.0
-					}
-				}
-			}
-		}
-		*/
-
 		result = append(result, container)
+	}
+
+	// Collect stats concurrently for all running containers if enabled for this host
+	if host.CollectStats {
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+
+		for i := range result {
+			if result[i].State != "running" {
+				continue
+			}
+
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+
+				containerID := result[idx].ID
+				containerName := result[idx].Name
+
+				// Use streaming stats to get two samples
+				statsStream, err := dockerClient.ContainerStats(ctx, containerID, true)
+				if err != nil {
+					log.Printf("Failed to collect stats for container %s on host %s: %v", containerName, host.Name, err)
+					return
+				}
+				defer statsStream.Body.Close()
+
+				// Read first sample (baseline)
+				var baseline types.StatsJSON
+				decoder := json.NewDecoder(statsStream.Body)
+				if err := decoder.Decode(&baseline); err != nil {
+					log.Printf("Failed to decode first sample for container %s on host %s: %v", containerName, host.Name, err)
+					return
+				}
+
+				// Read second sample (current)
+				var current types.StatsJSON
+				if err := decoder.Decode(&current); err != nil {
+					log.Printf("Failed to decode second sample for container %s on host %s: %v", containerName, host.Name, err)
+					return
+				}
+
+				// Calculate CPU percentage using delta between the two samples
+				cpuDelta := float64(current.CPUStats.CPUUsage.TotalUsage - baseline.CPUStats.CPUUsage.TotalUsage)
+				systemDelta := float64(current.CPUStats.SystemUsage - baseline.CPUStats.SystemUsage)
+
+				// Get number of CPUs - try multiple sources
+				numCPUs := uint64(len(current.CPUStats.CPUUsage.PercpuUsage))
+				if numCPUs == 0 && current.CPUStats.OnlineCPUs > 0 {
+					numCPUs = uint64(current.CPUStats.OnlineCPUs)
+				}
+				if numCPUs == 0 {
+					// Fallback: assume at least 1 CPU for calculation
+					numCPUs = 1
+				}
+
+				// Debug logging for CPU calculation
+				log.Printf("DEBUG %s: cpuDelta=%.0f, systemDelta=%.0f, numCPUs=%d, OnlineCPUs=%d, PercpuLen=%d",
+					containerName, cpuDelta, systemDelta, numCPUs,
+					current.CPUStats.OnlineCPUs, len(current.CPUStats.CPUUsage.PercpuUsage))
+
+				var cpuPercent float64
+				if systemDelta > 0 && cpuDelta > 0 {
+					cpuPercent = (cpuDelta / systemDelta) * float64(numCPUs) * 100.0
+				}
+
+				// Memory stats (from the latest sample)
+				memoryUsage := int64(current.MemoryStats.Usage)
+				memoryLimit := int64(current.MemoryStats.Limit)
+				var memoryPercent float64
+				if current.MemoryStats.Limit > 0 {
+					memoryPercent = float64(current.MemoryStats.Usage) / float64(current.MemoryStats.Limit) * 100.0
+				}
+
+				// Debug logging
+				log.Printf("Stats collected for %s on %s: CPU=%.2f%%, Memory=%dMB/%dMB (%.1f%%)",
+					containerName, host.Name, cpuPercent, memoryUsage/1024/1024, memoryLimit/1024/1024, memoryPercent)
+
+				// Update the container in the result slice (thread-safe)
+				mu.Lock()
+				result[idx].CPUPercent = cpuPercent
+				result[idx].MemoryUsage = memoryUsage
+				result[idx].MemoryLimit = memoryLimit
+				result[idx].MemoryPercent = memoryPercent
+				mu.Unlock()
+			}(i)
+		}
+
+		wg.Wait()
 	}
 
 	return result, nil
