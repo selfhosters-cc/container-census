@@ -8,29 +8,334 @@ let cy = null; // Cytoscape instance
 let autoRefreshInterval = null;
 let currentTab = 'containers';
 let lifecycles = [];
+let lastRefreshTime = null;
+let lastRefreshInterval = null;
+let statsModalRefreshInterval = null;
+let isSidebarOpen = false;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
+    initializeRouting();
     loadVersion();
     loadTelemetrySchedule();
     loadData();
     startAutoRefresh();
+    updateLastRefreshIndicator();
 });
+
+// URL Hash Routing
+function initializeRouting() {
+    // Load tab from URL hash on page load
+    const hash = window.location.hash.slice(1); // Remove #
+    if (hash && hash.startsWith('/')) {
+        const tab = hash.slice(1); // Remove leading /
+        const validTabs = ['containers', 'monitoring', 'images', 'graph', 'hosts', 'history', 'activity', 'settings'];
+        if (validTabs.includes(tab)) {
+            currentTab = tab;
+            switchTab(tab, false); // Don't push to history on initial load
+        }
+    }
+
+    // Listen for hash changes (back/forward buttons)
+    window.addEventListener('hashchange', () => {
+        const hash = window.location.hash.slice(1);
+        if (hash && hash.startsWith('/')) {
+            const tab = hash.slice(1);
+            const validTabs = ['containers', 'monitoring', 'images', 'graph', 'hosts', 'history', 'activity', 'settings'];
+            if (validTabs.includes(tab)) {
+                currentTab = tab;
+                switchTab(tab, false); // Don't push to history on hash change
+            }
+        }
+    });
+}
+
+// Update URL hash without reloading
+function updateURL(tab) {
+    window.location.hash = '#/' + tab;
+}
+
+// Last refresh indicator
+function updateLastRefreshIndicator() {
+    const indicator = document.getElementById('lastUpdated');
+    if (!indicator) return;
+
+    if (lastRefreshInterval) {
+        clearInterval(lastRefreshInterval);
+    }
+
+    function update() {
+        if (lastRefreshTime) {
+            const now = Date.now();
+            const diff = Math.floor((now - lastRefreshTime) / 1000);
+
+            if (diff < 60) {
+                indicator.textContent = `Updated ${diff}s ago`;
+            } else {
+                const mins = Math.floor(diff / 60);
+                indicator.textContent = `Updated ${mins}m ago`;
+            }
+        } else {
+            indicator.textContent = 'Loading...';
+        }
+    }
+
+    update();
+    lastRefreshInterval = setInterval(update, 1000);
+}
+
+// Set last refresh time
+function markRefresh() {
+    lastRefreshTime = Date.now();
+    const indicator = document.getElementById('lastUpdated');
+    if (indicator) {
+        indicator.classList.add('refreshing');
+        setTimeout(() => indicator.classList.remove('refreshing'), 1000);
+    }
+}
+
+// Toast notification system
+function showToast(title, message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+
+    const icons = {
+        success: '✅',
+        error: '❌',
+        info: 'ℹ️',
+        warning: '⚠️'
+    };
+
+    toast.innerHTML = `
+        <span class="toast-icon">${icons[type] || icons.info}</span>
+        <div class="toast-content">
+            <div class="toast-title">${title}</div>
+            <div class="toast-message">${message}</div>
+        </div>
+        <button class="toast-close" onclick="this.parentElement.remove()">×</button>
+    `;
+
+    document.body.appendChild(toast);
+
+    // Trigger animation
+    setTimeout(() => toast.classList.add('show'), 10);
+
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+    }, 5000);
+}
+
+// Update navigation badges
+function updateNavigationBadges() {
+    // Containers badge
+    const containersBadge = document.getElementById('containersBadge');
+    if (containersBadge && containers.length > 0) {
+        containersBadge.textContent = containers.length;
+    }
+
+    // Running containers in monitoring badge
+    const monitoringBadge = document.getElementById('monitoringBadge');
+    const runningCount = containers.filter(c => c.state === 'running').length;
+    if (monitoringBadge && runningCount > 0) {
+        monitoringBadge.textContent = runningCount;
+    }
+
+    // Images badge
+    const imagesBadge = document.getElementById('imagesBadge');
+    if (imagesBadge && images) {
+        const totalImages = Object.values(images).reduce((sum, imgs) => sum + imgs.length, 0);
+        if (totalImages > 0) {
+            imagesBadge.textContent = totalImages;
+        }
+    }
+
+    // Hosts badge
+    const hostsBadge = document.getElementById('hostsBadge');
+    if (hostsBadge && hosts.length > 0) {
+        hostsBadge.textContent = hosts.length;
+    }
+
+    // Activity badge
+    const activityBadge = document.getElementById('activityBadge');
+    if (activityBadge && activities.length > 0) {
+        activityBadge.textContent = activities.length;
+    }
+}
+
+// Sidebar toggle for mobile
+function toggleSidebar() {
+    const sidebar = document.querySelector('.sidebar');
+    const body = document.body;
+    isSidebarOpen = !isSidebarOpen;
+
+    if (isSidebarOpen) {
+        sidebar.classList.add('open');
+        body.classList.add('sidebar-open');
+    } else {
+        sidebar.classList.remove('open');
+        body.classList.remove('sidebar-open');
+    }
+}
+
+// Filter state persistence
+function saveFilterState() {
+    const state = {
+        search: document.getElementById('searchInput')?.value || '',
+        hostFilter: document.getElementById('hostFilter')?.value || '',
+        stateFilter: document.getElementById('stateFilter')?.value || ''
+    };
+    sessionStorage.setItem(`filters_${currentTab}`, JSON.stringify(state));
+}
+
+function restoreFilterState() {
+    const stateStr = sessionStorage.getItem(`filters_${currentTab}`);
+
+    const hostFilter = document.getElementById('hostFilter');
+    const stateFilter = document.getElementById('stateFilter');
+
+    if (!stateStr) {
+        // Clear filters when switching tabs if no saved state
+        // Note: searchInput is already cleared in switchTab()
+        if (hostFilter) hostFilter.value = '';
+        if (stateFilter) stateFilter.value = '';
+        return;
+    }
+
+    try {
+        const state = JSON.parse(stateStr);
+
+        // Note: searchInput is always cleared in switchTab(), so we don't restore it
+        if (hostFilter) hostFilter.value = state.hostFilter || '';
+        if (stateFilter) stateFilter.value = state.stateFilter || '';
+
+        // Don't apply filters here - let the tab's load function handle it
+        // This prevents double-rendering when switching tabs
+    } catch (e) {
+        console.error('Error restoring filter state:', e);
+    }
+}
+
+// Apply filters based on current tab
+function applyCurrentFilters() {
+    if (currentTab === 'containers') {
+        filterContainers();
+    } else if (currentTab === 'images') {
+        filterImages();
+    } else if (currentTab === 'monitoring') {
+        filterMonitoring();
+    } else if (currentTab === 'history') {
+        filterHistory();
+    }
+}
+
+// Keyboard shortcuts
+function setupKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        // Ignore if user is typing in an input
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
+            // Allow '/' to focus search even when in input (if it's empty)
+            if (e.key === '/' && e.target.value === '') {
+                e.preventDefault();
+                document.getElementById('searchInput')?.focus();
+            }
+            return;
+        }
+
+        // Tab switching with number keys
+        if (e.key >= '1' && e.key <= '8') {
+            e.preventDefault();
+            const tabs = ['containers', 'monitoring', 'images', 'graph', 'hosts', 'history', 'activity', 'settings'];
+            const tabIndex = parseInt(e.key) - 1;
+            if (tabs[tabIndex]) {
+                switchTab(tabs[tabIndex]);
+            }
+        }
+
+        // '/' to focus search
+        if (e.key === '/') {
+            e.preventDefault();
+            const searchInput = document.getElementById('searchInput');
+            if (searchInput) {
+                searchInput.focus();
+                searchInput.select();
+            }
+        }
+
+        // 'r' to refresh current tab
+        if (e.key === 'r' || e.key === 'R') {
+            e.preventDefault();
+            loadData();
+            showToast('Refreshed', 'Data reloaded successfully', 'success');
+        }
+
+        // 'Escape' to close sidebar on mobile
+        if (e.key === 'Escape' && isSidebarOpen) {
+            toggleSidebar();
+        }
+    });
+}
 
 // Event Listeners
 function setupEventListeners() {
     document.getElementById('scanBtn').addEventListener('click', triggerScan);
     document.getElementById('submitTelemetryBtn').addEventListener('click', submitTelemetry);
     document.getElementById('autoRefresh').addEventListener('change', handleAutoRefreshToggle);
-    document.getElementById('searchInput').addEventListener('input', filterContainers);
-    document.getElementById('hostFilter').addEventListener('change', filterContainers);
-    document.getElementById('stateFilter').addEventListener('change', filterContainers);
 
-    // Tab switching
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => switchTab(e.target.dataset.tab));
+    const searchInput = document.getElementById('searchInput');
+    const hostFilter = document.getElementById('hostFilter');
+    const stateFilter = document.getElementById('stateFilter');
+
+    if (searchInput) {
+        searchInput.addEventListener('input', () => {
+            applyCurrentFilters();
+            saveFilterState();
+        });
+    }
+
+    if (hostFilter) {
+        hostFilter.addEventListener('change', () => {
+            applyCurrentFilters();
+            saveFilterState();
+        });
+    }
+
+    if (stateFilter) {
+        stateFilter.addEventListener('change', () => {
+            applyCurrentFilters();
+            saveFilterState();
+        });
+    }
+
+    // Sidebar navigation
+    document.querySelectorAll('.nav-item').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const tab = e.currentTarget.dataset.tab;
+            if (tab) switchTab(tab);
+        });
     });
+
+    // Mobile sidebar toggle
+    const sidebarToggle = document.getElementById('sidebarToggle');
+    if (sidebarToggle) {
+        sidebarToggle.addEventListener('click', toggleSidebar);
+    }
+
+    // Mobile menu button (created via CSS ::before)
+    document.body.addEventListener('click', (e) => {
+        if (window.innerWidth <= 768) {
+            const rect = { left: 15, top: 15, right: 60, bottom: 60 };
+            if (e.clientX >= rect.left && e.clientX <= rect.right &&
+                e.clientY >= rect.top && e.clientY <= rect.bottom) {
+                toggleSidebar();
+            }
+        }
+    });
+
+    // Setup keyboard shortcuts
+    setupKeyboardShortcuts();
 
     // Modal close on background click
     document.getElementById('logModal').addEventListener('click', (e) => {
@@ -92,11 +397,16 @@ function setupEventListeners() {
 }
 
 // Tab Management
-function switchTab(tab) {
+function switchTab(tab, updateHistory = true) {
     currentTab = tab;
 
-    // Update tab buttons
-    document.querySelectorAll('.tab-btn').forEach(btn => {
+    // Update URL hash
+    if (updateHistory) {
+        updateURL(tab);
+    }
+
+    // Update navigation items (new sidebar)
+    document.querySelectorAll('.nav-item').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.tab === tab);
     });
 
@@ -105,6 +415,23 @@ function switchTab(tab) {
         content.classList.remove('active');
     });
     document.getElementById(`${tab}Tab`).classList.add('active');
+
+    // Close mobile sidebar after selection
+    if (window.innerWidth <= 768 && isSidebarOpen) {
+        toggleSidebar();
+    }
+
+    // Show/hide and configure filters based on tab
+    updateFiltersForTab(tab);
+
+    // Clear search term when switching tabs
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) {
+        searchInput.value = '';
+    }
+
+    // Restore filter state for this tab (but search is already cleared above)
+    restoreFilterState();
 
     // Auto-refresh data when switching to a tab
     if (tab === 'containers') {
@@ -123,6 +450,47 @@ function switchTab(tab) {
         loadActivityLog();
     } else if (tab === 'settings') {
         loadCollectors();
+        loadScannerSettings();
+        loadTelemetrySettings();
+    }
+
+    // Add pulse animation to nav item briefly
+    const navItem = document.querySelector(`.nav-item[data-tab="${tab}"]`);
+    if (navItem) {
+        navItem.classList.add('pulse');
+        setTimeout(() => navItem.classList.remove('pulse'), 2000);
+    }
+}
+
+// Update filters visibility and configuration based on current tab
+function updateFiltersForTab(tab) {
+    const filtersBar = document.getElementById('filtersBar');
+    const searchInput = document.getElementById('searchInput');
+    const stateFilter = document.getElementById('stateFilter');
+
+    // Tabs that support filtering
+    const filterableTabs = ['containers', 'monitoring', 'images', 'history'];
+
+    if (filterableTabs.includes(tab)) {
+        filtersBar.style.display = 'flex';
+
+        // Update placeholder based on tab
+        if (tab === 'containers') {
+            if (searchInput) searchInput.placeholder = 'Search containers...';
+            if (stateFilter) stateFilter.style.display = 'block';
+        } else if (tab === 'monitoring') {
+            if (searchInput) searchInput.placeholder = 'Search running containers...';
+            if (stateFilter) stateFilter.style.display = 'none';
+        } else if (tab === 'images') {
+            if (searchInput) searchInput.placeholder = 'Search images...';
+            if (stateFilter) stateFilter.style.display = 'none';
+        } else if (tab === 'history') {
+            if (searchInput) searchInput.placeholder = 'Search container history...';
+            if (stateFilter) stateFilter.style.display = 'none';
+        }
+    } else {
+        // Hide filters for non-filterable tabs
+        filtersBar.style.display = 'none';
     }
 }
 
@@ -132,38 +500,13 @@ async function loadMonitoringData() {
         // Load both containers and hosts
         await Promise.all([loadContainers(), loadHosts()]);
 
-        // Get enabled host IDs to filter containers
-        const enabledHostIds = new Set(hosts.filter(h => h.enabled).map(h => h.id));
+        // Update stats and badges (since loadContainers doesn't do it on non-containers tab)
+        updateStats();
+        updateNavigationBadges();
+        markRefresh();
 
-        console.log('Enabled hosts:', Array.from(enabledHostIds));
-
-        // Filter to running containers from enabled hosts only
-        const runningContainers = containers.filter(c =>
-            c.state === 'running' && enabledHostIds.has(c.host_id)
-        );
-
-        console.log('Total containers:', containers.length);
-        console.log('Running containers (from enabled hosts):', runningContainers.length);
-        console.log('Containers with CPU stats:', runningContainers.filter(c => c.cpu_percent).length);
-        console.log('Containers with memory stats:', runningContainers.filter(c => c.memory_usage).length);
-
-        renderMonitoringGrid(runningContainers);
-
-        // Populate host filter
-        const hostFilter = document.getElementById('monitoringHostFilter');
-        if (hostFilter) {
-            const uniqueHosts = [...new Set(runningContainers.map(c => c.host_name))];
-            hostFilter.innerHTML = '<option value="">All Hosts</option>' +
-                uniqueHosts.map(h => `<option value="${h}">${escapeHtml(h)}</option>`).join('');
-
-            hostFilter.onchange = () => {
-                const selectedHost = hostFilter.value;
-                const filtered = selectedHost ?
-                    runningContainers.filter(c => c.host_name === selectedHost) :
-                    runningContainers;
-                renderMonitoringGrid(filtered);
-            };
-        }
+        // Apply filters if any are active (this will call filterMonitoring and render)
+        applyCurrentFilters();
     } catch (error) {
         console.error('Error loading monitoring data:', error);
         document.getElementById('monitoringGrid').innerHTML = '<div class="error">Failed to load monitoring data</div>';
@@ -542,6 +885,8 @@ async function loadData() {
         ]);
         updateStats();
         updateHostFilter();
+        updateNavigationBadges();
+        markRefresh();
 
         if (currentTab === 'images') {
             await loadImages();
@@ -566,14 +911,27 @@ async function loadHosts() {
 async function loadContainers() {
     try {
         const response = await fetch('/api/containers');
-        containers = await response.json() || [];
-        renderContainers(containers);
-        updateStats();
+        const allContainers = await response.json() || [];
+
+        // Filter to only show containers from enabled hosts
+        const enabledHostIds = new Set(hosts.filter(h => h.enabled).map(h => h.id));
+        containers = allContainers.filter(c => enabledHostIds.has(c.host_id));
+
+        // Only render/filter if we're on the containers tab
+        // Other tabs (like monitoring) will handle their own rendering
+        if (currentTab === 'containers') {
+            filterContainers();
+            updateStats();
+            updateNavigationBadges();
+            markRefresh();
+        }
     } catch (error) {
         console.error('Error loading containers:', error);
         containers = [];
-        document.getElementById('containersBody').innerHTML =
-            '<tr><td colspan="8" class="error">Failed to load containers</td></tr>';
+        if (currentTab === 'containers') {
+            document.getElementById('containersBody').innerHTML =
+                '<tr><td colspan="8" class="error">Failed to load containers</td></tr>';
+        }
     }
 }
 
@@ -581,7 +939,12 @@ async function loadImages() {
     try {
         const response = await fetch('/api/images');
         images = await response.json() || {};
-        renderImages(images);
+
+        // Apply filters if any are active
+        applyCurrentFilters();
+
+        updateNavigationBadges();
+        markRefresh();
     } catch (error) {
         console.error('Error loading images:', error);
         images = {};
@@ -597,6 +960,8 @@ async function loadActivityLog() {
         activities = await response.json() || [];
         renderActivityLog(activities);
         updateStats();
+        updateNavigationBadges();
+        markRefresh();
     } catch (error) {
         console.error('Error loading activity log:', error);
         document.getElementById('activityLogBody').innerHTML =
@@ -606,23 +971,43 @@ async function loadActivityLog() {
 
 async function triggerScan() {
     const btn = document.getElementById('scanBtn');
+    const btnIcon = document.getElementById('scanBtnIcon');
+    const btnText = document.getElementById('scanBtnText');
+
     btn.disabled = true;
-    btn.textContent = 'Scanning...';
+    btn.classList.add('scanning');
+    if (btnIcon) btnIcon.classList.add('spinning');
+    if (btnText) btnText.textContent = 'Scanning...';
+
+    showToast('Scan Started', 'Scanning all configured hosts...', 'info');
+
+    const resetButton = () => {
+        btn.disabled = false;
+        btn.classList.remove('scanning');
+        if (btnIcon) btnIcon.classList.remove('spinning');
+        if (btnText) btnText.textContent = 'Trigger Scan';
+    };
 
     try {
+        const startTime = Date.now();
         const response = await fetch('/api/scan', { method: 'POST' });
+
         if (response.ok) {
-            // Wait a bit then refresh
-            setTimeout(() => {
-                loadData();
-                btn.disabled = false;
-                btn.textContent = 'Trigger Scan';
-            }, 2000);
+            // Wait 3 seconds then refresh data once and reset button
+            setTimeout(async () => {
+                await loadData();
+                resetButton();
+                const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+                showToast('Scan Complete', `Scan finished in ${duration}s`, 'success');
+            }, 3000);
+        } else {
+            resetButton();
+            throw new Error('Scan request failed');
         }
     } catch (error) {
         console.error('Error triggering scan:', error);
-        btn.disabled = false;
-        btn.textContent = 'Trigger Scan';
+        resetButton();
+        showToast('Scan Failed', 'Failed to trigger scan: ' + error.message, 'error');
     }
 }
 
@@ -681,7 +1066,11 @@ async function startContainer(hostId, containerId, containerName) {
 
         if (response.ok) {
             showNotification(`Container "${containerName}" started successfully`, 'success');
-            await loadContainers();
+            // Trigger a scan to get updated state
+            setTimeout(async () => {
+                await fetch('/api/scan', { method: 'POST' });
+                await loadData();
+            }, 2000);
         } else {
             const error = await response.json();
             showNotification(`Failed to start container: ${error.error}`, 'error');
@@ -704,7 +1093,11 @@ async function stopContainer(hostId, containerId, containerName) {
 
                 if (response.ok) {
                     showNotification(`Container "${containerName}" stopped successfully`, 'success');
-                    await loadContainers();
+                    // Trigger a scan to get updated state
+                    setTimeout(async () => {
+                        await fetch('/api/scan', { method: 'POST' });
+                        await loadData();
+                    }, 2000);
                 } else {
                     const error = await response.json();
                     showNotification(`Failed to stop container: ${error.error}`, 'error');
@@ -729,7 +1122,11 @@ async function restartContainer(hostId, containerId, containerName) {
 
                 if (response.ok) {
                     showNotification(`Container "${containerName}" restarted successfully`, 'success');
-                    await loadContainers();
+                    // Trigger a scan to get updated state
+                    setTimeout(async () => {
+                        await fetch('/api/scan', { method: 'POST' });
+                        await loadData();
+                    }, 2000);
                 } else {
                     const error = await response.json();
                     showNotification(`Failed to restart container: ${error.error}`, 'error');
@@ -877,66 +1274,135 @@ async function pruneImages(hostId, hostName) {
 
 // Rendering
 function renderContainers(containersToRender) {
-    const tbody = document.getElementById('containersBody');
+    const container = document.getElementById('containersBody');
 
     if (containersToRender.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="10" class="loading">No containers found</td></tr>';
+        container.innerHTML = '<div class="loading">No containers found</div>';
         return;
     }
 
-    tbody.innerHTML = containersToRender.map(container => {
-        const isRunning = container.state === 'running';
-        const isStopped = container.state === 'exited';
-        const hasStats = container.cpu_percent > 0 || container.memory_usage > 0;
+    container.innerHTML = containersToRender.map(cont => {
+        const isRunning = cont.state === 'running';
+        const isStopped = cont.state === 'exited';
+        const isPaused = cont.state === 'paused';
+        const hasStats = cont.cpu_percent > 0 || cont.memory_usage > 0;
 
         // Format CPU
         let cpuDisplay = '-';
-        if (container.cpu_percent > 0) {
-            cpuDisplay = container.cpu_percent.toFixed(1) + '%';
+        if (cont.cpu_percent > 0) {
+            cpuDisplay = cont.cpu_percent.toFixed(1) + '%';
         }
 
         // Format Memory
         let memoryDisplay = '-';
-        if (container.memory_usage > 0) {
-            const memoryMB = (container.memory_usage / 1024 / 1024).toFixed(0);
-            const limitMB = container.memory_limit > 0 ? (container.memory_limit / 1024 / 1024).toFixed(0) : '?';
+        let memoryPercent = '';
+        if (cont.memory_usage > 0) {
+            const memoryMB = (cont.memory_usage / 1024 / 1024).toFixed(0);
+            const limitMB = cont.memory_limit > 0 ? (cont.memory_limit / 1024 / 1024).toFixed(0) : '?';
             memoryDisplay = `${memoryMB} / ${limitMB} MB`;
-            if (container.memory_percent > 0) {
-                memoryDisplay += ` (${container.memory_percent.toFixed(1)}%)`;
+            if (cont.memory_percent > 0) {
+                memoryPercent = ` (${cont.memory_percent.toFixed(1)}%)`;
             }
         }
 
+        // State icon
+        const stateIcon = isRunning ? '✅' : isStopped ? '⏸️' : isPaused ? '⏸️' : '❓';
+        const createdTime = formatDate(cont.created);
+        const statusText = cont.status || '-';
+
         return `
-        <tr>
-            <td><strong>${escapeHtml(container.host_name)}</strong></td>
-            <td>${escapeHtml(container.name)}</td>
-            <td><code>${escapeHtml(container.image)}</code></td>
-            <td><span class="state-badge state-${container.state}">${container.state}</span></td>
-            <td class="stats-cell">${cpuDisplay}</td>
-            <td class="stats-cell">${memoryDisplay}</td>
-            <td>${escapeHtml(container.status)}</td>
-            <td class="port-list">${formatPorts(container.ports)}</td>
-            <td class="time-ago">${formatDate(container.created)}</td>
-            <td class="actions">
-                ${hasStats && isRunning ? `
-                    <button class="btn-icon btn-stats" onclick="openStatsModal(${container.host_id}, '${escapeAttr(container.id)}', '${escapeAttr(container.name)}')" title="View Stats">📊</button>
+        <div class="container-card-modern ${cont.state}">
+            <div class="container-card-header-modern">
+                <div class="container-card-left">
+                    <div class="container-status-indicator ${cont.state}">
+                        ${stateIcon}
+                    </div>
+                    <div class="container-card-info">
+                        <div class="container-card-name">${escapeHtml(cont.name)}</div>
+                        <div class="container-card-meta">
+                            <span class="meta-item">📍 ${escapeHtml(cont.host_name)}</span>
+                            <span class="meta-item">⏱️ ${createdTime}</span>
+                            <span class="state-badge state-${cont.state}">${cont.state}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="container-card-actions">
+                    ${hasStats && isRunning ? `
+                        <button class="btn btn-sm btn-stats" onclick="openStatsModal(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')" title="View Stats">
+                            📊 Stats
+                        </button>
+                    ` : ''}
+                    ${hasStats && isRunning ? `
+                        <button class="btn btn-sm btn-timeline" onclick="viewContainerTimeline(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')" title="View Timeline">
+                            📅 Timeline
+                        </button>
+                    ` : ''}
+                </div>
+            </div>
+
+            <div class="container-card-content">
+                <div class="container-detail-row">
+                    <span class="detail-label">🖼️ Image</span>
+                    <code class="detail-value image-value" title="${escapeHtml(cont.image)}">${escapeHtml(cont.image)}</code>
+                </div>
+
+                ${statusText !== '-' ? `
+                <div class="container-detail-row">
+                    <span class="detail-label">📝 Status</span>
+                    <span class="detail-value">${escapeHtml(statusText)}</span>
+                </div>
                 ` : ''}
-                ${isRunning ? `
-                    <button class="btn-icon btn-stop" onclick="stopContainer(${container.host_id}, '${escapeAttr(container.id)}', '${escapeAttr(container.name)}')" title="Stop">⏹</button>
-                    <button class="btn-icon btn-restart" onclick="restartContainer(${container.host_id}, '${escapeAttr(container.id)}', '${escapeAttr(container.name)}')" title="Restart">⟳</button>
+
+                ${cont.ports && cont.ports.length > 0 && cont.ports.some(p => p.public_port > 0) ? `
+                <div class="container-detail-row">
+                    <span class="detail-label">🔌 Ports</span>
+                    <span class="detail-value">${formatPorts(cont.ports)}</span>
+                </div>
                 ` : ''}
-                ${isStopped ? `
-                    <button class="btn-icon btn-start" onclick="startContainer(${container.host_id}, '${escapeAttr(container.id)}', '${escapeAttr(container.name)}')" title="Start">▶</button>
-                ` : ''}
-                <button class="btn-icon btn-logs" onclick="viewLogs(${container.host_id}, '${escapeAttr(container.id)}', '${escapeAttr(container.name)}')" title="View Logs">📋</button>
-                ${isStopped ? `
-                    <button class="btn-icon btn-delete" onclick="removeContainer(${container.host_id}, '${escapeAttr(container.id)}', '${escapeAttr(container.name)}')" title="Remove">🗑</button>
-                ` : ''}
-                ${hasStats && isRunning ? `
-                    <button class="btn-icon btn-timeline" onclick="showContainerTimeline(${container.host_id}, '${escapeAttr(container.name)}')" title="View Timeline">📅</button>
-                ` : ''}
-            </td>
-        </tr>
+
+                <div class="container-metrics-grid">
+                    ${hasStats ? `
+                    <div class="metric-box">
+                        <div class="metric-icon">💻</div>
+                        <div class="metric-content">
+                            <div class="metric-label">CPU Usage</div>
+                            <div class="metric-value">${cpuDisplay}</div>
+                        </div>
+                    </div>
+
+                    <div class="metric-box">
+                        <div class="metric-icon">💾</div>
+                        <div class="metric-content">
+                            <div class="metric-label">Memory Usage</div>
+                            <div class="metric-value">${memoryDisplay}${memoryPercent}</div>
+                        </div>
+                    </div>
+                    ` : '<div class="metric-box"><div class="metric-content"><div class="metric-label">No resource metrics available</div></div></div>'}
+                </div>
+
+                <div class="container-actions-row">
+                    ${isRunning ? `
+                        <button class="btn btn-sm btn-warning" onclick="stopContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">
+                            ⏹ Stop
+                        </button>
+                        <button class="btn btn-sm btn-warning" onclick="restartContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">
+                            🔄 Restart
+                        </button>
+                    ` : ''}
+                    ${isStopped ? `
+                        <button class="btn btn-sm btn-success" onclick="startContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">
+                            ▶ Start
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="removeContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">
+                            🗑 Remove
+                        </button>
+                    ` : ''}
+                    <button class="btn btn-sm btn-primary" onclick="viewLogs(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">
+                        📋 Logs
+                    </button>
+                </div>
+            </div>
+        </div>
         `;
     }).join('');
 }
@@ -1205,20 +1671,27 @@ function updateStats() {
 }
 
 function updateHostFilter() {
-    const select = document.getElementById('hostFilter');
-    const currentValue = select.value;
+    // Update both the main host filter and the monitoring tab host filter
+    const selects = ['hostFilter', 'monitoringHostFilter'];
 
-    select.innerHTML = '<option value="">All Hosts</option>' +
-        hosts.map(host => `<option value="${host.id}">${escapeHtml(host.name)}</option>`).join('');
+    selects.forEach(selectId => {
+        const select = document.getElementById(selectId);
+        if (select) {
+            const currentValue = select.value;
 
-    select.value = currentValue;
+            select.innerHTML = '<option value="">All Hosts</option>' +
+                hosts.map(host => `<option value="${host.id}">${escapeHtml(host.name)}</option>`).join('');
+
+            select.value = currentValue;
+        }
+    });
 }
 
 // Filtering
 function filterContainers() {
-    const searchTerm = document.getElementById('searchInput').value.toLowerCase();
-    const hostFilter = document.getElementById('hostFilter').value;
-    const stateFilter = document.getElementById('stateFilter').value;
+    const searchTerm = document.getElementById('searchInput')?.value.toLowerCase() || '';
+    const hostFilter = document.getElementById('hostFilter')?.value || '';
+    const stateFilter = document.getElementById('stateFilter')?.value || '';
 
     const filtered = containers.filter(container => {
         const matchesSearch = searchTerm === '' ||
@@ -1233,6 +1706,91 @@ function filterContainers() {
     });
 
     renderContainers(filtered);
+}
+
+function filterImages() {
+    const searchTerm = document.getElementById('searchInput')?.value.toLowerCase() || '';
+    const hostFilter = document.getElementById('hostFilter')?.value || '';
+
+    if (!images || Object.keys(images).length === 0) {
+        return;
+    }
+
+    // Filter images data structure
+    const filteredImages = {};
+    for (const [hostName, hostData] of Object.entries(images)) {
+        const hostId = hostData.host_id;
+        const matchesHost = hostFilter === '' || hostId?.toString() === hostFilter;
+
+        if (matchesHost) {
+            const filteredHostImages = hostData.images.filter(img => {
+                const matchesSearch = searchTerm === '' ||
+                    (img.repository && img.repository.toLowerCase().includes(searchTerm)) ||
+                    (img.tag && img.tag.toLowerCase().includes(searchTerm)) ||
+                    (img.id && img.id.toLowerCase().includes(searchTerm));
+
+                return matchesSearch;
+            });
+
+            if (filteredHostImages.length > 0) {
+                filteredImages[hostName] = {
+                    ...hostData,
+                    images: filteredHostImages
+                };
+            }
+        }
+    }
+
+    renderImages(filteredImages);
+}
+
+function filterMonitoring() {
+    const searchTerm = document.getElementById('searchInput')?.value.toLowerCase() || '';
+    const hostFilter = document.getElementById('hostFilter')?.value || '';
+
+    // Get running containers from enabled hosts
+    const enabledHostIds = new Set(hosts.filter(h => h.enabled).map(h => h.id));
+    let runningContainers = containers.filter(c =>
+        c.state === 'running' && enabledHostIds.has(c.host_id)
+    );
+
+    // Apply filters
+    runningContainers = runningContainers.filter(container => {
+        const matchesSearch = searchTerm === '' ||
+            container.name.toLowerCase().includes(searchTerm) ||
+            container.image.toLowerCase().includes(searchTerm) ||
+            container.host_name.toLowerCase().includes(searchTerm);
+
+        const matchesHost = hostFilter === '' || container.host_id.toString() === hostFilter;
+
+        return matchesSearch && matchesHost;
+    });
+
+    renderMonitoringGrid(runningContainers);
+}
+
+function filterHistory() {
+    const searchTerm = document.getElementById('searchInput')?.value.toLowerCase() || '';
+    const hostFilter = document.getElementById('hostFilter')?.value || '';
+
+    if (!lifecycles || lifecycles.length === 0) {
+        return;
+    }
+
+    // Apply filters to lifecycles
+    const filteredLifecycles = lifecycles.filter(lifecycle => {
+        const matchesSearch = searchTerm === '' ||
+            lifecycle.container_name.toLowerCase().includes(searchTerm) ||
+            lifecycle.image.toLowerCase().includes(searchTerm) ||
+            lifecycle.host_name.toLowerCase().includes(searchTerm);
+
+        const matchesHost = hostFilter === '' || lifecycle.host_id.toString() === hostFilter;
+
+        return matchesSearch && matchesHost;
+    });
+
+    renderContainerHistory(filteredLifecycles);
+    updateHistoryStats(filteredLifecycles);
 }
 
 // Modal Functions
@@ -1981,20 +2539,11 @@ async function resetCircuitBreaker(name) {
 
 async function loadContainerHistory() {
     try {
-        const hostFilter = document.getElementById('historyHostFilter')?.value || '';
-        const url = hostFilter ? `/api/containers/lifecycle?limit=200&host_id=${hostFilter}` : '/api/containers/lifecycle?limit=200';
-
-        const response = await fetch(url);
+        const response = await fetch('/api/containers/lifecycle?limit=200');
         lifecycles = await response.json() || [];
 
-        // Update host filter dropdown if hosts are loaded
-        updateHistoryHostFilter();
-
-        // Render the history table
-        renderContainerHistory(lifecycles);
-
-        // Update stats
-        updateHistoryStats(lifecycles);
+        // Apply filters if any are active
+        applyCurrentFilters();
     } catch (error) {
         console.error('Error loading container history:', error);
         document.getElementById('historyBody').innerHTML =
@@ -2045,35 +2594,74 @@ function renderContainerHistory(lifecycles) {
         const restartEvents = lifecycle.restart_events || 0;
 
         return `
-        <div class="history-card">
-            <div class="history-card-header">
-                <div class="history-card-title">
-                    <strong>${escapeHtml(lifecycle.container_name)}</strong>
-                    <span class="history-card-host">${escapeHtml(lifecycle.host_name)}</span>
+        <div class="history-card-modern ${lifecycle.is_active ? 'active' : 'inactive'}">
+            <div class="history-card-header-modern">
+                <div class="history-card-left">
+                    <div class="history-status-indicator ${lifecycle.is_active ? 'active' : 'inactive'}">
+                        ${lifecycle.is_active ? '✅' : '⏸️'}
+                    </div>
+                    <div class="history-card-info">
+                        <div class="history-card-name">${escapeHtml(lifecycle.container_name)}</div>
+                        <div class="history-card-meta">
+                            <span class="meta-item">📍 ${escapeHtml(lifecycle.host_name)}</span>
+                            <span class="meta-item">⏱️ ${lifetime}</span>
+                        </div>
+                    </div>
                 </div>
-                <div class="history-card-actions">
-                    ${statusBadge}
-                    <button class="btn-icon btn-info" onclick="viewContainerTimeline(${lifecycle.host_id}, '${escapeAttr(lifecycle.container_id)}', '${escapeAttr(lifecycle.container_name)}')" title="View Timeline">📅</button>
-                </div>
+                <button class="btn btn-primary btn-timeline" onclick="viewContainerTimeline(${lifecycle.host_id}, '${escapeAttr(lifecycle.container_id)}', '${escapeAttr(lifecycle.container_name)}')" title="View detailed timeline">
+                    <span class="timeline-icon">📅</span>
+                    <span class="timeline-text">View Timeline</span>
+                </button>
             </div>
-            <div class="history-card-body">
-                <div class="history-card-row">
-                    <div class="history-card-label">Image:</div>
-                    <div class="history-card-value"><code title="${escapeHtml(lifecycle.image)}">${escapeHtml(lifecycle.image)}</code></div>
+
+            <div class="history-card-content">
+                <div class="history-detail-row">
+                    <span class="detail-label">🖼️ Image</span>
+                    <code class="detail-value image-value" title="${escapeHtml(lifecycle.image)}">${escapeHtml(lifecycle.image)}</code>
                 </div>
-                <div class="history-card-row">
-                    <div class="history-card-label">First Seen:</div>
-                    <div class="history-card-value">${formatDateTime(lifecycle.first_seen)}</div>
-                    <div class="history-card-label">Last Seen:</div>
-                    <div class="history-card-value">${formatDateTime(lifecycle.last_seen)}</div>
-                </div>
-                <div class="history-card-row">
-                    <div class="history-card-label">Lifetime:</div>
-                    <div class="history-card-value">${lifetime}</div>
-                    <div class="history-card-label">State Changes:</div>
-                    <div class="history-card-value">${stateChanges}</div>
-                    <div class="history-card-label">Image Updates:</div>
-                    <div class="history-card-value">${imageUpdates}</div>
+
+                <div class="history-metrics-grid">
+                    <div class="metric-box">
+                        <div class="metric-icon">👁️</div>
+                        <div class="metric-content">
+                            <div class="metric-label">First Seen</div>
+                            <div class="metric-value">${formatTimeAgo(firstSeen)}</div>
+                            <div class="metric-subtext">${formatDateTime(lifecycle.first_seen)}</div>
+                        </div>
+                    </div>
+
+                    <div class="metric-box">
+                        <div class="metric-icon">🕐</div>
+                        <div class="metric-content">
+                            <div class="metric-label">Last Seen</div>
+                            <div class="metric-value">${formatTimeAgo(lastSeen)}</div>
+                            <div class="metric-subtext">${formatDateTime(lifecycle.last_seen)}</div>
+                        </div>
+                    </div>
+
+                    <div class="metric-box ${stateChanges > 5 ? 'metric-warning' : ''}">
+                        <div class="metric-icon">🔄</div>
+                        <div class="metric-content">
+                            <div class="metric-label">State Changes</div>
+                            <div class="metric-value">${stateChanges}</div>
+                        </div>
+                    </div>
+
+                    <div class="metric-box ${imageUpdates > 0 ? 'metric-info' : ''}">
+                        <div class="metric-icon">⬆️</div>
+                        <div class="metric-content">
+                            <div class="metric-label">Image Updates</div>
+                            <div class="metric-value">${imageUpdates}</div>
+                        </div>
+                    </div>
+
+                    <div class="metric-box ${restartEvents > 10 ? 'metric-alert' : restartEvents > 0 ? 'metric-warning' : ''}">
+                        <div class="metric-icon">🔁</div>
+                        <div class="metric-content">
+                            <div class="metric-label">Restarts</div>
+                            <div class="metric-value">${restartEvents}</div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

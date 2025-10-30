@@ -8,59 +8,127 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <div class="header-title">
-                <h1>🐳 Container Census</h1>
-                <span id="versionBadge" class="version-badge">v0.0.0</span>
+    <div class="app-layout">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-logo">
+                    <h1>🐳 Census</h1>
+                    <span id="versionBadge" class="version-badge">v0.0.0</span>
+                </div>
+                <button id="sidebarToggle" class="sidebar-toggle" aria-label="Toggle sidebar">
+                    <span>☰</span>
+                </button>
             </div>
-            <div class="header-actions">
-                <button id="scanBtn" class="btn btn-secondary">Trigger Scan</button>
-                <button id="submitTelemetryBtn" class="btn btn-info">Submit Telemetry</button>
-                <label class="auto-refresh">
+
+            <!-- Quick Stats in Sidebar -->
+            <div class="sidebar-stats">
+                <div class="sidebar-stat-item">
+                    <span class="sidebar-stat-icon">🖥️</span>
+                    <div class="sidebar-stat-content">
+                        <div class="sidebar-stat-value" id="totalHosts">-</div>
+                        <div class="sidebar-stat-label">Hosts</div>
+                    </div>
+                </div>
+                <div class="sidebar-stat-item">
+                    <span class="sidebar-stat-icon">📦</span>
+                    <div class="sidebar-stat-content">
+                        <div class="sidebar-stat-value" id="totalContainers">-</div>
+                        <div class="sidebar-stat-label">Total</div>
+                    </div>
+                </div>
+                <div class="sidebar-stat-item">
+                    <span class="sidebar-stat-icon">✅</span>
+                    <div class="sidebar-stat-content">
+                        <div class="sidebar-stat-value" id="runningContainers">-</div>
+                        <div class="sidebar-stat-label">Running</div>
+                    </div>
+                </div>
+                <div class="sidebar-stat-item">
+                    <span class="sidebar-stat-icon">🕐</span>
+                    <div class="sidebar-stat-content">
+                        <div class="sidebar-stat-value" id="lastScan">-</div>
+                        <div class="sidebar-stat-label">Last Scan</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Navigation -->
+            <nav class="sidebar-nav">
+                <button class="nav-item active" data-tab="containers" data-shortcut="1">
+                    <span class="nav-icon">📦</span>
+                    <span class="nav-label">Containers</span>
+                    <span class="nav-badge" id="containersBadge"></span>
+                    <span class="nav-shortcut">1</span>
+                </button>
+                <button class="nav-item" data-tab="monitoring" data-shortcut="2">
+                    <span class="nav-icon">📊</span>
+                    <span class="nav-label">Monitoring</span>
+                    <span class="nav-badge" id="monitoringBadge"></span>
+                    <span class="nav-shortcut">2</span>
+                </button>
+                <button class="nav-item" data-tab="images" data-shortcut="3">
+                    <span class="nav-icon">🖼️</span>
+                    <span class="nav-label">Images</span>
+                    <span class="nav-badge" id="imagesBadge"></span>
+                    <span class="nav-shortcut">3</span>
+                </button>
+                <button class="nav-item" data-tab="graph" data-shortcut="4">
+                    <span class="nav-icon">🕸️</span>
+                    <span class="nav-label">Graph</span>
+                    <span class="nav-shortcut">4</span>
+                </button>
+                <button class="nav-item" data-tab="hosts" data-shortcut="5">
+                    <span class="nav-icon">🖥️</span>
+                    <span class="nav-label">Hosts</span>
+                    <span class="nav-badge" id="hostsBadge"></span>
+                    <span class="nav-shortcut">5</span>
+                </button>
+                <button class="nav-item" data-tab="history" data-shortcut="6">
+                    <span class="nav-icon">📜</span>
+                    <span class="nav-label">History</span>
+                    <span class="nav-shortcut">6</span>
+                </button>
+                <button class="nav-item" data-tab="activity" data-shortcut="7">
+                    <span class="nav-icon">📋</span>
+                    <span class="nav-label">Activity Log</span>
+                    <span class="nav-badge" id="activityBadge"></span>
+                    <span class="nav-shortcut">7</span>
+                </button>
+                <button class="nav-item" data-tab="settings" data-shortcut="8">
+                    <span class="nav-icon">⚙️</span>
+                    <span class="nav-label">Settings</span>
+                    <span class="nav-shortcut">8</span>
+                </button>
+            </nav>
+
+            <!-- Actions -->
+            <div class="sidebar-actions">
+                <button id="scanBtn" class="btn btn-secondary btn-block">
+                    <span id="scanBtnIcon">🔄</span>
+                    <span id="scanBtnText">Trigger Scan</span>
+                </button>
+                <button id="submitTelemetryBtn" class="btn btn-info btn-block">
+                    📡 Submit Telemetry
+                </button>
+                <label class="auto-refresh-toggle">
                     <input type="checkbox" id="autoRefresh" checked>
-                    Auto-refresh (30s)
+                    <span>Auto-refresh (30s)</span>
                 </label>
+                <div id="telemetrySchedule" class="telemetry-schedule"></div>
+                <div id="lastUpdated" class="last-updated"></div>
             </div>
-            <div id="telemetrySchedule" class="telemetry-schedule"></div>
-        </header>
+        </aside>
 
-        <nav class="tabs">
-            <button class="tab-btn active" data-tab="containers">Containers</button>
-            <button class="tab-btn" data-tab="monitoring">Monitoring</button>
-            <button class="tab-btn" data-tab="images">Images</button>
-            <button class="tab-btn" data-tab="graph">Graph</button>
-            <button class="tab-btn" data-tab="hosts">Hosts</button>
-            <button class="tab-btn" data-tab="history">History</button>
-            <button class="tab-btn" data-tab="activity">Activity Log</button>
-            <button class="tab-btn" data-tab="settings">Settings</button>
-        </nav>
+        <!-- Main Content -->
+        <main class="main-content">
 
-        <div class="stats">
-            <div class="stat-card">
-                <div class="stat-value" id="totalHosts">-</div>
-                <div class="stat-label">Hosts</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value" id="totalContainers">-</div>
-                <div class="stat-label">Total Containers</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value" id="runningContainers">-</div>
-                <div class="stat-label">Running</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value" id="lastScan">-</div>
-                <div class="stat-label">Last Scan</div>
-            </div>
-        </div>
-
-        <div class="filters">
-            <input type="text" id="searchInput" placeholder="Search containers..." class="search-input">
+        <div class="filters" id="filtersBar">
+            <input type="text" id="searchInput" placeholder="Search..." class="search-input">
             <select id="hostFilter" class="filter-select">
                 <option value="">All Hosts</option>
             </select>
-            <select id="stateFilter" class="filter-select">
+            <select id="stateFilter" class="filter-select" style="display: none;">
                 <option value="">All States</option>
                 <option value="running">Running</option>
                 <option value="exited">Exited</option>
@@ -71,28 +139,8 @@
         <div id="containersTab" class="tab-content active">
             <div class="containers-section">
                 <h2>Containers</h2>
-                <div id="containersTable" class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Host</th>
-                                <th>Name</th>
-                                <th>Image</th>
-                                <th>State</th>
-                                <th>CPU %</th>
-                                <th>Memory</th>
-                                <th>Status</th>
-                                <th>Ports</th>
-                                <th>Created</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="containersBody">
-                            <tr>
-                                <td colspan="10" class="loading">Loading...</td>
-                            </tr>
-                        </tbody>
-                    </table>
+                <div id="containersBody" class="containers-cards-container">
+                    <div class="loading">Loading...</div>
                 </div>
             </div>
         </div>
@@ -247,12 +295,7 @@
 
         <div id="historyTab" class="tab-content">
             <div class="history-section">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                    <h2 style="margin: 0;">📜 Container Lifecycle History</h2>
-                    <select id="historyHostFilter" class="filter-select">
-                        <option value="">All Hosts</option>
-                    </select>
-                </div>
+                <h2 style="margin-bottom: 20px;">📜 Container Lifecycle History</h2>
                 <div class="history-stats" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px;">
                     <div class="stat-card">
                         <div class="stat-value" id="historyTotalContainers">-</div>
@@ -389,6 +432,7 @@
                 </div>
             </div>
         </div>
+        </main>
     </div>
 
     <!-- Log Viewer Modal -->
