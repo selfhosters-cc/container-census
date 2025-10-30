@@ -480,6 +480,7 @@ func (s *Scanner) GetContainerLogs(ctx context.Context, host models.Host, contai
 	options := types.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
+		Timestamps: true,
 		Tail:       tail,
 	}
 

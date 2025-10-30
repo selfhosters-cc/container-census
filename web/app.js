@@ -1796,7 +1796,155 @@ function filterHistory() {
 // Modal Functions
 function closeLogModal() {
     document.getElementById('logModal').classList.remove('show');
+    clearLogSearch();
 }
+
+// Log Search Functionality
+let logSearchMatches = [];
+let currentMatchIndex = -1;
+let originalLogContent = '';
+
+function searchLogs(direction) {
+    const searchInput = document.getElementById('logSearchInput');
+    const logContent = document.getElementById('logContent');
+    const searchStatus = document.getElementById('logSearchStatus');
+    const searchTerm = searchInput.value.trim();
+
+    if (!searchTerm) {
+        searchStatus.textContent = '';
+        return;
+    }
+
+    // If this is a new search, find all matches
+    if (originalLogContent === '') {
+        originalLogContent = logContent.textContent;
+    }
+
+    // Find all matches (case-insensitive)
+    const lines = originalLogContent.split('\n');
+    logSearchMatches = [];
+
+    lines.forEach((line, lineIndex) => {
+        const lowerLine = line.toLowerCase();
+        const lowerTerm = searchTerm.toLowerCase();
+        let index = 0;
+
+        while ((index = lowerLine.indexOf(lowerTerm, index)) !== -1) {
+            logSearchMatches.push({ lineIndex, charIndex: index, length: searchTerm.length });
+            index += searchTerm.length;
+        }
+    });
+
+    if (logSearchMatches.length === 0) {
+        searchStatus.textContent = 'No matches';
+        logContent.innerHTML = escapeHtml(originalLogContent);
+        return;
+    }
+
+    // Navigate through matches
+    if (direction === 'next') {
+        currentMatchIndex = (currentMatchIndex + 1) % logSearchMatches.length;
+    } else if (direction === 'prev') {
+        currentMatchIndex = currentMatchIndex <= 0 ? logSearchMatches.length - 1 : currentMatchIndex - 1;
+    } else {
+        currentMatchIndex = 0;
+    }
+
+    // Update status
+    searchStatus.textContent = `${currentMatchIndex + 1} of ${logSearchMatches.length}`;
+
+    // Highlight all matches and mark current one
+    highlightMatches(lines, searchTerm);
+
+    // Scroll to current match
+    scrollToCurrentMatch();
+}
+
+function highlightMatches(lines, searchTerm) {
+    const logContent = document.getElementById('logContent');
+    const lowerTerm = searchTerm.toLowerCase();
+
+    let html = '';
+    let globalMatchIndex = 0;
+
+    lines.forEach((line, lineIndex) => {
+        let highlightedLine = '';
+        let lastIndex = 0;
+        const lowerLine = line.toLowerCase();
+
+        let index = 0;
+        while ((index = lowerLine.indexOf(lowerTerm, index)) !== -1) {
+            // Add text before match
+            highlightedLine += escapeHtml(line.substring(lastIndex, index));
+
+            // Add highlighted match
+            const isCurrent = globalMatchIndex === currentMatchIndex;
+            const matchClass = isCurrent ? 'current-match' : '';
+            const matchId = isCurrent ? ' id="current-log-match"' : '';
+            highlightedLine += `<mark class="${matchClass}"${matchId}>${escapeHtml(line.substring(index, index + searchTerm.length))}</mark>`;
+
+            lastIndex = index + searchTerm.length;
+            index = lastIndex;
+            globalMatchIndex++;
+        }
+
+        // Add remaining text
+        highlightedLine += escapeHtml(line.substring(lastIndex));
+        html += highlightedLine + '\n';
+    });
+
+    logContent.innerHTML = html;
+}
+
+function scrollToCurrentMatch() {
+    const currentMatch = document.getElementById('current-log-match');
+    if (currentMatch) {
+        currentMatch.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+}
+
+function clearLogSearch() {
+    const searchInput = document.getElementById('logSearchInput');
+    const logContent = document.getElementById('logContent');
+    const searchStatus = document.getElementById('logSearchStatus');
+
+    searchInput.value = '';
+    searchStatus.textContent = '';
+
+    if (originalLogContent) {
+        logContent.textContent = originalLogContent;
+    }
+
+    logSearchMatches = [];
+    currentMatchIndex = -1;
+    originalLogContent = '';
+}
+
+// Add event listener for Enter key in search input
+document.addEventListener('DOMContentLoaded', function() {
+    const searchInput = document.getElementById('logSearchInput');
+    if (searchInput) {
+        searchInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                searchLogs(e.shiftKey ? 'prev' : 'next');
+            } else if (e.key === 'Escape') {
+                clearLogSearch();
+            }
+        });
+
+        // Trigger new search when input changes
+        searchInput.addEventListener('input', function() {
+            originalLogContent = '';
+            currentMatchIndex = -1;
+            if (this.value.trim()) {
+                searchLogs('next');
+            } else {
+                clearLogSearch();
+            }
+        });
+    }
+});
 
 function showConfirmDialog(title, message, onConfirm, type = 'warning') {
     document.getElementById('confirmTitle').textContent = title;

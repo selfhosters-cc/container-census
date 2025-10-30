@@ -442,6 +442,13 @@
                 <h3>Container Logs: <span id="logContainerName"></span></h3>
                 <button class="close-btn" onclick="closeLogModal()">&times;</button>
             </div>
+            <div class="log-search-bar">
+                <input type="text" id="logSearchInput" placeholder="Search logs..." class="log-search-input">
+                <button class="btn btn-sm" onclick="searchLogs('prev')" title="Previous match">↑</button>
+                <button class="btn btn-sm" onclick="searchLogs('next')" title="Next match">↓</button>
+                <span id="logSearchStatus" class="log-search-status"></span>
+                <button class="btn btn-sm" onclick="clearLogSearch()" title="Clear search">✕</button>
+            </div>
             <div class="modal-body">
                 <pre id="logContent" class="log-content">Loading...</pre>
             </div>

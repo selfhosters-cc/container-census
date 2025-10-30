@@ -428,6 +428,7 @@ func (a *Agent) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 	options := types.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
+		Timestamps: true,
 		Tail:       tail,
 	}
 
