@@ -264,6 +264,178 @@ Environment-only configuration:
   3. Persisted token file at `/app/data/agent-token`
   4. Auto-generated (logged to stdout and saved to file if volume mounted)
 
+### Notification System
+Environment-only configuration:
+- `NOTIFICATION_RATE_LIMIT_MAX` - Maximum notifications per hour (default: 100)
+- `NOTIFICATION_RATE_LIMIT_BATCH_INTERVAL` - Batch interval in seconds when rate limited (default: 600)
+- `NOTIFICATION_THRESHOLD_DURATION` - Duration threshold must be exceeded before alerting (default: 120 seconds)
+- `NOTIFICATION_COOLDOWN_PERIOD` - Cooldown between alerts for same container (default: 300 seconds)
+
+## Notification System Architecture
+
+The notification system provides flexible event-based alerting through multiple channels (webhooks, ntfy, in-app) with sophisticated filtering, rate limiting, and anomaly detection.
+
+### Core Components
+
+**1. Notification Service** (`internal/notifications/notifier.go`):
+- Main coordinator that processes events after each scan
+- Detects lifecycle events (state changes, image updates)
+- Monitors CPU/memory thresholds with duration requirements
+- Detects anomalous behavior after image updates
+- Matches events against rules with pattern filtering
+- Enforces cooldowns and silences
+- Rate-limits delivery with batching
+
+**2. Channel Implementations** (`internal/notifications/channels/`):
+- **Webhook**: HTTP POST with custom headers, 3-attempt retry
+- **Ntfy**: Custom server support, Bearer auth, priority/tag mapping
+- **In-App**: Writes to notification_log table for UI display
+
+**3. Baseline Collector** (`internal/notifications/baseline.go`):
+- Runs hourly to calculate 48-hour rolling averages
+- Captures pre-update baselines for anomaly detection
+- Stores per (container_id, host_id, image_id)
+
+**4. Rate Limiter** (`internal/notifications/ratelimiter.go`):
+- Token bucket algorithm (default: 100/hour)
+- Batch queue with 10-minute summary notifications
+- Per-channel batching to prevent notification storms
+
+### Event Types
+
+1. **new_image** - Image updated (tag or SHA changed)
+2. **container_started** - Container transitioned to running
+3. **container_stopped** - Container transitioned to exited
+4. **container_paused** - Container paused
+5. **container_resumed** - Container resumed from pause
+6. **state_change** - Any other state transition
+7. **high_cpu** - CPU usage > threshold for 120+ seconds
+8. **high_memory** - Memory usage > threshold for 120+ seconds
+9. **anomalous_behavior** - Post-update CPU/memory 25%+ higher than 48hr baseline
+
+### Notification Rules
+
+Rules match events using:
+- **Event types**: Array of event types to match
+- **Host filter**: Specific host ID or null for all hosts
+- **Container pattern**: Glob pattern (e.g., `web-*`, `*-prod`)
+- **Image pattern**: Glob pattern (e.g., `nginx:*`, `myapp:1.*`)
+- **CPU threshold**: Percentage (e.g., 80.0) for high_cpu events
+- **Memory threshold**: Percentage (e.g., 90.0) for high_memory events
+- **Threshold duration**: Seconds threshold must be exceeded (default: 120)
+- **Cooldown**: Seconds before re-alerting same container (default: 300)
+- **Channels**: Array of channel IDs to send to
+
+**Default Rules** (created on first startup):
+1. "Container Stopped" → In-app notifications
+2. "New Image Detected" → In-app notifications
+3. "High Resource Usage" (CPU>80%, Memory>90%) → In-app notifications
+
+### Silences
+
+Mute notifications for:
+- Specific host (by host_id)
+- Specific container (by container_id + host_id)
+- Pattern-based (container_pattern glob)
+- Time-limited with expiry timestamp
+
+### Database Schema
+
+**notification_channels**: Channel configurations (type, config JSON, enabled)
+**notification_rules**: Rules with event filters and thresholds
+**notification_rule_channels**: Many-to-many rule→channel mapping
+**notification_log**: Sent notifications with read/unread status
+**notification_silences**: Active silences with expiry times
+**container_baseline_stats**: 48hr rolling baselines for anomaly detection
+**notification_threshold_state**: Tracks breach duration for threshold alerts
+
+### API Endpoints
+
+**Channels:**
+- GET /api/notifications/channels - List all channels
+- POST /api/notifications/channels - Create channel
+- PUT /api/notifications/channels/{id} - Update channel
+- DELETE /api/notifications/channels/{id} - Delete channel
+- POST /api/notifications/channels/{id}/test - Test channel
+
+**Rules:**
+- GET /api/notifications/rules - List all rules
+- POST /api/notifications/rules - Create rule
+- PUT /api/notifications/rules/{id} - Update rule
+- DELETE /api/notifications/rules/{id} - Delete rule
+
+**Logs:**
+- GET /api/notifications/log?limit=100&unread=true - Get notifications
+- PUT /api/notifications/log/{id}/read - Mark as read
+- POST /api/notifications/log/read-all - Mark all read
+- DELETE /api/notifications/log/clear - Clear old (7 days OR beyond 100 most recent)
+
+**Silences:**
+- GET /api/notifications/silences - List active silences
+- POST /api/notifications/silences - Create silence
+- DELETE /api/notifications/silences/{id} - Delete silence
+
+**Status:**
+- GET /api/notifications/status - System stats (unread count, rules, channels, rate limit)
+
+### Webhook Configuration Example
+
+```json
+{
+  "name": "Discord Webhook",
+  "type": "webhook",
+  "enabled": true,
+  "config": {
+    "url": "https://discord.com/api/webhooks/...",
+    "headers": {
+      "Content-Type": "application/json"
+    }
+  }
+}
+```
+
+### Ntfy Configuration Example
+
+```json
+{
+  "name": "Ntfy Alerts",
+  "type": "ntfy",
+  "enabled": true,
+  "config": {
+    "server_url": "https://ntfy.example.com",
+    "token": "tk_...",
+    "topic": "container-alerts"
+  }
+}
+```
+
+### Anomaly Detection Flow
+
+1. **Baseline Capture**: Hourly job calculates 48hr avg CPU/memory per container
+2. **Image Update Detected**: Scanner detects image_id change via lifecycle events
+3. **Post-Update Monitoring**: Next scans compare current stats against baseline
+4. **Anomaly Trigger**: If current > baseline * 1.25, generate anomalous_behavior event
+5. **Notification**: Rule matching fires if configured for anomaly events
+
+### Rate Limiting & Batching
+
+- **Token Bucket**: Refills to max every hour
+- **Immediate Delivery**: If tokens available, send instantly
+- **Queue When Limited**: Add to batch queue if no tokens
+- **Batch Summary**: Every 10 minutes, send summary of queued notifications
+- **Per-Channel Batching**: Groups by channel to minimize noise
+
+### Implementation Files
+
+- `internal/notifications/notifier.go` - Main service (600+ lines)
+- `internal/notifications/ratelimiter.go` - Rate limiting
+- `internal/notifications/baseline.go` - Baseline stats collector
+- `internal/notifications/channels/*.go` - Channel implementations
+- `internal/storage/notifications.go` - Database operations (550+ lines)
+- `internal/storage/defaults.go` - Default rules initialization
+- `internal/api/notifications.go` - REST API handlers (350+ lines)
+- `cmd/server/main.go` - Integration and background jobs
+
 ## Common Development Patterns
 
 ### Adding New API Endpoints

@@ -150,6 +150,113 @@ func (db *DB) initSchema() error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_telemetry_submissions_created ON telemetry_submissions(created_at DESC);
+
+	CREATE TABLE IF NOT EXISTS notification_channels (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL UNIQUE,
+		type TEXT NOT NULL,
+		config TEXT NOT NULL,
+		enabled BOOLEAN NOT NULL DEFAULT 1,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS notification_rules (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		enabled BOOLEAN NOT NULL DEFAULT 1,
+		event_types TEXT NOT NULL,
+		host_id INTEGER,
+		container_pattern TEXT,
+		image_pattern TEXT,
+		cpu_threshold REAL,
+		memory_threshold REAL,
+		threshold_duration_seconds INTEGER DEFAULT 120,
+		cooldown_seconds INTEGER DEFAULT 300,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (host_id) REFERENCES hosts(id) ON DELETE CASCADE
+	);
+
+	CREATE TABLE IF NOT EXISTS notification_rule_channels (
+		rule_id INTEGER NOT NULL,
+		channel_id INTEGER NOT NULL,
+		PRIMARY KEY (rule_id, channel_id),
+		FOREIGN KEY (rule_id) REFERENCES notification_rules(id) ON DELETE CASCADE,
+		FOREIGN KEY (channel_id) REFERENCES notification_channels(id) ON DELETE CASCADE
+	);
+
+	CREATE TABLE IF NOT EXISTS notification_log (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		rule_id INTEGER,
+		channel_id INTEGER,
+		event_type TEXT NOT NULL,
+		container_id TEXT,
+		container_name TEXT,
+		host_id INTEGER,
+		host_name TEXT,
+		message TEXT NOT NULL,
+		metadata TEXT,
+		sent_at TIMESTAMP NOT NULL,
+		success BOOLEAN NOT NULL,
+		error TEXT,
+		read BOOLEAN NOT NULL DEFAULT 0,
+		FOREIGN KEY (rule_id) REFERENCES notification_rules(id) ON DELETE SET NULL,
+		FOREIGN KEY (channel_id) REFERENCES notification_channels(id) ON DELETE SET NULL
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_notification_log_sent_at ON notification_log(sent_at DESC);
+	CREATE INDEX IF NOT EXISTS idx_notification_log_read ON notification_log(read, sent_at DESC);
+	CREATE INDEX IF NOT EXISTS idx_notification_log_container ON notification_log(container_id, host_id);
+
+	CREATE TABLE IF NOT EXISTS notification_silences (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		host_id INTEGER,
+		container_id TEXT,
+		container_name TEXT,
+		host_pattern TEXT,
+		container_pattern TEXT,
+		silenced_until TIMESTAMP NOT NULL,
+		reason TEXT,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (host_id) REFERENCES hosts(id) ON DELETE CASCADE
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_notification_silences_until ON notification_silences(silenced_until);
+	CREATE INDEX IF NOT EXISTS idx_notification_silences_container ON notification_silences(container_id, host_id);
+
+	CREATE TABLE IF NOT EXISTS container_baseline_stats (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		container_id TEXT NOT NULL,
+		container_name TEXT NOT NULL,
+		host_id INTEGER NOT NULL,
+		image_id TEXT NOT NULL,
+		avg_cpu_percent REAL,
+		avg_memory_percent REAL,
+		avg_memory_usage INTEGER,
+		sample_count INTEGER NOT NULL,
+		window_start TIMESTAMP NOT NULL,
+		window_end TIMESTAMP NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(container_id, host_id, image_id),
+		FOREIGN KEY (host_id) REFERENCES hosts(id) ON DELETE CASCADE
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_baseline_stats_container ON container_baseline_stats(container_id, host_id, image_id);
+
+	CREATE TABLE IF NOT EXISTS notification_threshold_state (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		container_id TEXT NOT NULL,
+		host_id INTEGER NOT NULL,
+		threshold_type TEXT NOT NULL,
+		breached_at TIMESTAMP NOT NULL,
+		last_notified_at TIMESTAMP,
+		breach_count INTEGER NOT NULL DEFAULT 1,
+		UNIQUE(container_id, host_id, threshold_type),
+		FOREIGN KEY (host_id) REFERENCES hosts(id) ON DELETE CASCADE
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_threshold_state_container ON notification_threshold_state(container_id, host_id);
 	`
 
 	if _, err := db.conn.Exec(schema); err != nil {

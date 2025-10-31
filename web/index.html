@@ -16,9 +16,30 @@
                     <h1>🐳 Census</h1>
                     <span id="versionBadge" class="version-badge">v0.0.0</span>
                 </div>
-                <button id="sidebarToggle" class="sidebar-toggle" aria-label="Toggle sidebar">
-                    <span>☰</span>
-                </button>
+                <div class="sidebar-header-actions">
+                    <div class="notification-bell-container">
+                        <button id="notificationBell" class="notification-bell" aria-label="Notifications">
+                            <span>🔔</span>
+                            <span id="notificationBadge" class="notification-count-badge"></span>
+                        </button>
+                        <div id="notificationDropdown" class="notification-dropdown">
+                            <div class="notification-dropdown-header">
+                                <h4>Notifications</h4>
+                                <button id="markAllRead" class="btn-text">Mark all read</button>
+                            </div>
+                            <div id="notificationList" class="notification-list">
+                                <div class="notification-empty">No notifications</div>
+                            </div>
+                            <div class="notification-dropdown-footer">
+                                <button id="viewAllNotifications" class="btn-text">View all</button>
+                                <button id="clearNotifications" class="btn-text">Clear all</button>
+                            </div>
+                        </div>
+                    </div>
+                    <button id="sidebarToggle" class="sidebar-toggle" aria-label="Toggle sidebar">
+                        <span>☰</span>
+                    </button>
+                </div>
             </div>
 
             <!-- Quick Stats in Sidebar -->
@@ -95,10 +116,16 @@
                     <span class="nav-badge" id="activityBadge"></span>
                     <span class="nav-shortcut">7</span>
                 </button>
-                <button class="nav-item" data-tab="settings" data-shortcut="8">
+                <button class="nav-item" data-tab="notifications" data-shortcut="8">
+                    <span class="nav-icon">🔔</span>
+                    <span class="nav-label">Notifications</span>
+                    <span class="nav-badge" id="notificationsSidebarBadge"></span>
+                    <span class="nav-shortcut">8</span>
+                </button>
+                <button class="nav-item" data-tab="settings" data-shortcut="9">
                     <span class="nav-icon">⚙️</span>
                     <span class="nav-label">Settings</span>
-                    <span class="nav-shortcut">8</span>
+                    <span class="nav-shortcut">9</span>
                 </button>
             </nav>
 
@@ -348,6 +375,67 @@
             </div>
         </div>
 
+        <div id="notificationsTab" class="tab-content">
+            <div class="notifications-section">
+                <h2>📬 Notification Center</h2>
+
+                <!-- Notification Tabs -->
+                <div class="notification-tabs">
+                    <button class="notification-tab-btn active" data-notif-tab="inbox">Inbox</button>
+                    <button class="notification-tab-btn" data-notif-tab="channels">Channels</button>
+                    <button class="notification-tab-btn" data-notif-tab="rules">Rules</button>
+                    <button class="notification-tab-btn" data-notif-tab="silences">Silences</button>
+                </div>
+
+                <!-- Inbox Tab -->
+                <div id="inboxNotifTab" class="notif-tab-content active">
+                    <div class="notification-inbox-header">
+                        <div class="notification-filters">
+                            <button id="filterAll" class="notif-filter-btn active">All</button>
+                            <button id="filterUnread" class="notif-filter-btn">Unread</button>
+                        </div>
+                        <div class="notification-actions">
+                            <button id="markAllReadBtn" class="btn btn-sm btn-secondary">Mark All Read</button>
+                            <button id="clearAllNotificationsBtn" class="btn btn-sm btn-warning">Clear All</button>
+                        </div>
+                    </div>
+                    <div id="notificationInboxList" class="notification-inbox-list">
+                        <div class="loading">Loading notifications...</div>
+                    </div>
+                </div>
+
+                <!-- Channels Tab -->
+                <div id="channelsNotifTab" class="notif-tab-content">
+                    <div class="channels-header">
+                        <button id="addChannelBtn" class="btn btn-primary">+ Add Channel</button>
+                    </div>
+                    <div id="channelsList" class="channels-list">
+                        <div class="loading">Loading channels...</div>
+                    </div>
+                </div>
+
+                <!-- Rules Tab -->
+                <div id="rulesNotifTab" class="notif-tab-content">
+                    <div class="rules-header">
+                        <button id="addRuleBtn" class="btn btn-primary">+ Add Rule</button>
+                    </div>
+                    <div id="rulesList" class="rules-list">
+                        <div class="loading">Loading rules...</div>
+                    </div>
+                </div>
+
+                <!-- Silences Tab -->
+                <div id="silencesNotifTab" class="notif-tab-content">
+                    <div class="silences-header">
+                        <button id="addSilenceBtn" class="btn btn-primary">+ Add Silence</button>
+                    </div>
+                    <div id="silencesList" class="silences-list">
+                        <div class="loading">Loading silences...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div id="settingsTab" class="tab-content">
             <div class="settings-section">
                 <h2>Settings</h2>
@@ -580,10 +668,210 @@
         </div>
     </div>
 
+    <!-- Add Channel Modal -->
+    <div id="addChannelModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Add Notification Channel</h3>
+                <button class="close-btn" onclick="closeAddChannelModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="addChannelForm">
+                    <div class="form-group">
+                        <label for="channelName">Channel Name *</label>
+                        <input type="text" id="channelName" required placeholder="e.g., Production Webhook">
+                    </div>
+                    <div class="form-group">
+                        <label for="channelType">Channel Type *</label>
+                        <select id="channelType" required>
+                            <option value="">Select type...</option>
+                            <option value="webhook">Webhook</option>
+                            <option value="ntfy">Ntfy</option>
+                            <option value="in_app">In-App (Default)</option>
+                        </select>
+                    </div>
+                    <div id="webhookConfig" class="channel-config" style="display: none;">
+                        <div class="form-group">
+                            <label for="webhookURL">Webhook URL *</label>
+                            <input type="url" id="webhookURL" placeholder="https://example.com/webhook">
+                        </div>
+                        <div class="form-group">
+                            <label for="webhookHeaders">Custom Headers (JSON)</label>
+                            <textarea id="webhookHeaders" placeholder='{"Authorization": "Bearer token"}'></textarea>
+                        </div>
+                    </div>
+                    <div id="ntfyConfig" class="channel-config" style="display: none;">
+                        <div class="form-group">
+                            <label for="ntfyServerURL">Ntfy Server URL</label>
+                            <input type="url" id="ntfyServerURL" placeholder="https://ntfy.sh (default)">
+                        </div>
+                        <div class="form-group">
+                            <label for="ntfyTopic">Topic *</label>
+                            <input type="text" id="ntfyTopic" placeholder="my-topic">
+                        </div>
+                        <div class="form-group">
+                            <label for="ntfyToken">Auth Token (optional)</label>
+                            <input type="text" id="ntfyToken" placeholder="Bearer token">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="toggle-switch-container">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="channelEnabled" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span class="toggle-label" id="channelEnabledLabel">Enabled</span>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" id="testChannelBtn" class="btn btn-secondary">Test Channel</button>
+                <button type="button" onclick="closeAddChannelModal()" class="btn btn-secondary">Cancel</button>
+                <button type="submit" form="addChannelForm" class="btn btn-primary">Add Channel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Rule Modal -->
+    <div id="addRuleModal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3>Add Notification Rule</h3>
+                <button class="close-btn" onclick="closeAddRuleModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="addRuleForm">
+                    <div class="form-group">
+                        <label for="ruleName">Rule Name *</label>
+                        <input type="text" id="ruleName" required placeholder="e.g., High CPU Alert">
+                    </div>
+                    <div class="form-group">
+                        <label>Event Types *</label>
+                        <div class="checkbox-group-vertical">
+                            <label><input type="checkbox" name="eventTypes" value="new_image"><span>🖼️ New Image</span></label>
+                            <label><input type="checkbox" name="eventTypes" value="state_change"><span>🔄 State Change</span></label>
+                            <label><input type="checkbox" name="eventTypes" value="container_started"><span>▶️ Started</span></label>
+                            <label><input type="checkbox" name="eventTypes" value="container_stopped"><span>⏹️ Stopped</span></label>
+                            <label><input type="checkbox" name="eventTypes" value="container_paused"><span>⏸️ Paused</span></label>
+                            <label><input type="checkbox" name="eventTypes" value="container_resumed"><span>▶️ Resumed</span></label>
+                            <label><input type="checkbox" name="eventTypes" value="high_cpu"><span>📈 High CPU</span></label>
+                            <label><input type="checkbox" name="eventTypes" value="high_memory"><span>💾 High Memory</span></label>
+                            <label><input type="checkbox" name="eventTypes" value="anomalous_behavior"><span>⚠️ Anomaly</span></label>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="ruleHost">Host (optional)</label>
+                            <select id="ruleHost">
+                                <option value="">All Hosts</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="ruleContainerPattern">Container Pattern (optional)</label>
+                            <input type="text" id="ruleContainerPattern" placeholder="e.g., prod-* or *-db">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="ruleImagePattern">Image Pattern (optional)</label>
+                            <input type="text" id="ruleImagePattern" placeholder="e.g., nginx:* or postgres:*">
+                        </div>
+                        <div class="form-group">
+                            <label for="ruleCPUThreshold">CPU Threshold (%)</label>
+                            <input type="number" id="ruleCPUThreshold" min="0" max="100" step="0.1" placeholder="e.g., 80">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="ruleMemoryThreshold">Memory Threshold (%)</label>
+                            <input type="number" id="ruleMemoryThreshold" min="0" max="100" step="0.1" placeholder="e.g., 90">
+                        </div>
+                        <div class="form-group">
+                            <label for="ruleThresholdDuration">Threshold Duration (seconds)</label>
+                            <input type="number" id="ruleThresholdDuration" min="1" value="120">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="ruleCooldown">Cooldown (seconds)</label>
+                            <input type="number" id="ruleCooldown" min="1" value="300">
+                        </div>
+                        <div class="form-group">
+                            <label for="ruleChannels">Channels *</label>
+                            <select id="ruleChannels" multiple size="5" required>
+                                <option value="">Loading channels...</option>
+                            </select>
+                            <small>Hold Ctrl/Cmd to select multiple channels</small>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <div class="toggle-switch-container">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="ruleEnabled" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span class="toggle-label" id="ruleEnabledLabel">Enabled</span>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" onclick="closeAddRuleModal()" class="btn btn-secondary">Cancel</button>
+                <button type="submit" form="addRuleForm" class="btn btn-primary">Add Rule</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Silence Modal -->
+    <div id="addSilenceModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Add Notification Silence</h3>
+                <button class="close-btn" onclick="closeAddSilenceModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="addSilenceForm">
+                    <div class="form-group">
+                        <label for="silenceReason">Reason (optional)</label>
+                        <input type="text" id="silenceReason" placeholder="e.g., Maintenance window">
+                    </div>
+                    <div class="form-group">
+                        <label for="silenceHost">Host (optional)</label>
+                        <select id="silenceHost">
+                            <option value="">All Hosts</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="silenceContainer">Container ID (optional)</label>
+                        <input type="text" id="silenceContainer" placeholder="Container ID or leave empty">
+                    </div>
+                    <div class="form-group">
+                        <label for="silenceHostPattern">Host Pattern (optional)</label>
+                        <input type="text" id="silenceHostPattern" placeholder="e.g., prod-*">
+                    </div>
+                    <div class="form-group">
+                        <label for="silenceContainerPattern">Container Pattern (optional)</label>
+                        <input type="text" id="silenceContainerPattern" placeholder="e.g., db-*">
+                    </div>
+                    <div class="form-group">
+                        <label for="silenceEndsAt">Expires At</label>
+                        <input type="datetime-local" id="silenceEndsAt">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" onclick="closeAddSilenceModal()" class="btn btn-secondary">Cancel</button>
+                <button type="submit" form="addSilenceForm" class="btn btn-primary">Add Silence</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Cytoscape.js for graph visualization -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.29.2/cytoscape.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
-    <script src="app.js?v=9"></script>
+    <script src="notifications.js?v=5"></script>
+    <script src="app.js?v=11"></script>
 </body>
 </html>

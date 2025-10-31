@@ -17,6 +17,7 @@ import (
 	"github.com/container-census/container-census/internal/auth"
 	"github.com/container-census/container-census/internal/config"
 	"github.com/container-census/container-census/internal/models"
+	"github.com/container-census/container-census/internal/notifications"
 	"github.com/container-census/container-census/internal/scanner"
 	"github.com/container-census/container-census/internal/storage"
 	"github.com/container-census/container-census/internal/telemetry"
@@ -83,6 +84,11 @@ func main() {
 		log.Printf("Warning: Failed to initialize hosts: %v", err)
 	}
 
+	// Initialize default notification channels and rules
+	if err := db.InitializeDefaultNotifications(); err != nil {
+		log.Printf("Warning: Failed to initialize default notifications: %v", err)
+	}
+
 	// Initialize scanner
 	scan := scanner.New(cfg.Scanner.TimeoutSeconds)
 	log.Println("Scanner initialized")
@@ -146,6 +152,24 @@ func main() {
 
 	// Start hourly stats aggregation
 	go runHourlyStatsAggregation(ctx, db)
+
+	// Initialize notification system
+	maxNotificationsPerHour := getEnvInt("NOTIFICATION_RATE_LIMIT_MAX", 100)
+	batchIntervalSeconds := getEnvInt("NOTIFICATION_RATE_LIMIT_BATCH_INTERVAL", 600)
+	notificationService := notifications.NewNotificationService(db, maxNotificationsPerHour, time.Duration(batchIntervalSeconds)*time.Second)
+	notificationServiceGlobal = notificationService // Set global reference for scanner
+	log.Printf("Notification service initialized (rate limit: %d/hour, batch interval: %ds)", maxNotificationsPerHour, batchIntervalSeconds)
+
+	// Pass notification service to API server
+	apiServer.SetNotificationService(notificationService)
+
+	// Start baseline stats collector
+	baselineCollector := notifications.NewBaselineCollector(db)
+	go baselineCollector.StartPeriodicUpdates(ctx)
+	log.Println("Baseline stats collector started")
+
+	// Start hourly notification cleanup
+	go runHourlyNotificationCleanup(ctx, db)
 
 	// Start HTTP server
 	go func() {
@@ -239,6 +263,9 @@ func detectHostType(address string) string {
 	}
 }
 
+// Global notification service reference
+var notificationServiceGlobal *notifications.NotificationService
+
 // runPeriodicScans runs scans at regular intervals
 func runPeriodicScans(ctx context.Context, db *storage.DB, scan *scanner.Scanner, intervalSeconds int) {
 	currentInterval := getScanInterval()
@@ -323,6 +350,13 @@ func performScan(ctx context.Context, db *storage.DB, scan *scanner.Scanner) {
 			// Save containers
 			if err := db.SaveContainers(containers); err != nil {
 				log.Printf("Failed to save containers for host %s: %v", host.Name, err)
+			}
+
+			// Process notifications for this host
+			if notificationServiceGlobal != nil {
+				if err := notificationServiceGlobal.ProcessEvents(ctx, host.ID); err != nil {
+					log.Printf("Failed to process notifications for host %s: %v", host.Name, err)
+				}
 			}
 		}
 
@@ -414,4 +448,36 @@ func runHourlyStatsAggregation(ctx context.Context, db *storage.DB) {
 			}
 		}
 	}
+}
+
+// runHourlyNotificationCleanup performs notification log cleanup every hour
+// Removes old notifications based on 7-day retention and 100-notification limit
+func runHourlyNotificationCleanup(ctx context.Context, db *storage.DB) {
+	// Run first cleanup after 1 hour
+	time.Sleep(1 * time.Hour)
+
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := db.CleanupOldNotifications(); err != nil {
+				log.Printf("Notification cleanup failed: %v", err)
+			}
+		}
+	}
+}
+
+// getEnvInt gets an integer from environment variable with a default value
+func getEnvInt(key string, defaultValue int) int {
+	if val := os.Getenv(key); val != "" {
+		var result int
+		if _, err := fmt.Sscanf(val, "%d", &result); err == nil {
+			return result
+		}
+	}
+	return defaultValue
 }

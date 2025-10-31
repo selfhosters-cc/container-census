@@ -22,6 +22,11 @@ document.addEventListener('DOMContentLoaded', () => {
     loadData();
     startAutoRefresh();
     updateLastRefreshIndicator();
+
+    // Initialize notifications if function exists
+    if (typeof initNotifications === 'function') {
+        initNotifications();
+    }
 });
 
 // URL Hash Routing
@@ -30,7 +35,7 @@ function initializeRouting() {
     const hash = window.location.hash.slice(1); // Remove #
     if (hash && hash.startsWith('/')) {
         const tab = hash.slice(1); // Remove leading /
-        const validTabs = ['containers', 'monitoring', 'images', 'graph', 'hosts', 'history', 'activity', 'settings'];
+        const validTabs = ['containers', 'monitoring', 'images', 'graph', 'hosts', 'history', 'activity', 'notifications', 'settings'];
         if (validTabs.includes(tab)) {
             currentTab = tab;
             switchTab(tab, false); // Don't push to history on initial load
@@ -42,7 +47,7 @@ function initializeRouting() {
         const hash = window.location.hash.slice(1);
         if (hash && hash.startsWith('/')) {
             const tab = hash.slice(1);
-            const validTabs = ['containers', 'monitoring', 'images', 'graph', 'hosts', 'history', 'activity', 'settings'];
+            const validTabs = ['containers', 'monitoring', 'images', 'graph', 'hosts', 'history', 'activity', 'notifications', 'settings'];
             if (validTabs.includes(tab)) {
                 currentTab = tab;
                 switchTab(tab, false); // Don't push to history on hash change
@@ -245,9 +250,9 @@ function setupKeyboardShortcuts() {
         }
 
         // Tab switching with number keys
-        if (e.key >= '1' && e.key <= '8') {
+        if (e.key >= '1' && e.key <= '9') {
             e.preventDefault();
-            const tabs = ['containers', 'monitoring', 'images', 'graph', 'hosts', 'history', 'activity', 'settings'];
+            const tabs = ['containers', 'monitoring', 'images', 'graph', 'hosts', 'history', 'activity', 'notifications', 'settings'];
             const tabIndex = parseInt(e.key) - 1;
             if (tabs[tabIndex]) {
                 switchTab(tabs[tabIndex]);

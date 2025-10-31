@@ -307,3 +307,156 @@ type ContainerStatsPoint struct {
 	MemoryLimit   int64     `json:"memory_limit"`   // bytes
 	MemoryPercent float64   `json:"memory_percent"`
 }
+
+// Notification event types
+const (
+	EventTypeNewImage         = "new_image"
+	EventTypeStateChange      = "state_change"
+	EventTypeHighCPU          = "high_cpu"
+	EventTypeHighMemory       = "high_memory"
+	EventTypeAnomalousBehavior = "anomalous_behavior"
+	EventTypeContainerStarted  = "container_started"
+	EventTypeContainerStopped  = "container_stopped"
+	EventTypeContainerPaused   = "container_paused"
+	EventTypeContainerResumed  = "container_resumed"
+)
+
+// Notification channel types
+const (
+	ChannelTypeWebhook = "webhook"
+	ChannelTypeNtfy    = "ntfy"
+	ChannelTypeInApp   = "in_app"
+)
+
+// NotificationChannel represents a notification delivery channel
+type NotificationChannel struct {
+	ID        int64                  `json:"id"`
+	Name      string                 `json:"name"`
+	Type      string                 `json:"type"` // webhook, ntfy, in_app
+	Config    map[string]interface{} `json:"config"`
+	Enabled   bool                   `json:"enabled"`
+	CreatedAt time.Time              `json:"created_at"`
+	UpdatedAt time.Time              `json:"updated_at"`
+}
+
+// WebhookConfig represents webhook-specific configuration
+type WebhookConfig struct {
+	URL     string            `json:"url"`
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
+// NtfyConfig represents ntfy-specific configuration
+type NtfyConfig struct {
+	ServerURL string `json:"server_url"` // e.g., https://ntfy.sh or custom server
+	Token     string `json:"token,omitempty"`
+	Topic     string `json:"topic"`
+}
+
+// NotificationRule represents a rule that triggers notifications
+type NotificationRule struct {
+	ID                       int64     `json:"id"`
+	Name                     string    `json:"name"`
+	Enabled                  bool      `json:"enabled"`
+	EventTypes               []string  `json:"event_types"` // e.g., ["new_image", "state_change"]
+	HostID                   *int64    `json:"host_id,omitempty"` // nil = all hosts
+	ContainerPattern         string    `json:"container_pattern,omitempty"` // glob pattern
+	ImagePattern             string    `json:"image_pattern,omitempty"` // glob pattern
+	CPUThreshold             *float64  `json:"cpu_threshold,omitempty"` // nil = no threshold
+	MemoryThreshold          *float64  `json:"memory_threshold,omitempty"` // nil = no threshold
+	ThresholdDurationSeconds int       `json:"threshold_duration_seconds"`
+	CooldownSeconds          int       `json:"cooldown_seconds"`
+	ChannelIDs               []int64   `json:"channel_ids"` // channels to send to
+	CreatedAt                time.Time `json:"created_at"`
+	UpdatedAt                time.Time `json:"updated_at"`
+}
+
+// NotificationLog represents a sent notification
+type NotificationLog struct {
+	ID            int64                  `json:"id"`
+	RuleID        *int64                 `json:"rule_id,omitempty"`
+	RuleName      string                 `json:"rule_name,omitempty"`
+	ChannelID     *int64                 `json:"channel_id,omitempty"`
+	ChannelName   string                 `json:"channel_name,omitempty"`
+	EventType     string                 `json:"event_type"`
+	ContainerID   string                 `json:"container_id,omitempty"`
+	ContainerName string                 `json:"container_name,omitempty"`
+	HostID        *int64                 `json:"host_id,omitempty"`
+	HostName      string                 `json:"host_name,omitempty"`
+	Message       string                 `json:"message"`
+	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	SentAt        time.Time              `json:"sent_at"`
+	Success       bool                   `json:"success"`
+	Error         string                 `json:"error,omitempty"`
+	Read          bool                   `json:"read"`
+}
+
+// NotificationSilence represents a muted container or host
+type NotificationSilence struct {
+	ID               int64      `json:"id"`
+	HostID           *int64     `json:"host_id,omitempty"`
+	ContainerID      string     `json:"container_id,omitempty"`
+	ContainerName    string     `json:"container_name,omitempty"`
+	HostPattern      string     `json:"host_pattern,omitempty"`
+	ContainerPattern string     `json:"container_pattern,omitempty"`
+	SilencedUntil    time.Time  `json:"silenced_until"`
+	Reason           string     `json:"reason,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+}
+
+// ContainerBaselineStats represents pre-change baseline for anomaly detection
+type ContainerBaselineStats struct {
+	ID                int64     `json:"id"`
+	ContainerID       string    `json:"container_id"`
+	ContainerName     string    `json:"container_name"`
+	HostID            int64     `json:"host_id"`
+	ImageID           string    `json:"image_id"`
+	AvgCPUPercent     float64   `json:"avg_cpu_percent"`
+	AvgMemoryPercent  float64   `json:"avg_memory_percent"`
+	AvgMemoryUsage    int64     `json:"avg_memory_usage"`
+	SampleCount       int       `json:"sample_count"`
+	WindowStart       time.Time `json:"window_start"`
+	WindowEnd         time.Time `json:"window_end"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
+// NotificationThresholdState tracks threshold breach state for cooldowns
+type NotificationThresholdState struct {
+	ID              int64     `json:"id"`
+	ContainerID     string    `json:"container_id"`
+	HostID          int64     `json:"host_id"`
+	ThresholdType   string    `json:"threshold_type"` // "cpu" or "memory"
+	BreachedAt      time.Time `json:"breached_at"`
+	LastNotifiedAt  *time.Time `json:"last_notified_at,omitempty"`
+	BreachCount     int       `json:"breach_count"`
+}
+
+// NotificationEvent represents an event that may trigger notifications
+type NotificationEvent struct {
+	EventType     string                 `json:"event_type"`
+	Timestamp     time.Time              `json:"timestamp"`
+	ContainerID   string                 `json:"container_id"`
+	ContainerName string                 `json:"container_name"`
+	HostID        int64                  `json:"host_id"`
+	HostName      string                 `json:"host_name"`
+	Image         string                 `json:"image,omitempty"`
+	OldState      string                 `json:"old_state,omitempty"`
+	NewState      string                 `json:"new_state,omitempty"`
+	OldImage      string                 `json:"old_image,omitempty"`
+	NewImage      string                 `json:"new_image,omitempty"`
+	CPUPercent    float64                `json:"cpu_percent,omitempty"`
+	MemoryPercent float64                `json:"memory_percent,omitempty"`
+	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// NotificationStatus represents the current notification system status
+type NotificationStatus struct {
+	UnreadCount        int       `json:"unread_count"`
+	TotalChannels      int       `json:"total_channels"`
+	EnabledChannels    int       `json:"enabled_channels"`
+	TotalRules         int       `json:"total_rules"`
+	EnabledRules       int       `json:"enabled_rules"`
+	RecentFailures     int       `json:"recent_failures"` // last 24h
+	ActiveSilences     int       `json:"active_silences"`
+	RateLimitRemaining int       `json:"rate_limit_remaining"`
+	RateLimitReset     time.Time `json:"rate_limit_reset"`
+}

@@ -15,6 +15,7 @@ import (
 	"github.com/container-census/container-census/internal/auth"
 	"github.com/container-census/container-census/internal/config"
 	"github.com/container-census/container-census/internal/models"
+	"github.com/container-census/container-census/internal/notifications"
 	"github.com/container-census/container-census/internal/scanner"
 	"github.com/container-census/container-census/internal/storage"
 	"github.com/container-census/container-census/internal/telemetry"
@@ -35,6 +36,7 @@ type Server struct {
 	scanInterval          int
 	authConfig            auth.Config
 	setScanIntervalFunc   func(int) // Callback to update scan interval
+	notificationService   *notifications.NotificationService
 }
 
 // TelemetryScheduler interface for submitting telemetry on demand
@@ -71,6 +73,11 @@ func (s *Server) SetTelemetryScheduler(scheduler *telemetry.Scheduler, ctx conte
 	s.telemetryScheduler = scheduler
 	s.telemetryContext = ctx
 	s.telemetryCancel = cancel
+}
+
+// SetNotificationService sets the notification service
+func (s *Server) SetNotificationService(ns *notifications.NotificationService) {
+	s.notificationService = ns
 }
 
 // RestartTelemetry stops and restarts the telemetry scheduler with new configuration
@@ -192,6 +199,29 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/telemetry/reset-circuit-breaker/{name}", s.handleResetCircuitBreaker).Methods("POST")
 	api.HandleFunc("/telemetry/debug-enabled", s.handleGetDebugEnabled).Methods("GET")
 	api.HandleFunc("/telemetry/test-endpoint", s.handleTestTelemetryEndpoint).Methods("POST")
+
+	// Notification endpoints
+	api.HandleFunc("/notifications/channels", s.handleGetNotificationChannels).Methods("GET")
+	api.HandleFunc("/notifications/channels", s.handleCreateNotificationChannel).Methods("POST")
+	api.HandleFunc("/notifications/channels/{id}", s.handleUpdateNotificationChannel).Methods("PUT")
+	api.HandleFunc("/notifications/channels/{id}", s.handleDeleteNotificationChannel).Methods("DELETE")
+	api.HandleFunc("/notifications/channels/{id}/test", s.handleTestNotificationChannel).Methods("POST")
+
+	api.HandleFunc("/notifications/rules", s.handleGetNotificationRules).Methods("GET")
+	api.HandleFunc("/notifications/rules", s.handleCreateNotificationRule).Methods("POST")
+	api.HandleFunc("/notifications/rules/{id}", s.handleUpdateNotificationRule).Methods("PUT")
+	api.HandleFunc("/notifications/rules/{id}", s.handleDeleteNotificationRule).Methods("DELETE")
+
+	api.HandleFunc("/notifications/logs", s.handleGetNotificationLogs).Methods("GET")
+	api.HandleFunc("/notifications/logs/{id}/read", s.handleMarkNotificationRead).Methods("PUT")
+	api.HandleFunc("/notifications/logs/read-all", s.handleMarkAllNotificationsRead).Methods("PUT")
+	api.HandleFunc("/notifications/logs/clear", s.handleClearNotifications).Methods("DELETE")
+
+	api.HandleFunc("/notifications/silences", s.handleGetNotificationSilences).Methods("GET")
+	api.HandleFunc("/notifications/silences", s.handleCreateNotificationSilence).Methods("POST")
+	api.HandleFunc("/notifications/silences/{id}", s.handleDeleteNotificationSilence).Methods("DELETE")
+
+	api.HandleFunc("/notifications/status", s.handleGetNotificationStatus).Methods("GET")
 
 	// Serve static files (embedded web frontend) - also protected
 	s.router.PathPrefix("/").Handler(authMiddleware(http.FileServer(http.Dir("./web"))))
