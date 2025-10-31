@@ -374,14 +374,33 @@ func (db *DB) GetUnreadNotificationCount() (int, error) {
 // CleanupOldNotifications removes notifications older than 7 days or beyond the 100 most recent
 func (db *DB) CleanupOldNotifications() error {
 	// Keep last 100 notifications OR notifications from last 7 days, whichever is larger
-	_, err := db.conn.Exec(`
+	// This means: delete if (older than 7 days) AND (beyond the 100 most recent)
+
+	// Get total count first
+	var totalCount int
+	err := db.conn.QueryRow("SELECT COUNT(*) FROM notification_log").Scan(&totalCount)
+	if err != nil {
+		return err
+	}
+
+	// If we have 100 or fewer, only delete those older than 7 days
+	if totalCount <= 100 {
+		_, err := db.conn.Exec(`
+			DELETE FROM notification_log
+			WHERE sent_at < datetime('now', '-7 days')
+		`)
+		return err
+	}
+
+	// If we have more than 100, delete records that are BOTH old AND beyond top 100
+	_, err = db.conn.Exec(`
 		DELETE FROM notification_log
-		WHERE id NOT IN (
+		WHERE sent_at < datetime('now', '-7 days')
+		  AND id NOT IN (
 			SELECT id FROM notification_log
 			ORDER BY sent_at DESC
 			LIMIT 100
-		)
-		AND sent_at < datetime('now', '-7 days')
+		  )
 	`)
 	return err
 }
