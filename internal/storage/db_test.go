@@ -45,10 +45,11 @@ func TestHostCRUD(t *testing.T) {
 		Enabled:      true,
 	}
 
-	err := db.SaveHost(host)
+	hostID, err := db.AddHost(*host)
 	if err != nil {
-		t.Fatalf("SaveHost failed: %v", err)
+		t.Fatalf("AddHost failed: %v", err)
 	}
+	host.ID = hostID
 
 	if host.ID == 0 {
 		t.Error("Expected host ID to be set after save")
@@ -80,9 +81,9 @@ func TestHostCRUD(t *testing.T) {
 	savedHost.Address = "agent://remote-host:9876"
 	savedHost.CollectStats = false
 
-	err = db.SaveHost(savedHost)
+	err = db.UpdateHost(savedHost)
 	if err != nil {
-		t.Fatalf("SaveHost (update) failed: %v", err)
+		t.Fatalf("UpdateHost failed: %v", err)
 	}
 
 	// Verify update
@@ -130,7 +131,8 @@ func TestMultipleHosts(t *testing.T) {
 	}
 
 	for _, host := range hosts {
-		if err := db.SaveHost(host); err != nil {
+		_, err := db.AddHost(*host)
+		if err != nil {
 			t.Fatalf("Failed to save host %s: %v", host.Name, err)
 		}
 	}
@@ -163,7 +165,8 @@ func TestContainerHistory(t *testing.T) {
 
 	// Create a host first
 	host := &models.Host{Name: "test-host", Address: "unix:///", Enabled: true}
-	if err := db.SaveHost(host); err != nil {
+	_, err := db.AddHost(*host)
+	if err != nil {
 		t.Fatalf("Failed to save host: %v", err)
 	}
 
@@ -238,7 +241,8 @@ func TestContainerStats(t *testing.T) {
 
 	// Create host
 	host := &models.Host{Name: "stats-host", Address: "unix:///", Enabled: true}
-	if err := db.SaveHost(host); err != nil {
+	_, err := db.AddHost(*host)
+	if err != nil {
 		t.Fatalf("Failed to save host: %v", err)
 	}
 
@@ -296,7 +300,8 @@ func TestStatsAggregation(t *testing.T) {
 
 	// Create host
 	host := &models.Host{Name: "agg-host", Address: "unix:///", Enabled: true}
-	if err := db.SaveHost(host); err != nil {
+	_, err := db.AddHost(*host)
+	if err != nil {
 		t.Fatalf("Failed to save host: %v", err)
 	}
 
@@ -394,7 +399,8 @@ func TestGetContainerLifecycleEvents(t *testing.T) {
 
 	// Create host
 	host := &models.Host{Name: "event-host", Address: "unix:///", Enabled: true}
-	if err := db.SaveHost(host); err != nil {
+	_, err := db.AddHost(*host)
+	if err != nil {
 		t.Fatalf("Failed to save host: %v", err)
 	}
 
@@ -495,7 +501,8 @@ func TestConcurrentAccess(t *testing.T) {
 
 	// Create host
 	host := &models.Host{Name: "concurrent-host", Address: "unix:///", Enabled: true}
-	if err := db.SaveHost(host); err != nil {
+	_, err := db.AddHost(*host)
+	if err != nil {
 		t.Fatalf("Failed to save host: %v", err)
 	}
 

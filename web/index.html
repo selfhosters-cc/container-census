@@ -116,16 +116,21 @@
                     <span class="nav-badge" id="activityBadge"></span>
                     <span class="nav-shortcut">7</span>
                 </button>
-                <button class="nav-item" data-tab="notifications" data-shortcut="8">
+                <button class="nav-item" data-tab="reports" data-shortcut="8">
+                    <span class="nav-icon">📈</span>
+                    <span class="nav-label">Reports</span>
+                    <span class="nav-shortcut">8</span>
+                </button>
+                <button class="nav-item" data-tab="notifications" data-shortcut="9">
                     <span class="nav-icon">🔔</span>
                     <span class="nav-label">Notifications</span>
                     <span class="nav-badge" id="notificationsSidebarBadge"></span>
-                    <span class="nav-shortcut">8</span>
+                    <span class="nav-shortcut">9</span>
                 </button>
-                <button class="nav-item" data-tab="settings" data-shortcut="9">
+                <button class="nav-item" data-tab="settings" data-shortcut="0">
                     <span class="nav-icon">⚙️</span>
                     <span class="nav-label">Settings</span>
-                    <span class="nav-shortcut">9</span>
+                    <span class="nav-shortcut">0</span>
                 </button>
             </nav>
 
@@ -371,6 +376,127 @@
                             </tr>
                         </tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="reportsTab" class="tab-content">
+            <div class="reports-section">
+                <h2>📈 Environment Changes Report</h2>
+
+                <!-- Report Filters -->
+                <div class="report-filters">
+                    <div class="filter-group">
+                        <label for="reportStartDate">Start Date:</label>
+                        <input type="datetime-local" id="reportStartDate" class="filter-input">
+                    </div>
+                    <div class="filter-group">
+                        <label for="reportEndDate">End Date:</label>
+                        <input type="datetime-local" id="reportEndDate" class="filter-input">
+                    </div>
+                    <div class="filter-group">
+                        <label for="reportHostFilter">Host:</label>
+                        <select id="reportHostFilter" class="filter-select">
+                            <option value="">All Hosts</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>&nbsp;</label>
+                        <div style="display: flex; gap: 10px;">
+                            <button id="report7d" class="btn btn-sm btn-secondary">Last 7 Days</button>
+                            <button id="report30d" class="btn btn-sm btn-secondary">Last 30 Days</button>
+                            <button id="report90d" class="btn btn-sm btn-secondary">Last 90 Days</button>
+                        </div>
+                    </div>
+                    <div class="filter-group">
+                        <label>&nbsp;</label>
+                        <button id="generateReportBtn" class="btn btn-primary">Generate Report</button>
+                    </div>
+                </div>
+
+                <!-- Report Loading -->
+                <div id="reportLoading" class="loading" style="display: none;">Generating report...</div>
+
+                <!-- Report Results -->
+                <div id="reportResults" style="display: none;">
+                    <!-- Summary Cards -->
+                    <div class="stats-grid" id="reportSummaryCards">
+                        <!-- Cards will be injected by JavaScript -->
+                    </div>
+
+                    <!-- Timeline Chart -->
+                    <div class="card" style="margin-top: 20px;">
+                        <h3>Changes Timeline</h3>
+                        <canvas id="changesTimelineChart" style="max-height: 300px;"></canvas>
+                    </div>
+
+                    <!-- Changes Details -->
+                    <div class="report-details">
+                        <!-- New Containers -->
+                        <div class="card collapsible" style="margin-top: 20px;">
+                            <div class="card-header" onclick="toggleReportSection('newContainers')">
+                                <h3>🆕 New Containers (<span id="newContainersCount">0</span>)</h3>
+                                <span class="collapse-icon">▼</span>
+                            </div>
+                            <div id="newContainersSection" class="card-body" style="display: none;">
+                                <div id="newContainersTable"></div>
+                            </div>
+                        </div>
+
+                        <!-- Removed Containers -->
+                        <div class="card collapsible" style="margin-top: 20px;">
+                            <div class="card-header" onclick="toggleReportSection('removedContainers')">
+                                <h3>❌ Removed Containers (<span id="removedContainersCount">0</span>)</h3>
+                                <span class="collapse-icon">▼</span>
+                            </div>
+                            <div id="removedContainersSection" class="card-body" style="display: none;">
+                                <div id="removedContainersTable"></div>
+                            </div>
+                        </div>
+
+                        <!-- Image Updates -->
+                        <div class="card collapsible" style="margin-top: 20px;">
+                            <div class="card-header" onclick="toggleReportSection('imageUpdates')">
+                                <h3>🔄 Image Updates (<span id="imageUpdatesCount">0</span>)</h3>
+                                <span class="collapse-icon">▼</span>
+                            </div>
+                            <div id="imageUpdatesSection" class="card-body" style="display: none;">
+                                <div id="imageUpdatesTable"></div>
+                            </div>
+                        </div>
+
+                        <!-- State Changes -->
+                        <div class="card collapsible" style="margin-top: 20px;">
+                            <div class="card-header" onclick="toggleReportSection('stateChanges')">
+                                <h3>🔀 State Changes (<span id="stateChangesCount">0</span>)</h3>
+                                <span class="collapse-icon">▼</span>
+                            </div>
+                            <div id="stateChangesSection" class="card-body" style="display: none;">
+                                <div id="stateChangesTable"></div>
+                            </div>
+                        </div>
+
+                        <!-- Top Restarted -->
+                        <div class="card collapsible" style="margin-top: 20px;">
+                            <div class="card-header" onclick="toggleReportSection('topRestarted')">
+                                <h3>🔁 Most Active Containers (<span id="topRestartedCount">0</span>)</h3>
+                                <span class="collapse-icon">▼</span>
+                            </div>
+                            <div id="topRestartedSection" class="card-body" style="display: none;">
+                                <div id="topRestartedTable"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Export Button -->
+                    <div style="margin-top: 20px; text-align: right;">
+                        <button id="exportReportBtn" class="btn btn-secondary">📥 Export Report (JSON)</button>
+                    </div>
+                </div>
+
+                <!-- Empty State -->
+                <div id="reportEmptyState" class="empty-state">
+                    <p>Select a time range and click "Generate Report" to see environment changes.</p>
                 </div>
             </div>
         </div>
@@ -637,30 +763,33 @@
                     <button class="stats-range-btn" data-range="all">All Time</button>
                 </div>
                 <div id="statsContent" class="stats-content">
-                    <div class="stats-summary">
-                        <div class="stat-box">
-                            <div class="stat-label">Avg CPU</div>
-                            <div class="stat-value" id="avgCpu">-</div>
+                    <div id="statsMessage" class="loading" style="display: none;"></div>
+                    <div id="statsChartArea" style="display: none;">
+                        <div class="stats-summary">
+                            <div class="stat-box">
+                                <div class="stat-label">Avg CPU</div>
+                                <div class="stat-value" id="avgCpu">-</div>
+                            </div>
+                            <div class="stat-box">
+                                <div class="stat-label">Max CPU</div>
+                                <div class="stat-value" id="maxCpu">-</div>
+                            </div>
+                            <div class="stat-box">
+                                <div class="stat-label">Avg Memory</div>
+                                <div class="stat-value" id="avgMemory">-</div>
+                            </div>
+                            <div class="stat-box">
+                                <div class="stat-label">Max Memory</div>
+                                <div class="stat-value" id="maxMemory">-</div>
+                            </div>
                         </div>
-                        <div class="stat-box">
-                            <div class="stat-label">Max CPU</div>
-                            <div class="stat-value" id="maxCpu">-</div>
-                        </div>
-                        <div class="stat-box">
-                            <div class="stat-label">Avg Memory</div>
-                            <div class="stat-value" id="avgMemory">-</div>
-                        </div>
-                        <div class="stat-box">
-                            <div class="stat-label">Max Memory</div>
-                            <div class="stat-value" id="maxMemory">-</div>
-                        </div>
-                    </div>
-                    <div class="stats-charts">
-                        <div class="chart-container">
-                            <canvas id="cpuChart"></canvas>
-                        </div>
-                        <div class="chart-container">
-                            <canvas id="memoryChart"></canvas>
+                        <div class="stats-charts">
+                            <div class="chart-container">
+                                <canvas id="cpuChart"></canvas>
+                            </div>
+                            <div class="chart-container">
+                                <canvas id="memoryChart"></canvas>
+                            </div>
                         </div>
                     </div>
                 </div>

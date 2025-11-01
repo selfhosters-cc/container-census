@@ -183,6 +183,9 @@ func (s *Server) setupRoutes() {
 	// Activity log (scans + telemetry)
 	api.HandleFunc("/activity-log", s.handleGetActivityLog).Methods("GET")
 
+	// Reports endpoints
+	api.HandleFunc("/reports/changes", s.handleGetChangesReport).Methods("GET")
+
 	// Config endpoints
 	api.HandleFunc("/config", s.handleGetConfig).Methods("GET")
 	api.HandleFunc("/config/scanner", s.handleUpdateScanner).Methods("POST")
@@ -1663,4 +1666,61 @@ func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(metrics.String()))
+}
+
+// handleGetChangesReport returns a comprehensive environment change report
+func (s *Server) handleGetChangesReport(w http.ResponseWriter, r *http.Request) {
+	// Parse query parameters
+	startStr := r.URL.Query().Get("start")
+	endStr := r.URL.Query().Get("end")
+	hostFilterStr := r.URL.Query().Get("host_id")
+
+	// Default to last 7 days if not specified
+	var start, end time.Time
+	var err error
+
+	if startStr != "" {
+		start, err = time.Parse(time.RFC3339, startStr)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "Invalid start time format (use RFC3339): "+err.Error())
+			return
+		}
+	} else {
+		start = time.Now().Add(-7 * 24 * time.Hour)
+	}
+
+	if endStr != "" {
+		end, err = time.Parse(time.RFC3339, endStr)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "Invalid end time format (use RFC3339): "+err.Error())
+			return
+		}
+	} else {
+		end = time.Now()
+	}
+
+	// Validate time range
+	if end.Before(start) {
+		respondError(w, http.StatusBadRequest, "End time must be after start time")
+		return
+	}
+
+	var hostFilter int64
+	if hostFilterStr != "" {
+		hostFilter, err = strconv.ParseInt(hostFilterStr, 10, 64)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "Invalid host_id parameter: "+err.Error())
+			return
+		}
+	}
+
+	// Generate report
+	report, err := s.db.GetChangesReport(start, end, hostFilter)
+	if err != nil {
+		log.Printf("Error generating changes report: %v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to generate report: "+err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, report)
 }

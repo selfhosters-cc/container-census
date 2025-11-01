@@ -1622,3 +1622,491 @@ func (db *DB) GetCurrentStatsForAllContainers() ([]models.Container, error) {
 
 	return containers, rows.Err()
 }
+
+// parseTimestamp parses various timestamp formats from SQLite
+func parseTimestamp(timestampStr string) (time.Time, error) {
+	// Try various formats that SQLite might use
+	formats := []string{
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05.999999999Z07:00",
+		"2006-01-02T15:04:05.999999999Z",
+		"2006-01-02T15:04:05Z",
+		time.RFC3339Nano,
+		time.RFC3339,
+	}
+
+	var lastErr error
+	for _, format := range formats {
+		t, err := time.Parse(format, timestampStr)
+		if err == nil {
+			return t, nil
+		}
+		lastErr = err
+	}
+
+	return time.Time{}, lastErr
+}
+
+// GetChangesReport generates a comprehensive environment change report for a time period
+func (db *DB) GetChangesReport(start, end time.Time, hostFilter int64) (*models.ChangesReport, error) {
+	report := &models.ChangesReport{
+		Period: models.ReportPeriod{
+			Start:         start,
+			End:           end,
+			DurationHours: int(end.Sub(start).Hours()),
+		},
+		NewContainers:     make([]models.ContainerChange, 0),
+		RemovedContainers: make([]models.ContainerChange, 0),
+		ImageUpdates:      make([]models.ImageUpdateChange, 0),
+		StateChanges:      make([]models.StateChange, 0),
+		TopRestarted:      make([]models.RestartSummary, 0),
+	}
+
+	// Build WHERE clause for host filtering
+	hostFilterClause := ""
+	hostFilterArgs := []interface{}{start, end}
+	if hostFilter > 0 {
+		hostFilterClause = " AND c.host_id = ?"
+		hostFilterArgs = append(hostFilterArgs, hostFilter)
+	}
+
+	// 1. Query for new containers (first seen in period)
+	// Note: We group by NAME to detect when a container name first appeared,
+	// not by ID since containers get new IDs on recreation.
+	// Only includes containers from enabled hosts.
+	newContainersQuery := `
+		WITH first_appearances AS (
+			SELECT
+				c.name as container_name,
+				c.host_id,
+				c.host_name,
+				MIN(c.scanned_at) as first_seen
+			FROM containers c
+			INNER JOIN hosts h ON c.host_id = h.id
+			WHERE h.enabled = 1` + hostFilterClause + `
+			GROUP BY c.name, c.host_id, c.host_name
+		),
+		latest_state AS (
+			SELECT
+				c.id as container_id,
+				c.name as container_name,
+				c.image,
+				c.state,
+				c.host_id,
+				c.scanned_at,
+				ROW_NUMBER() OVER (PARTITION BY c.name, c.host_id ORDER BY c.scanned_at DESC) as rn
+			FROM containers c
+			INNER JOIN first_appearances f ON c.name = f.container_name AND c.host_id = f.host_id
+			WHERE c.scanned_at >= f.first_seen
+		)
+		SELECT ls.container_id, ls.container_name, ls.image, f.host_id, f.host_name, f.first_seen, ls.state
+		FROM first_appearances f
+		INNER JOIN latest_state ls ON f.container_name = ls.container_name AND f.host_id = ls.host_id
+		WHERE f.first_seen BETWEEN ? AND ?
+		  AND ls.rn = 1
+		ORDER BY f.first_seen DESC
+		LIMIT 100
+	`
+
+	rows, err := db.conn.Query(newContainersQuery, append([]interface{}{start, end}, hostFilterArgs[2:]...)...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query new containers: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var c models.ContainerChange
+		var timestampStr string
+		if err := rows.Scan(&c.ContainerID, &c.ContainerName, &c.Image, &c.HostID, &c.HostName, &timestampStr, &c.State); err != nil {
+			return nil, err
+		}
+		// Parse timestamp
+		c.Timestamp, err = parseTimestamp(timestampStr)
+		if err != nil {
+			log.Printf("Warning: failed to parse timestamp '%s': %v", timestampStr, err)
+		}
+		report.NewContainers = append(report.NewContainers, c)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// 2. Query for removed containers (seen during period, but not present at period end)
+	// Note: Group by NAME to show containers that disappeared, regardless of ID changes
+	// A container is "removed" if:
+	//   - It was seen at least once BEFORE the period end
+	//   - It is NOT seen at or after the period end (currently missing)
+	// Only includes containers from enabled hosts.
+	removedContainersQuery := `
+		WITH last_appearances AS (
+			SELECT
+				c.name as container_name,
+				c.host_id,
+				c.host_name,
+				MAX(c.scanned_at) as last_seen
+			FROM containers c
+			INNER JOIN hosts h ON c.host_id = h.id
+			WHERE h.enabled = 1` + hostFilterClause + `
+			GROUP BY c.name, c.host_id, c.host_name
+		),
+		final_state AS (
+			SELECT
+				c.id as container_id,
+				c.name as container_name,
+				c.image,
+				c.state,
+				c.host_id,
+				c.scanned_at,
+				ROW_NUMBER() OVER (PARTITION BY c.name, c.host_id ORDER BY c.scanned_at DESC) as rn
+			FROM containers c
+			INNER JOIN last_appearances l ON c.name = l.container_name AND c.host_id = l.host_id
+			WHERE c.scanned_at = l.last_seen
+		)
+		SELECT fs.container_id, fs.container_name, fs.image, l.host_id, l.host_name, l.last_seen, fs.state
+		FROM last_appearances l
+		INNER JOIN final_state fs ON l.container_name = fs.container_name AND l.host_id = fs.host_id
+		WHERE l.last_seen < ?
+		  AND NOT EXISTS (
+			  SELECT 1 FROM containers c2
+			  WHERE c2.name = l.container_name
+				AND c2.host_id = l.host_id
+				AND c2.scanned_at >= ?
+		  )
+		  AND fs.rn = 1
+		ORDER BY l.last_seen DESC
+		LIMIT 100
+	`
+
+	rows, err = db.conn.Query(removedContainersQuery, append([]interface{}{end, end}, hostFilterArgs[2:]...)...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query removed containers: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var c models.ContainerChange
+		var timestampStr string
+		if err := rows.Scan(&c.ContainerID, &c.ContainerName, &c.Image, &c.HostID, &c.HostName, &timestampStr, &c.State); err != nil {
+			return nil, err
+		}
+		// Parse timestamp
+		c.Timestamp, err = parseTimestamp(timestampStr)
+		if err != nil {
+			log.Printf("Warning: failed to parse timestamp '%s': %v", timestampStr, err)
+		}
+		report.RemovedContainers = append(report.RemovedContainers, c)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// 3. Query for image updates (using LAG window function)
+	// Note: We partition by container NAME, not ID, because containers get new IDs when recreated.
+	// This detects when a container with the same name is recreated with a different image.
+	// Only includes containers from enabled hosts.
+	imageUpdatesQuery := `
+		WITH image_changes AS (
+			SELECT
+				c.id as container_id,
+				c.name as container_name,
+				c.host_id,
+				c.host_name,
+				c.image,
+				c.image_id,
+				c.scanned_at,
+				LAG(c.image) OVER (PARTITION BY c.name, c.host_id ORDER BY c.scanned_at) as prev_image,
+				LAG(c.image_id) OVER (PARTITION BY c.name, c.host_id ORDER BY c.scanned_at) as prev_image_id
+			FROM containers c
+			INNER JOIN hosts h ON c.host_id = h.id
+			WHERE h.enabled = 1` + hostFilterClause + `
+		)
+		SELECT container_id, container_name, host_id, host_name,
+		       prev_image, image, prev_image_id, image_id, scanned_at
+		FROM image_changes
+		WHERE prev_image_id IS NOT NULL
+		  AND image_id != prev_image_id
+		  AND scanned_at BETWEEN ? AND ?
+		ORDER BY scanned_at DESC
+		LIMIT 100
+	`
+
+	// Build args for image updates query: [hostFilter (if any), start, end]
+	imageUpdateArgs := []interface{}{}
+	if hostFilter > 0 {
+		imageUpdateArgs = append(imageUpdateArgs, hostFilter)
+	}
+	imageUpdateArgs = append(imageUpdateArgs, start, end)
+
+	rows, err = db.conn.Query(imageUpdatesQuery, imageUpdateArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query image updates: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var u models.ImageUpdateChange
+		var timestampStr string
+		if err := rows.Scan(&u.ContainerID, &u.ContainerName, &u.HostID, &u.HostName,
+			&u.OldImage, &u.NewImage, &u.OldImageID, &u.NewImageID, &timestampStr); err != nil {
+			return nil, err
+		}
+		// Parse timestamp
+		u.UpdatedAt, err = parseTimestamp(timestampStr)
+		if err != nil {
+			log.Printf("Warning: failed to parse timestamp '%s': %v", timestampStr, err)
+		}
+		report.ImageUpdates = append(report.ImageUpdates, u)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// 4. Query for state changes (using LAG window function)
+	// Note: We partition by container NAME, not ID, to track state across container recreations.
+	// Only includes containers from enabled hosts.
+	stateChangesQuery := `
+		WITH state_transitions AS (
+			SELECT
+				c.id as container_id,
+				c.name as container_name,
+				c.host_id,
+				c.host_name,
+				c.state,
+				c.scanned_at,
+				LAG(c.state) OVER (PARTITION BY c.name, c.host_id ORDER BY c.scanned_at) as prev_state
+			FROM containers c
+			INNER JOIN hosts h ON c.host_id = h.id
+			WHERE h.enabled = 1` + hostFilterClause + `
+		)
+		SELECT container_id, container_name, host_id, host_name,
+		       prev_state, state, scanned_at
+		FROM state_transitions
+		WHERE prev_state IS NOT NULL
+		  AND state != prev_state
+		  AND scanned_at BETWEEN ? AND ?
+		ORDER BY scanned_at DESC
+		LIMIT 100
+	`
+
+	// Build args for state changes query: [hostFilter (if any), start, end]
+	stateChangeArgs := []interface{}{}
+	if hostFilter > 0 {
+		stateChangeArgs = append(stateChangeArgs, hostFilter)
+	}
+	stateChangeArgs = append(stateChangeArgs, start, end)
+
+	rows, err = db.conn.Query(stateChangesQuery, stateChangeArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query state changes: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var s models.StateChange
+		var timestampStr string
+		if err := rows.Scan(&s.ContainerID, &s.ContainerName, &s.HostID, &s.HostName,
+			&s.OldState, &s.NewState, &timestampStr); err != nil {
+			return nil, err
+		}
+		// Parse timestamp
+		s.ChangedAt, err = parseTimestamp(timestampStr)
+		if err != nil {
+			log.Printf("Warning: failed to parse timestamp '%s': %v", timestampStr, err)
+		}
+		report.StateChanges = append(report.StateChanges, s)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// 5. Query for top restarted/active containers (counting state changes, not scans)
+	// Build query dynamically based on host filter
+	// Only includes containers from enabled hosts.
+	// Groups by NAME to track activity across container recreations.
+	var topRestartedQuery string
+	if hostFilter > 0 {
+		topRestartedQuery = `
+			WITH state_changes AS (
+				SELECT
+					c.name as container_name,
+					c.host_id,
+					c.host_name,
+					c.image,
+					c.state,
+					c.scanned_at,
+					LAG(c.state) OVER (PARTITION BY c.name, c.host_id ORDER BY c.scanned_at) as prev_state
+				FROM containers c
+				INNER JOIN hosts h ON c.host_id = h.id
+				WHERE c.scanned_at BETWEEN ? AND ?
+				  AND c.host_id = ?
+				  AND h.enabled = 1
+			),
+			activity_counts AS (
+				SELECT
+					container_name,
+					host_id,
+					host_name,
+					MAX(image) as image,
+					MAX(state) as current_state,
+					COUNT(CASE WHEN prev_state IS NOT NULL AND state != prev_state THEN 1 END) as change_count
+				FROM state_changes
+				GROUP BY container_name, host_id, host_name
+				HAVING change_count > 0
+			),
+			latest_container_id AS (
+				SELECT
+					c.name,
+					c.host_id,
+					MAX(c.id) as container_id
+				FROM containers c
+				WHERE c.scanned_at BETWEEN ? AND ?
+				  AND c.host_id = ?
+				GROUP BY c.name, c.host_id
+			)
+			SELECT
+				lci.container_id,
+				ac.container_name,
+				ac.host_id,
+				ac.host_name,
+				ac.image,
+				ac.change_count as restart_count,
+				ac.current_state
+			FROM activity_counts ac
+			INNER JOIN latest_container_id lci ON ac.container_name = lci.name AND ac.host_id = lci.host_id
+			ORDER BY ac.change_count DESC
+			LIMIT 20
+		`
+	} else {
+		topRestartedQuery = `
+			WITH state_changes AS (
+				SELECT
+					c.name as container_name,
+					c.host_id,
+					c.host_name,
+					c.image,
+					c.state,
+					c.scanned_at,
+					LAG(c.state) OVER (PARTITION BY c.name, c.host_id ORDER BY c.scanned_at) as prev_state
+				FROM containers c
+				INNER JOIN hosts h ON c.host_id = h.id
+				WHERE c.scanned_at BETWEEN ? AND ?
+				  AND h.enabled = 1
+			),
+			activity_counts AS (
+				SELECT
+					container_name,
+					host_id,
+					host_name,
+					MAX(image) as image,
+					MAX(state) as current_state,
+					COUNT(CASE WHEN prev_state IS NOT NULL AND state != prev_state THEN 1 END) as change_count
+				FROM state_changes
+				GROUP BY container_name, host_id, host_name
+				HAVING change_count > 0
+			),
+			latest_container_id AS (
+				SELECT
+					c.name,
+					c.host_id,
+					MAX(c.id) as container_id
+				FROM containers c
+				WHERE c.scanned_at BETWEEN ? AND ?
+				GROUP BY c.name, c.host_id
+			)
+			SELECT
+				lci.container_id,
+				ac.container_name,
+				ac.host_id,
+				ac.host_name,
+				ac.image,
+				ac.change_count as restart_count,
+				ac.current_state
+			FROM activity_counts ac
+			INNER JOIN latest_container_id lci ON ac.container_name = lci.name AND ac.host_id = lci.host_id
+			ORDER BY ac.change_count DESC
+			LIMIT 20
+		`
+	}
+
+	// Build args for query (need start/end twice plus host filter twice if applicable)
+	topRestartArgs := []interface{}{start, end}
+	if hostFilter > 0 {
+		topRestartArgs = append(topRestartArgs, hostFilter)
+	}
+	topRestartArgs = append(topRestartArgs, start, end)
+	if hostFilter > 0 {
+		topRestartArgs = append(topRestartArgs, hostFilter)
+	}
+
+	rows, err = db.conn.Query(topRestartedQuery, topRestartArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query top restarted: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var r models.RestartSummary
+		if err := rows.Scan(&r.ContainerID, &r.ContainerName, &r.HostID, &r.HostName,
+			&r.Image, &r.RestartCount, &r.CurrentState); err != nil {
+			return nil, err
+		}
+		report.TopRestarted = append(report.TopRestarted, r)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// 6. Cross-check for transient containers (appeared and disappeared in same period)
+	// Build a map of containers (name+host_id) that appear in both New and Removed sections
+	transientMap := make(map[string]bool)
+
+	// First pass: identify transient containers
+	for _, newContainer := range report.NewContainers {
+		key := fmt.Sprintf("%s-%d", newContainer.ContainerName, newContainer.HostID)
+		for _, removedContainer := range report.RemovedContainers {
+			removedKey := fmt.Sprintf("%s-%d", removedContainer.ContainerName, removedContainer.HostID)
+			if key == removedKey {
+				transientMap[key] = true
+				break
+			}
+		}
+	}
+
+	// Second pass: mark containers as transient
+	for i := range report.NewContainers {
+		key := fmt.Sprintf("%s-%d", report.NewContainers[i].ContainerName, report.NewContainers[i].HostID)
+		if transientMap[key] {
+			report.NewContainers[i].IsTransient = true
+		}
+	}
+	for i := range report.RemovedContainers {
+		key := fmt.Sprintf("%s-%d", report.RemovedContainers[i].ContainerName, report.RemovedContainers[i].HostID)
+		if transientMap[key] {
+			report.RemovedContainers[i].IsTransient = true
+		}
+	}
+
+	// 7. Build summary statistics
+	report.Summary = models.ReportSummary{
+		NewContainers:     len(report.NewContainers),
+		RemovedContainers: len(report.RemovedContainers),
+		ImageUpdates:      len(report.ImageUpdates),
+		StateChanges:      len(report.StateChanges),
+		Restarts:          len(report.TopRestarted),
+	}
+
+	// Get total hosts and containers
+	hostCountQuery := `SELECT COUNT(DISTINCT host_id) FROM containers WHERE scanned_at BETWEEN ? AND ?` + hostFilterClause
+	if err := db.conn.QueryRow(hostCountQuery, hostFilterArgs...).Scan(&report.Summary.TotalHosts); err != nil {
+		return nil, fmt.Errorf("failed to count hosts: %w", err)
+	}
+
+	containerCountQuery := `SELECT COUNT(DISTINCT id || '-' || host_id) FROM containers WHERE scanned_at BETWEEN ? AND ?` + hostFilterClause
+	if err := db.conn.QueryRow(containerCountQuery, hostFilterArgs...).Scan(&report.Summary.TotalContainers); err != nil {
+		return nil, fmt.Errorf("failed to count containers: %w", err)
+	}
+
+	return report, nil
+}

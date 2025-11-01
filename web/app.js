@@ -250,10 +250,10 @@ function setupKeyboardShortcuts() {
         }
 
         // Tab switching with number keys
-        if (e.key >= '1' && e.key <= '9') {
+        if ((e.key >= '1' && e.key <= '9') || e.key === '0') {
             e.preventDefault();
-            const tabs = ['containers', 'monitoring', 'images', 'graph', 'hosts', 'history', 'activity', 'notifications', 'settings'];
-            const tabIndex = parseInt(e.key) - 1;
+            const tabs = ['containers', 'monitoring', 'images', 'graph', 'hosts', 'history', 'activity', 'reports', 'notifications', 'settings'];
+            const tabIndex = e.key === '0' ? 9 : parseInt(e.key) - 1;
             if (tabs[tabIndex]) {
                 switchTab(tabs[tabIndex]);
             }
@@ -453,6 +453,8 @@ function switchTab(tab, updateHistory = true) {
         loadContainerHistory();
     } else if (tab === 'activity') {
         loadActivityLog();
+    } else if (tab === 'reports') {
+        initializeReportsTab();
     } else if (tab === 'settings') {
         loadCollectors();
         loadScannerSettings();
@@ -3760,15 +3762,25 @@ async function loadStatsData() {
         console.log('Stats data received:', stats);
 
         if (!stats || !Array.isArray(stats) || stats.length === 0) {
-            document.getElementById('statsContent').innerHTML = '<div class="loading">No stats data available for this time range. Stats collection may need more time to gather data.</div>';
+            document.getElementById('statsMessage').textContent = 'No stats data available for this time range. Stats collection may need more time to gather data.';
+            document.getElementById('statsMessage').className = 'loading';
+            document.getElementById('statsMessage').style.display = 'block';
+            document.getElementById('statsChartArea').style.display = 'none';
             return;
         }
+
+        // Hide message and show charts
+        document.getElementById('statsMessage').style.display = 'none';
+        document.getElementById('statsChartArea').style.display = 'block';
 
         renderStatsCharts(stats);
         updateStatsSummary(stats);
     } catch (error) {
         console.error('Error loading stats:', error);
-        document.getElementById('statsContent').innerHTML = `<div class="error">Failed to load stats data: ${error.message}</div>`;
+        document.getElementById('statsMessage').textContent = `Failed to load stats data: ${error.message}`;
+        document.getElementById('statsMessage').className = 'error';
+        document.getElementById('statsMessage').style.display = 'block';
+        document.getElementById('statsChartArea').style.display = 'none';
     }
 }
 
@@ -3784,7 +3796,8 @@ function renderStatsCharts(stats) {
     const memoryLimitData = stats.map(s => (s.memory_limit || 0) / 1024 / 1024);
 
     // CPU Chart
-    const cpuCtx = document.getElementById('cpuChart').getContext('2d');
+    const cpuCanvas = document.getElementById('cpuChart');
+    const cpuCtx = cpuCanvas.getContext('2d');
     statsCharts.cpu = new Chart(cpuCtx, {
         type: 'line',
         data: {
@@ -3829,7 +3842,8 @@ function renderStatsCharts(stats) {
     });
 
     // Memory Chart
-    const memoryCtx = document.getElementById('memoryChart').getContext('2d');
+    const memoryCanvas = document.getElementById('memoryChart');
+    const memoryCtx = memoryCanvas.getContext('2d');
     const datasets = [{
         label: 'Memory Usage (MB)',
         data: memoryData,
@@ -3917,3 +3931,610 @@ function updateStatsSummary(stats) {
 document.getElementById('statsModal')?.addEventListener('click', (e) => {
     if (e.target.classList.contains('modal')) closeStatsModal();
 });
+
+// ==================== REPORTS TAB ====================
+
+let currentReport = null;
+let changesTimelineChart = null;
+
+// Initialize reports tab
+function initializeReportsTab() {
+    // Set default date range to last 7 days
+    const end = new Date();
+    const start = new Date(end - 7 * 24 * 60 * 60 * 1000);
+
+    document.getElementById('reportStartDate').value = formatDateTimeLocal(start);
+    document.getElementById('reportEndDate').value = formatDateTimeLocal(end);
+
+    // Load hosts for filter
+    loadHostsForReportFilter();
+
+    // Set up event listeners
+    setupReportEventListeners();
+}
+
+// Set up event listeners for reports tab
+function setupReportEventListeners() {
+    document.getElementById('generateReportBtn').addEventListener('click', generateReport);
+    document.getElementById('report7d').addEventListener('click', () => setReportRange(7));
+    document.getElementById('report30d').addEventListener('click', () => setReportRange(30));
+    document.getElementById('report90d').addEventListener('click', () => setReportRange(90));
+    document.getElementById('exportReportBtn').addEventListener('click', exportReport);
+}
+
+// Navigate to History tab with container filter
+function goToContainerHistory(containerName, hostId) {
+    // Switch to history tab
+    switchTab('history');
+
+    // Set the search filter to the container name
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) {
+        searchInput.value = containerName;
+    }
+
+    // Set the host filter if provided
+    const hostFilter = document.getElementById('hostFilter');
+    if (hostFilter && hostId) {
+        hostFilter.value = hostId.toString();
+    }
+
+    // Apply the filters
+    setTimeout(() => {
+        applyCurrentFilters();
+    }, 100);
+}
+
+// Format date for datetime-local input
+function formatDateTimeLocal(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+// Load hosts for report filter dropdown
+async function loadHostsForReportFilter() {
+    try {
+        const response = await fetch('/api/hosts');
+        const data = await response.json();
+
+        const select = document.getElementById('reportHostFilter');
+        select.innerHTML = '<option value="">All Hosts</option>';
+
+        data.forEach(host => {
+            const option = document.createElement('option');
+            option.value = host.id;
+            option.textContent = host.name;
+            select.appendChild(option);
+        });
+    } catch (error) {
+        console.error('Failed to load hosts for report filter:', error);
+    }
+}
+
+// Set report date range preset
+function setReportRange(days) {
+    const end = new Date();
+    const start = new Date(end - days * 24 * 60 * 60 * 1000);
+
+    document.getElementById('reportStartDate').value = formatDateTimeLocal(start);
+    document.getElementById('reportEndDate').value = formatDateTimeLocal(end);
+}
+
+// Generate report
+async function generateReport() {
+    const startInput = document.getElementById('reportStartDate').value;
+    const endInput = document.getElementById('reportEndDate').value;
+    const hostFilter = document.getElementById('reportHostFilter').value;
+
+    if (!startInput || !endInput) {
+        alert('Please select both start and end dates');
+        return;
+    }
+
+    const start = new Date(startInput).toISOString();
+    const end = new Date(endInput).toISOString();
+
+    // Show loading, hide results and empty state
+    document.getElementById('reportLoading').style.display = 'block';
+    document.getElementById('reportResults').style.display = 'none';
+    document.getElementById('reportEmptyState').style.display = 'none';
+
+    try {
+        let url = `/api/reports/changes?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+        if (hostFilter) {
+            url += `&host_id=${hostFilter}`;
+        }
+
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+        }
+
+        currentReport = await response.json();
+        renderReport(currentReport);
+
+        // Hide loading, show results
+        document.getElementById('reportLoading').style.display = 'none';
+        document.getElementById('reportResults').style.display = 'block';
+    } catch (error) {
+        console.error('Failed to generate report:', error);
+        alert('Failed to generate report: ' + error.message);
+        document.getElementById('reportLoading').style.display = 'none';
+        document.getElementById('reportEmptyState').style.display = 'block';
+    }
+}
+
+// Render report
+function renderReport(report) {
+    // Render summary cards
+    renderReportSummary(report.summary);
+
+    // Render timeline chart
+    renderTimelineChart(report);
+
+    // Render details sections
+    renderNewContainers(report.new_containers);
+    renderRemovedContainers(report.removed_containers);
+    renderImageUpdates(report.image_updates);
+    renderStateChanges(report.state_changes);
+    renderTopRestarted(report.top_restarted);
+}
+
+// Render summary cards
+function renderReportSummary(summary) {
+    const cardsHTML = `
+        <div class="stat-card">
+            <div class="stat-icon">🖥️</div>
+            <div class="stat-content">
+                <div class="stat-value">${summary.total_hosts}</div>
+                <div class="stat-label">Total Hosts</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">📦</div>
+            <div class="stat-content">
+                <div class="stat-value">${summary.total_containers}</div>
+                <div class="stat-label">Total Containers</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">🆕</div>
+            <div class="stat-content">
+                <div class="stat-value">${summary.new_containers}</div>
+                <div class="stat-label">New Containers</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">❌</div>
+            <div class="stat-content">
+                <div class="stat-value">${summary.removed_containers}</div>
+                <div class="stat-label">Removed</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">🔄</div>
+            <div class="stat-content">
+                <div class="stat-value">${summary.image_updates}</div>
+                <div class="stat-label">Image Updates</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">🔀</div>
+            <div class="stat-content">
+                <div class="stat-value">${summary.state_changes}</div>
+                <div class="stat-label">State Changes</div>
+            </div>
+        </div>
+    `;
+
+    document.getElementById('reportSummaryCards').innerHTML = cardsHTML;
+}
+
+// Render timeline chart
+function renderTimelineChart(report) {
+    // Destroy existing chart if it exists
+    if (changesTimelineChart) {
+        changesTimelineChart.destroy();
+    }
+
+    // Aggregate changes by day
+    const changesByDay = {};
+
+    // Helper to get day key
+    const getDayKey = (timestamp) => {
+        const date = new Date(timestamp);
+        return date.toISOString().split('T')[0];
+    };
+
+    // Count new containers
+    report.new_containers.forEach(c => {
+        const day = getDayKey(c.timestamp);
+        if (!changesByDay[day]) changesByDay[day] = { new: 0, removed: 0, imageUpdates: 0, stateChanges: 0 };
+        changesByDay[day].new++;
+    });
+
+    // Count removed containers
+    report.removed_containers.forEach(c => {
+        const day = getDayKey(c.timestamp);
+        if (!changesByDay[day]) changesByDay[day] = { new: 0, removed: 0, imageUpdates: 0, stateChanges: 0 };
+        changesByDay[day].removed++;
+    });
+
+    // Count image updates
+    report.image_updates.forEach(u => {
+        const day = getDayKey(u.updated_at);
+        if (!changesByDay[day]) changesByDay[day] = { new: 0, removed: 0, imageUpdates: 0, stateChanges: 0 };
+        changesByDay[day].imageUpdates++;
+    });
+
+    // Count state changes
+    report.state_changes.forEach(s => {
+        const day = getDayKey(s.changed_at);
+        if (!changesByDay[day]) changesByDay[day] = { new: 0, removed: 0, imageUpdates: 0, stateChanges: 0 };
+        changesByDay[day].stateChanges++;
+    });
+
+    // Sort days
+    const days = Object.keys(changesByDay).sort();
+
+    const ctx = document.getElementById('changesTimelineChart').getContext('2d');
+    changesTimelineChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: days.map(d => new Date(d).toLocaleDateString()),
+            datasets: [
+                {
+                    label: 'New Containers',
+                    data: days.map(d => changesByDay[d].new),
+                    borderColor: '#2ecc71',
+                    backgroundColor: 'rgba(46, 204, 113, 0.1)',
+                    tension: 0.4
+                },
+                {
+                    label: 'Removed Containers',
+                    data: days.map(d => changesByDay[d].removed),
+                    borderColor: '#e74c3c',
+                    backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                    tension: 0.4
+                },
+                {
+                    label: 'Image Updates',
+                    data: days.map(d => changesByDay[d].imageUpdates),
+                    borderColor: '#3498db',
+                    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                    tension: 0.4
+                },
+                {
+                    label: 'State Changes',
+                    data: days.map(d => changesByDay[d].stateChanges),
+                    borderColor: '#f39c12',
+                    backgroundColor: 'rgba(243, 156, 18, 0.1)',
+                    tension: 0.4
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'bottom'
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        stepSize: 1
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Render new containers table
+function renderNewContainers(containers) {
+    document.getElementById('newContainersCount').textContent = containers.length;
+
+    if (containers.length === 0) {
+        document.getElementById('newContainersTable').innerHTML = '<p class="empty-message">No new containers in this period</p>';
+        return;
+    }
+
+    const tableHTML = `
+        <table class="report-table">
+            <thead>
+                <tr>
+                    <th>Container Name</th>
+                    <th>Image</th>
+                    <th>Host</th>
+                    <th>First Seen</th>
+                    <th>State</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${containers.map(c => `
+                    <tr>
+                        <td>
+                            <code class="container-link" onclick="goToContainerHistory('${escapeHtml(c.container_name)}', ${c.host_id})" title="View in History">
+                                ${escapeHtml(c.container_name)} 🔗
+                            </code>
+                            ${c.is_transient ? '<span class="transient-badge" title="This container appeared and disappeared within the reporting period">⚡ Transient</span>' : ''}
+                        </td>
+                        <td>${escapeHtml(c.image)}</td>
+                        <td>${escapeHtml(c.host_name)}</td>
+                        <td>${formatDateTime(c.timestamp)}</td>
+                        <td><span class="status-badge status-${c.state}">${c.state}</span></td>
+                        <td>
+                            <button class="btn-icon" onclick="openStatsModal(${c.host_id}, '${escapeHtml(c.container_id)}', '${escapeHtml(c.container_name)}')" title="View Stats & Timeline">
+                                📊
+                            </button>
+                            <button class="btn-icon" onclick="viewContainerTimeline(${c.host_id}, '${escapeHtml(c.container_id)}', '${escapeHtml(c.container_name)}')" title="View Lifecycle Timeline">
+                                📜
+                            </button>
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+
+    document.getElementById('newContainersTable').innerHTML = tableHTML;
+}
+
+// Render removed containers table
+function renderRemovedContainers(containers) {
+    document.getElementById('removedContainersCount').textContent = containers.length;
+
+    if (containers.length === 0) {
+        document.getElementById('removedContainersTable').innerHTML = '<p class="empty-message">No removed containers in this period</p>';
+        return;
+    }
+
+    const tableHTML = `
+        <table class="report-table">
+            <thead>
+                <tr>
+                    <th>Container Name</th>
+                    <th>Image</th>
+                    <th>Host</th>
+                    <th>Last Seen</th>
+                    <th>Final State</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${containers.map(c => `
+                    <tr>
+                        <td>
+                            <code class="container-link" onclick="goToContainerHistory('${escapeHtml(c.container_name)}', ${c.host_id})" title="View in History">
+                                ${escapeHtml(c.container_name)} 🔗
+                            </code>
+                            ${c.is_transient ? '<span class="transient-badge" title="This container appeared and disappeared within the reporting period">⚡ Transient</span>' : ''}
+                        </td>
+                        <td>${escapeHtml(c.image)}</td>
+                        <td>${escapeHtml(c.host_name)}</td>
+                        <td>${formatDateTime(c.timestamp)}</td>
+                        <td><span class="status-badge status-${c.state}">${c.state}</span></td>
+                        <td>
+                            <button class="btn-icon" onclick="openStatsModal(${c.host_id}, '${escapeHtml(c.container_id)}', '${escapeHtml(c.container_name)}')" title="View Stats & Timeline">
+                                📊
+                            </button>
+                            <button class="btn-icon" onclick="viewContainerTimeline(${c.host_id}, '${escapeHtml(c.container_id)}', '${escapeHtml(c.container_name)}')" title="View Lifecycle Timeline">
+                                📜
+                            </button>
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+
+    document.getElementById('removedContainersTable').innerHTML = tableHTML;
+}
+
+// Render image updates table
+function renderImageUpdates(updates) {
+    document.getElementById('imageUpdatesCount').textContent = updates.length;
+
+    if (updates.length === 0) {
+        document.getElementById('imageUpdatesTable').innerHTML = '<p class="empty-message">No image updates in this period</p>';
+        return;
+    }
+
+    const tableHTML = `
+        <table class="report-table">
+            <thead>
+                <tr>
+                    <th>Container Name</th>
+                    <th>Host</th>
+                    <th>Old Image</th>
+                    <th>New Image</th>
+                    <th>Updated At</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${updates.map(u => `
+                    <tr>
+                        <td>
+                            <code class="container-link" onclick="goToContainerHistory('${escapeHtml(u.container_name)}', ${u.host_id})" title="View in History">
+                                ${escapeHtml(u.container_name)} 🔗
+                            </code>
+                        </td>
+                        <td>${escapeHtml(u.host_name)}</td>
+                        <td>${escapeHtml(u.old_image)}<br><small>${u.old_image_id.substring(0, 12)}</small></td>
+                        <td>${escapeHtml(u.new_image)}<br><small>${u.new_image_id.substring(0, 12)}</small></td>
+                        <td>${formatDateTime(u.updated_at)}</td>
+                        <td>
+                            <button class="btn-icon" onclick="openStatsModal(${u.host_id}, '${escapeHtml(u.container_id)}', '${escapeHtml(u.container_name)}')" title="View Stats & Timeline">
+                                📊
+                            </button>
+                            <button class="btn-icon" onclick="viewContainerTimeline(${u.host_id}, '${escapeHtml(u.container_id)}', '${escapeHtml(u.container_name)}')" title="View Lifecycle Timeline">
+                                📜
+                            </button>
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+
+    document.getElementById('imageUpdatesTable').innerHTML = tableHTML;
+}
+
+// Render state changes table
+function renderStateChanges(changes) {
+    document.getElementById('stateChangesCount').textContent = changes.length;
+
+    if (changes.length === 0) {
+        document.getElementById('stateChangesTable').innerHTML = '<p class="empty-message">No state changes in this period</p>';
+        return;
+    }
+
+    const tableHTML = `
+        <table class="report-table">
+            <thead>
+                <tr>
+                    <th>Container Name</th>
+                    <th>Host</th>
+                    <th>Old State</th>
+                    <th>New State</th>
+                    <th>Changed At</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${changes.map(s => `
+                    <tr>
+                        <td>
+                            <code class="container-link" onclick="goToContainerHistory('${escapeHtml(s.container_name)}', ${s.host_id})" title="View in History">
+                                ${escapeHtml(s.container_name)} 🔗
+                            </code>
+                        </td>
+                        <td>${escapeHtml(s.host_name)}</td>
+                        <td><span class="status-badge status-${s.old_state}">${s.old_state}</span></td>
+                        <td><span class="status-badge status-${s.new_state}">${s.new_state}</span></td>
+                        <td>${formatDateTime(s.changed_at)}</td>
+                        <td>
+                            <button class="btn-icon" onclick="openStatsModal(${s.host_id}, '${escapeHtml(s.container_id)}', '${escapeHtml(s.container_name)}')" title="View Stats & Timeline">
+                                📊
+                            </button>
+                            <button class="btn-icon" onclick="viewContainerTimeline(${s.host_id}, '${escapeHtml(s.container_id)}', '${escapeHtml(s.container_name)}')" title="View Lifecycle Timeline">
+                                📜
+                            </button>
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+
+    document.getElementById('stateChangesTable').innerHTML = tableHTML;
+}
+
+// Render top restarted containers table
+function renderTopRestarted(containers) {
+    document.getElementById('topRestartedCount').textContent = containers.length;
+
+    if (containers.length === 0) {
+        document.getElementById('topRestartedTable').innerHTML = '<p class="empty-message">No active containers in this period</p>';
+        return;
+    }
+
+    const tableHTML = `
+        <table class="report-table">
+            <thead>
+                <tr>
+                    <th>Container Name</th>
+                    <th>Image</th>
+                    <th>Host</th>
+                    <th>Activity Count</th>
+                    <th>Current State</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${containers.map(r => `
+                    <tr>
+                        <td>
+                            <code class="container-link" onclick="goToContainerHistory('${escapeHtml(r.container_name)}', ${r.host_id})" title="View in History">
+                                ${escapeHtml(r.container_name)} 🔗
+                            </code>
+                        </td>
+                        <td>${escapeHtml(r.image)}</td>
+                        <td>${escapeHtml(r.host_name)}</td>
+                        <td>${r.restart_count}</td>
+                        <td><span class="status-badge status-${r.current_state}">${r.current_state}</span></td>
+                        <td>
+                            <button class="btn-icon" onclick="openStatsModal(${r.host_id}, '${escapeHtml(r.container_id)}', '${escapeHtml(r.container_name)}')" title="View Stats & Timeline">
+                                📊
+                            </button>
+                            <button class="btn-icon" onclick="viewContainerTimeline(${r.host_id}, '${escapeHtml(r.container_id)}', '${escapeHtml(r.container_name)}')" title="View Lifecycle Timeline">
+                                📜
+                            </button>
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+
+    document.getElementById('topRestartedTable').innerHTML = tableHTML;
+}
+
+// Toggle report section visibility
+window.toggleReportSection = function(section) {
+    const sectionElement = document.getElementById(`${section}Section`);
+    const isVisible = sectionElement.style.display !== 'none';
+    sectionElement.style.display = isVisible ? 'none' : 'block';
+
+    // Toggle collapse icon
+    const header = sectionElement.previousElementSibling;
+    const icon = header.querySelector('.collapse-icon');
+    if (icon) {
+        icon.textContent = isVisible ? '▶' : '▼';
+    }
+};
+
+// Export report as JSON
+function exportReport() {
+    if (!currentReport) {
+        alert('No report to export. Please generate a report first.');
+        return;
+    }
+
+    const dataStr = JSON.stringify(currentReport, null, 2);
+    const dataBlob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(dataBlob);
+
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `container-census-report-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+}
+
+// Helper: Escape HTML
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Helper: Format date/time
+function formatDateTime(timestamp) {
+    if (!timestamp) return '-';
+    const date = new Date(timestamp);
+    return date.toLocaleString();
+}

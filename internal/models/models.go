@@ -460,3 +460,79 @@ type NotificationStatus struct {
 	RateLimitRemaining int       `json:"rate_limit_remaining"`
 	RateLimitReset     time.Time `json:"rate_limit_reset"`
 }
+
+// ChangesReport represents a summary of environment changes over a time period
+type ChangesReport struct {
+	Period            ReportPeriod        `json:"period"`
+	Summary           ReportSummary       `json:"summary"`
+	NewContainers     []ContainerChange   `json:"new_containers"`
+	RemovedContainers []ContainerChange   `json:"removed_containers"`
+	ImageUpdates      []ImageUpdateChange `json:"image_updates"`
+	StateChanges      []StateChange       `json:"state_changes"`
+	TopRestarted      []RestartSummary    `json:"top_restarted"`
+}
+
+// ReportPeriod represents the time range for a report
+type ReportPeriod struct {
+	Start         time.Time `json:"start"`
+	End           time.Time `json:"end"`
+	DurationHours int       `json:"duration_hours"`
+}
+
+// ReportSummary contains aggregate statistics for a changes report
+type ReportSummary struct {
+	TotalHosts        int `json:"total_hosts"`
+	TotalContainers   int `json:"total_containers"`
+	NewContainers     int `json:"new_containers"`
+	RemovedContainers int `json:"removed_containers"`
+	ImageUpdates      int `json:"image_updates"`
+	StateChanges      int `json:"state_changes"`
+	Restarts          int `json:"restarts"`
+}
+
+// ContainerChange represents a new or removed container event
+type ContainerChange struct {
+	ContainerID   string    `json:"container_id"`
+	ContainerName string    `json:"container_name"`
+	Image         string    `json:"image"`
+	HostID        int64     `json:"host_id"`
+	HostName      string    `json:"host_name"`
+	Timestamp     time.Time `json:"timestamp"` // first_seen or last_seen
+	State         string    `json:"state"`
+	IsTransient   bool      `json:"is_transient"` // true if container appeared and disappeared in same period
+}
+
+// ImageUpdateChange represents an image update event
+type ImageUpdateChange struct {
+	ContainerID   string    `json:"container_id"`
+	ContainerName string    `json:"container_name"`
+	HostID        int64     `json:"host_id"`
+	HostName      string    `json:"host_name"`
+	OldImage      string    `json:"old_image"`
+	NewImage      string    `json:"new_image"`
+	OldImageID    string    `json:"old_image_id"`
+	NewImageID    string    `json:"new_image_id"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// StateChange represents a container state transition event
+type StateChange struct {
+	ContainerID   string    `json:"container_id"`
+	ContainerName string    `json:"container_name"`
+	HostID        int64     `json:"host_id"`
+	HostName      string    `json:"host_name"`
+	OldState      string    `json:"old_state"`
+	NewState      string    `json:"new_state"`
+	ChangedAt     time.Time `json:"changed_at"`
+}
+
+// RestartSummary represents containers with the most restarts
+type RestartSummary struct {
+	ContainerID   string `json:"container_id"`
+	ContainerName string `json:"container_name"`
+	HostID        int64  `json:"host_id"`
+	HostName      string `json:"host_name"`
+	RestartCount  int    `json:"restart_count"`
+	CurrentState  string `json:"current_state"`
+	Image         string `json:"image"`
+}
