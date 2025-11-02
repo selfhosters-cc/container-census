@@ -10,6 +10,16 @@ Container Census is a multi-host Docker monitoring system written in Go. It cons
 2. **Agent** (`cmd/agent`): Lightweight agent for remote Docker hosts
 3. **Telemetry Collector** (`cmd/telemetry-collector`): Analytics aggregation service with PostgreSQL backend
 
+## Build Instructions
+
+**IMPORTANT**: When building binaries during development, ALWAYS build to `/tmp/container-census`:
+
+```bash
+CGO_ENABLED=1 go build -o /tmp/container-census ./cmd/server
+```
+
+This ensures a consistent location for testing and prevents confusion with multiple build locations.
+
 ## Build and Development Commands
 
 ### Prerequisites

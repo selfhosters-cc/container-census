@@ -16,6 +16,10 @@ let vulnerabilityCache = {}; // Cache vulnerability data by imageID
 let vulnerabilityScansMap = {}; // Pre-loaded map of all scans to avoid 404s
 let vulnerabilitySummary = null; // Cache overall summary
 
+// Auth credentials (empty if auth is disabled)
+let authUsername = '';
+let authPassword = '';
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
@@ -416,6 +420,7 @@ function setupEventListeners() {
     document.getElementById('vulnerabilitySettingsBtn')?.addEventListener('click', openVulnerabilitySettingsModal);
     document.getElementById('securitySearchInput')?.addEventListener('input', filterSecurityScans);
     document.getElementById('securitySeverityFilter')?.addEventListener('change', filterSecurityScans);
+    document.getElementById('securityStatusFilter')?.addEventListener('change', filterSecurityScans);
 
     // Vulnerability settings modal
     const vulnSettingsForm = document.getElementById('vulnerabilitySettingsForm');
@@ -4639,7 +4644,11 @@ async function getVulnerabilityScan(imageID) {
 // Pre-load all vulnerability scans to avoid 404 requests
 async function preloadVulnerabilityScans() {
     try {
-        const response = await fetch('/api/vulnerabilities/scans?limit=1000');
+        const response = await fetch('/api/vulnerabilities/scans?limit=1000', {
+            headers: {
+                'Authorization': 'Basic ' + btoa(authUsername + ':' + authPassword)
+            }
+        });
         if (response.ok) {
             const scans = await response.json();
             // Build a map of imageID -> scan data
@@ -4733,7 +4742,7 @@ function getVulnerabilityBadgeHTML(scan) {
 // Add vulnerability badge to container card (called asynchronously)
 async function addVulnerabilityBadge(containerElement, imageID) {
     const scan = await getVulnerabilityScan(imageID);
-    const badgeHTML = getVulnerabilityBadgeHTML(scan);
+    const badgeHTML = getVulnerabilityBadgeHTML(scan, imageID);
 
     // Find the image row in the container card
     const imageRow = containerElement.querySelector('.detail-value.image-value');
@@ -4741,7 +4750,16 @@ async function addVulnerabilityBadge(containerElement, imageID) {
         // Add badge after the image name
         const badgeContainer = document.createElement('span');
         badgeContainer.innerHTML = badgeHTML;
-        imageRow.parentElement.appendChild(badgeContainer.firstChild);
+        const badge = badgeContainer.firstChild;
+
+        // Make badge clickable if it has vulnerabilities
+        if (scan && scan.scan && scan.scan.success) {
+            const imageName = imageRow.textContent.trim();
+            badge.style.cursor = 'pointer';
+            badge.onclick = () => viewVulnerabilityDetails(imageID, imageName);
+        }
+
+        imageRow.parentElement.appendChild(badge);
     }
 }
 
@@ -4795,13 +4813,13 @@ async function loadSecurityTab() {
         allVulnerabilityScans = scans || [];
 
         // Update summary cards
-        updateSecuritySummaryCards(summary);
+        updateSecuritySummaryCards(summary, allVulnerabilityScans);
 
         // Render security chart
         renderSecurityChart(summary);
 
         // Render vulnerability trends chart
-        renderVulnerabilityTrendsChart();
+        renderVulnerabilityTrendsChart(allVulnerabilityScans);
 
         // Update queue status
         updateQueueStatus(summary?.queue_status);
@@ -4864,7 +4882,7 @@ async function loadAllVulnerabilityScans() {
 }
 
 // Update security summary cards
-function updateSecuritySummaryCards(summary) {
+function updateSecuritySummaryCards(summary, scans) {
     if (!summary) {
         document.getElementById('totalScannedImages').textContent = '-';
         document.getElementById('totalCriticalVulns').textContent = '-';
@@ -4875,7 +4893,12 @@ function updateSecuritySummaryCards(summary) {
 
     // Handle both wrapped (summary.summary) and direct summary objects
     const s = summary.summary || summary;
-    document.getElementById('totalScannedImages').textContent = s.total_images_scanned || 0;
+    const totalScans = scans ? scans.length : 0;
+    const uniqueImages = s.total_images_scanned || 0;
+
+    // Show both unique images and total scans for clarity
+    const displayText = totalScans > 0 ? `${uniqueImages} (${totalScans} scans)` : `${uniqueImages}`;
+    document.getElementById('totalScannedImages').textContent = displayText;
     document.getElementById('totalCriticalVulns').textContent = s.severity_counts?.critical || 0;
     document.getElementById('totalHighVulns').textContent = s.severity_counts?.high || 0;
     document.getElementById('atRiskImages').textContent = s.images_with_vulnerabilities || 0;
@@ -4941,21 +4964,16 @@ function renderSecurityChart(summary) {
 let trendsChart = null;
 
 // Render vulnerability trends chart
-async function renderVulnerabilityTrendsChart() {
+function renderVulnerabilityTrendsChart(scans) {
     const ctx = document.getElementById('vulnerabilityTrendsChart');
     if (!ctx) return;
 
     try {
-        // Fetch all scans
-        const response = await fetch('/api/vulnerabilities/scans?limit=1000', {
-            headers: { 'Authorization': 'Basic ' + btoa(authUsername + ':' + authPassword) }
-        });
-
-        if (!response.ok) {
-            throw new Error('Failed to fetch scans');
+        // Use provided scans data
+        if (!scans || scans.length === 0) {
+            console.log('No scan data available for trends chart');
+            return;
         }
-
-        const scans = await response.json();
 
         // Group scans by date (last 30 days) and calculate aggregates
         const now = new Date();
@@ -5168,6 +5186,7 @@ function updateQueueStatus(queueStatus) {
 function filterSecurityScans() {
     const searchTerm = document.getElementById('securitySearchInput')?.value.toLowerCase() || '';
     const severityFilter = document.getElementById('securitySeverityFilter')?.value || '';
+    const statusFilter = document.getElementById('securityStatusFilter')?.value || '';
 
     const filtered = allVulnerabilityScans.filter(scan => {
         const matchesSearch = searchTerm === '' ||
@@ -5177,7 +5196,7 @@ function filterSecurityScans() {
         let matchesSeverity = true;
         if (severityFilter) {
             if (severityFilter === 'clean') {
-                matchesSeverity = scan.total_vulnerabilities === 0;
+                matchesSeverity = scan.total_vulnerabilities === 0 && scan.success;
             } else if (severityFilter === 'critical') {
                 matchesSeverity = (scan.severity_counts?.critical || 0) > 0;
             } else if (severityFilter === 'high') {
@@ -5189,7 +5208,19 @@ function filterSecurityScans() {
             }
         }
 
-        return matchesSearch && matchesSeverity;
+        let matchesStatus = true;
+        if (statusFilter) {
+            const error = scan.error || '';
+            if (statusFilter === 'scanned') {
+                matchesStatus = scan.success;
+            } else if (statusFilter === 'remote') {
+                matchesStatus = !scan.success && (error.includes('image not available for scanning') || error.includes('not available'));
+            } else if (statusFilter === 'failed') {
+                matchesStatus = !scan.success && !(error.includes('image not available for scanning') || error.includes('not available'));
+            }
+        }
+
+        return matchesSearch && matchesSeverity && matchesStatus;
     });
 
     renderSecurityScansTable(filtered);
@@ -5201,7 +5232,7 @@ function renderSecurityScansTable(scans) {
     if (!tbody) return;
 
     if (scans.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="loading">No scans found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="loading">No scans found</td></tr>';
         return;
     }
 
@@ -5214,9 +5245,28 @@ function renderSecurityScansTable(scans) {
         const low = counts.low || 0;
         const scannedTime = formatTimeAgo(new Date(scan.scanned_at));
 
+        // Determine status badge
+        let statusBadge = '';
+        if (!scan.success) {
+            const error = scan.error || '';
+            if (error.includes('image not available for scanning') || error.includes('not available')) {
+                statusBadge = '<span class="vulnerability-badge remote" title="Remote image - not available for scanning">🌐 Remote</span>';
+            } else {
+                statusBadge = '<span class="vulnerability-badge not-scanned" title="Scan failed">⚠️ Failed</span>';
+            }
+        } else if (total === 0) {
+            statusBadge = '<span class="vulnerability-badge clean" title="No vulnerabilities found">✓ Clean</span>';
+        } else if (critical > 0) {
+            statusBadge = '<span class="vulnerability-badge critical" title="Has critical vulnerabilities">🚨 Critical</span>';
+        } else if (high > 0) {
+            statusBadge = '<span class="vulnerability-badge high" title="Has high vulnerabilities">⚠️ High</span>';
+        } else {
+            statusBadge = '<span class="vulnerability-badge medium" title="Has vulnerabilities">⚡ Vuln</span>';
+        }
+
         // Check if this image is currently being scanned
-        const isScanning = scanningImages.has(scan.image_id);
-        const rescanBtnClass = isScanning ? 'btn btn-sm btn-secondary' : 'btn btn-sm btn-secondary';
+        const isScanning = scan.image_id && scanningImages.has(scan.image_id);
+        const rescanBtnClass = 'btn btn-sm btn-secondary';
         const rescanBtnDisabled = isScanning ? 'disabled' : '';
         const rescanBtnText = isScanning ? '⏳ Scanning...' : '🔄 Rescan';
 
@@ -5229,6 +5279,7 @@ function renderSecurityScansTable(scans) {
         return `
             <tr class="${rowClass}">
                 <td><code>${escapeHtml(scan.image_name)}</code></td>
+                <td>${statusBadge}</td>
                 <td>${total}</td>
                 <td><span class="severity-badge critical">${critical}</span></td>
                 <td><span class="severity-badge high">${high}</span></td>
@@ -5251,7 +5302,10 @@ function renderSecurityScansTable(scans) {
 // Trigger scan for all images
 async function scanAllImages() {
     try {
-        const response = await fetch('/api/vulnerabilities/scan-all', { method: 'POST' });
+        const response = await fetch('/api/vulnerabilities/scan-all', {
+            method: 'POST',
+            headers: { 'Authorization': 'Basic ' + btoa(authUsername + ':' + authPassword) }
+        });
         if (response.ok) {
             const data = await response.json();
             showNotification(`Queued ${data.images_queued} images for scanning`, 'success');
@@ -5270,7 +5324,10 @@ async function scanAllImages() {
 // Trigger scan for a specific image
 async function rescanImage(imageID, imageName) {
     try {
-        const response = await fetch(`/api/vulnerabilities/scan/${encodeURIComponent(imageID)}`, { method: 'POST' });
+        const response = await fetch(`/api/vulnerabilities/scan/${encodeURIComponent(imageID)}`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Basic ' + btoa(authUsername + ':' + authPassword) }
+        });
         if (response.ok) {
             showNotification(`Queued ${imageName} for scanning`, 'success');
             // Just update the queue status, don't reload the entire table
@@ -5291,7 +5348,10 @@ async function rescanImage(imageID, imageName) {
 async function updateTrivyDB() {
     try {
         showNotification('Updating Trivy database... This may take a few minutes.', 'info');
-        const response = await fetch('/api/vulnerabilities/update-db', { method: 'POST' });
+        const response = await fetch('/api/vulnerabilities/update-db', {
+            method: 'POST',
+            headers: { 'Authorization': 'Basic ' + btoa(authUsername + ':' + authPassword) }
+        });
         if (response.ok) {
             showNotification('Trivy database updated successfully', 'success');
         } else {
@@ -5311,7 +5371,11 @@ async function viewVulnerabilityDetails(imageID, imageName) {
     document.getElementById('vulnDetailsContent').innerHTML = '<div class="loading">Loading vulnerabilities...</div>';
 
     try {
-        const response = await fetch(`/api/vulnerabilities/image/${encodeURIComponent(imageID)}`);
+        const response = await fetch(`/api/vulnerabilities/image/${encodeURIComponent(imageID)}`, {
+            headers: {
+                'Authorization': 'Basic ' + btoa(authUsername + ':' + authPassword)
+            }
+        });
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
         }
@@ -5423,7 +5487,7 @@ async function openVulnerabilitySettingsModal() {
         if (response.ok) {
             currentVulnerabilitySettings = await response.json();
             populateVulnerabilitySettingsForm(currentVulnerabilitySettings);
-            document.getElementById('vulnerabilitySettingsModal').classList.add('active');
+            document.getElementById('vulnerabilitySettingsModal').classList.add('show');
         } else {
             showNotification('Failed to load vulnerability settings', 'error');
         }
@@ -5435,7 +5499,7 @@ async function openVulnerabilitySettingsModal() {
 
 // Close vulnerability settings modal
 function closeVulnerabilitySettingsModal() {
-    document.getElementById('vulnerabilitySettingsModal').classList.remove('active');
+    document.getElementById('vulnerabilitySettingsModal').classList.remove('show');
 }
 
 // Populate vulnerability settings form

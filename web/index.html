@@ -354,6 +354,12 @@
                                 <option value="low">Low</option>
                                 <option value="clean">Clean</option>
                             </select>
+                            <select id="securityStatusFilter" class="filter-select">
+                                <option value="">All Status</option>
+                                <option value="scanned">Scanned Only</option>
+                                <option value="remote">Remote Only</option>
+                                <option value="failed">Failed Only</option>
+                            </select>
                             <input type="text" id="securitySearchInput" class="search-input" placeholder="🔍 Search images...">
                         </div>
                     </div>
@@ -362,6 +368,7 @@
                             <thead>
                                 <tr>
                                     <th>Image Name</th>
+                                    <th>Status</th>
                                     <th>Total</th>
                                     <th>Critical</th>
                                     <th>High</th>

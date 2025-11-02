@@ -748,6 +748,10 @@ tbody tr:hover {
 .modal-header h3 {
     margin: 0;
     color: #333;
+    max-width: calc(100% - 50px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .close-btn {
@@ -759,6 +763,7 @@ tbody tr:hover {
     padding: 0;
     width: 30px;
     height: 30px;
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -5377,6 +5382,7 @@ header {
 .security-table-modern {
     width: 100%;
     border-collapse: collapse;
+    table-layout: fixed;
 }
 
 .security-table-modern thead {
@@ -5413,9 +5419,44 @@ header {
     font-weight: 500;
 }
 
-.security-table-modern tbody td:last-child {
+/* Fixed column widths for security table */
+.security-table-modern th:nth-child(1),
+.security-table-modern td:nth-child(1) { width: 30%; overflow: hidden; text-overflow: ellipsis; } /* Image Name */
+
+.security-table-modern th:nth-child(2),
+.security-table-modern td:nth-child(2) { width: 10%; text-align: center; } /* Status */
+
+.security-table-modern th:nth-child(3),
+.security-table-modern td:nth-child(3) { width: 6%; text-align: center; } /* Total */
+
+.security-table-modern th:nth-child(4),
+.security-table-modern td:nth-child(4) { width: 6%; text-align: center; } /* Critical */
+
+.security-table-modern th:nth-child(5),
+.security-table-modern td:nth-child(5) { width: 6%; text-align: center; } /* High */
+
+.security-table-modern th:nth-child(6),
+.security-table-modern td:nth-child(6) { width: 6%; text-align: center; } /* Medium */
+
+.security-table-modern th:nth-child(7),
+.security-table-modern td:nth-child(7) { width: 6%; text-align: center; } /* Low */
+
+.security-table-modern th:nth-child(8),
+.security-table-modern td:nth-child(8) { width: 12%; } /* Scanned */
+
+.security-table-modern th:nth-child(9),
+.security-table-modern td:nth-child(9) {
+    width: 200px;
+    min-width: 200px;
+    max-width: 200px;
     white-space: nowrap;
-    min-width: 250px;
+    text-align: center;
+} /* Actions - FIXED WIDTH */
+
+.security-table-modern tbody td:last-child .btn {
+    margin: 0 2px;
+    padding: 4px 8px;
+    font-size: 12px;
 }
 
 /* Responsive adjustments */

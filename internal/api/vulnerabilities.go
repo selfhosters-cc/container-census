@@ -15,7 +15,7 @@ import (
 // VulnerabilityScanner interface for the vulnerability scanner
 type VulnerabilityScanner interface {
 	GetCachedScan(imageID string) (*vulnerability.VulnerabilityScan, error)
-	ScanImage(ctx context.Context, imageRef string) (*vulnerability.VulnerabilityScanResult, error)
+	ScanImage(ctx context.Context, imageID string, imageName string) (*vulnerability.VulnerabilityScanResult, error)
 	UpdateTrivyDB(ctx context.Context) error
 	GetConfig() *vulnerability.Config
 	SetConfig(config *vulnerability.Config)
