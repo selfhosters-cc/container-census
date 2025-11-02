@@ -2147,11 +2147,69 @@ tbody tr:hover {
    NEW SIDEBAR LAYOUT STYLES
    ============================================ */
 
+/* Top Navigation Bar */
+.top-navbar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 60px;
+    background: white;
+    border-bottom: 1px solid #dee2e6;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    z-index: 1000;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.top-navbar-left {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.top-navbar-logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.top-navbar-logo h1 {
+    font-size: 1.5rem;
+    margin: 0;
+    color: #333;
+    font-weight: 600;
+}
+
+.sidebar-toggle-btn {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 8px 12px;
+    border-radius: 6px;
+    transition: background 0.2s;
+    color: #666;
+}
+
+.sidebar-toggle-btn:hover {
+    background: #f0f0f0;
+}
+
+.top-navbar-right {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
 /* App Layout - Sidebar + Main Content */
 .app-layout {
     display: flex;
     min-height: 100vh;
     background-color: #f5f5f5;
+    padding-top: 60px; /* Account for fixed top navbar */
 }
 
 /* Sidebar */
@@ -2192,19 +2250,15 @@ tbody tr:hover {
 .sidebar-header {
     padding: 20px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.sidebar-logo h1 {
-    font-size: 1.5rem;
-    font-weight: 600;
-    margin: 0;
+    text-align: center;
 }
 
 .sidebar-logo {
-    display: flex;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
     align-items: center;
     gap: 10px;
 }
@@ -2706,23 +2760,24 @@ header {
 }
 
 .notification-bell {
-    background: rgba(255, 255, 255, 0.1);
-    border: none;
-    color: white;
-    width: 35px;
-    height: 35px;
+    background: #f5f5f5;
+    border: 1px solid #e0e0e0;
+    color: #666;
+    width: 40px;
+    height: 40px;
     border-radius: 8px;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 1.2rem;
+    font-size: 1.3rem;
     transition: all 0.2s ease;
     position: relative;
 }
 
 .notification-bell:hover {
-    background: rgba(255, 255, 255, 0.2);
+    background: #e8e8e8;
+    border-color: #d0d0d0;
 }
 
 .notification-count-badge {
@@ -2748,9 +2803,9 @@ header {
 
 /* Notification Dropdown */
 .notification-dropdown {
-    position: fixed;
-    top: 60px;
-    right: 20px;
+    position: absolute;
+    top: calc(100% + 5px);
+    right: 0;
     width: 380px;
     max-height: 600px;
     background: white;
@@ -2760,6 +2815,10 @@ header {
     display: none;
     flex-direction: column;
     overflow: hidden;
+}
+
+.notification-bell-container {
+    position: relative;
 }
 
 .notification-dropdown.show {
@@ -4217,4 +4276,602 @@ header {
     background: #FFE0B2;
     border-color: #FF9800;
     transform: scale(1.05);
+}
+
+/* Vulnerability Scanner Styles */
+
+/* Vulnerability Badge on Container Cards */
+.vulnerability-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: 2px solid transparent;
+    margin-left: 8px;
+}
+
+.vulnerability-badge:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.vulnerability-badge .vuln-icon {
+    font-size: 1rem;
+}
+
+.vulnerability-badge .vuln-count {
+    font-weight: 700;
+}
+
+.vulnerability-badge .vuln-severity {
+    font-size: 0.75rem;
+    opacity: 0.9;
+}
+
+/* Severity-based badge colors */
+.vulnerability-badge.critical {
+    background: linear-gradient(135deg, #ff1744 0%, #d50000 100%);
+    color: white;
+    border-color: #b71c1c;
+}
+
+.vulnerability-badge.critical:hover {
+    box-shadow: 0 4px 12px rgba(255, 23, 68, 0.4);
+}
+
+.vulnerability-badge.high {
+    background: linear-gradient(135deg, #ff6d00 0%, #f57c00 100%);
+    color: white;
+    border-color: #e65100;
+}
+
+.vulnerability-badge.high:hover {
+    box-shadow: 0 4px 12px rgba(255, 109, 0, 0.4);
+}
+
+.vulnerability-badge.medium {
+    background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%);
+    color: #333;
+    border-color: #f57c00;
+}
+
+.vulnerability-badge.medium:hover {
+    box-shadow: 0 4px 12px rgba(255, 193, 7, 0.4);
+}
+
+.vulnerability-badge.low {
+    background: linear-gradient(135deg, #8bc34a 0%, #689f38 100%);
+    color: white;
+    border-color: #558b2f;
+}
+
+.vulnerability-badge.clean {
+    background: linear-gradient(135deg, #4caf50 0%, #388e3c 100%);
+    color: white;
+    border-color: #2e7d32;
+}
+
+.vulnerability-badge.not-scanned {
+    background: #e0e0e0;
+    color: #666;
+    border-color: #bdbdbd;
+}
+
+.vulnerability-badge.scanning {
+    background: linear-gradient(135deg, #2196f3 0%, #1976d2 100%);
+    color: white;
+    border-color: #1565c0;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.7;
+    }
+}
+
+/* Security Tab Styles */
+.security-actions {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 24px;
+    padding-bottom: 12px;
+}
+
+.security-summary-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 20px;
+    margin-bottom: 30px;
+}
+
+.security-summary-card {
+    background: white;
+    padding: 25px;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 20px;
+    transition: all 0.3s ease;
+}
+
+.security-summary-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+.security-summary-icon {
+    font-size: 3.5rem;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.security-summary-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex-grow: 1;
+}
+
+.security-summary-label {
+    font-size: 0.85rem;
+    color: #666;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.security-summary-value {
+    font-size: 2.8rem;
+    font-weight: 700;
+    color: #333;
+    line-height: 1;
+}
+
+.security-summary-card.critical .security-summary-value {
+    color: #d50000;
+}
+
+.security-summary-card.high .security-summary-value {
+    color: #ff6d00;
+}
+
+.security-summary-card.success .security-summary-value {
+    color: #4caf50;
+}
+
+.security-summary-card .card-label {
+    font-size: 0.9rem;
+    color: #666;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.security-summary-card .card-value {
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: #333;
+}
+
+.security-summary-card.critical .card-value {
+    color: #d50000;
+}
+
+.security-summary-card.high .card-value {
+    color: #ff6d00;
+}
+
+.security-summary-card.success .card-value {
+    color: #4caf50;
+}
+
+/* Vulnerability Table */
+.vulnerability-table-container {
+    background: white;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+}
+
+.vulnerability-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.vulnerability-table thead {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.vulnerability-table th {
+    padding: 15px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.vulnerability-table td {
+    padding: 15px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.vulnerability-table tbody tr:hover {
+    background-color: #f5f5f5;
+    cursor: pointer;
+}
+
+.vulnerability-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.severity-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.severity-badge.critical {
+    background: #ffebee;
+    color: #c62828;
+    border: 1px solid #ef5350;
+}
+
+.severity-badge.high {
+    background: #fff3e0;
+    color: #e65100;
+    border: 1px solid #ff9800;
+}
+
+.severity-badge.medium {
+    background: #fff9c4;
+    color: #f57f17;
+    border: 1px solid #fbc02d;
+}
+
+.severity-badge.low {
+    background: #e8f5e9;
+    color: #2e7d32;
+    border: 1px solid #66bb6a;
+}
+
+/* Vulnerability Details Modal Content */
+.vulnerability-details {
+    padding: 20px;
+}
+
+.vulnerability-summary {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 25px;
+    padding: 15px;
+    background: #f5f5f5;
+    border-radius: 8px;
+}
+
+.vulnerability-summary .summary-item {
+    text-align: center;
+}
+
+.vulnerability-summary .summary-label {
+    font-size: 0.85rem;
+    color: #666;
+    margin-bottom: 5px;
+}
+
+.vulnerability-summary .summary-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+}
+
+.vulnerability-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.vulnerability-item {
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.vulnerability-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px;
+    background: #fafafa;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.vulnerability-header:hover {
+    background: #f0f0f0;
+}
+
+.vulnerability-header .vuln-title {
+    font-weight: 600;
+    color: #333;
+}
+
+.vulnerability-header .vuln-cve {
+    color: #2196f3;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9rem;
+}
+
+.vulnerability-body {
+    padding: 15px;
+    border-top: 1px solid #e0e0e0;
+    display: none;
+}
+
+.vulnerability-body.active {
+    display: block;
+}
+
+.vulnerability-body .vuln-detail {
+    margin-bottom: 12px;
+}
+
+.vulnerability-body .vuln-detail-label {
+    font-weight: 600;
+    color: #666;
+    margin-bottom: 5px;
+}
+
+.vulnerability-body .vuln-detail-value {
+    color: #333;
+    line-height: 1.6;
+}
+
+.vulnerability-body .vuln-link {
+    color: #2196f3;
+    text-decoration: none;
+    word-break: break-all;
+}
+
+.vulnerability-body .vuln-link:hover {
+    text-decoration: underline;
+}
+
+/* Vulnerability Settings Modal */
+.settings-section {
+    margin-bottom: 25px;
+}
+
+.settings-section h3 {
+    font-size: 1.1rem;
+    color: #333;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid #667eea;
+}
+
+.setting-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.setting-item:last-child {
+    border-bottom: none;
+}
+
+.setting-label {
+    font-weight: 500;
+    color: #333;
+}
+
+.setting-description {
+    font-size: 0.85rem;
+    color: #666;
+    margin-top: 4px;
+}
+
+.setting-control {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.setting-control input[type="number"] {
+    width: 80px;
+    padding: 6px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+
+.setting-control input[type="range"] {
+    width: 150px;
+}
+
+.toggle-switch {
+    position: relative;
+    width: 50px;
+    height: 26px;
+    background-color: #ccc;
+    border-radius: 13px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+.toggle-switch.active {
+    background-color: #4caf50;
+}
+
+.toggle-switch::after {
+    content: '';
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: white;
+    top: 3px;
+    left: 3px;
+    transition: left 0.3s ease;
+}
+
+.toggle-switch.active::after {
+    left: 27px;
+}
+
+/* Loading States */
+.loading-spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid rgba(0, 0, 0, 0.1);
+    border-radius: 50%;
+    border-top-color: #667eea;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Empty States */
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: #666;
+}
+
+.empty-state .empty-icon {
+    font-size: 4rem;
+    margin-bottom: 20px;
+    opacity: 0.5;
+}
+
+.empty-state .empty-message {
+    font-size: 1.2rem;
+    margin-bottom: 10px;
+}
+
+.empty-state .empty-description {
+    font-size: 0.9rem;
+    color: #999;
+}
+
+/* Vulnerability Details Modal Styles */
+.vuln-details-summary {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 25px;
+    padding: 20px;
+    background: #f8f9fa;
+    border-radius: 8px;
+}
+
+.vuln-stat {
+    text-align: center;
+}
+
+.vuln-severity-section {
+    margin-bottom: 30px;
+}
+
+.vuln-severity-section h3 {
+    margin-bottom: 15px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.vuln-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.vuln-table thead {
+    background: #f5f5f5;
+}
+
+.vuln-table th,
+.vuln-table td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.vuln-table th {
+    font-weight: 600;
+    color: #666;
+    font-size: 0.9rem;
+}
+
+.vuln-table td code {
+    background: #f5f5f5;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.85rem;
+}
+
+.vuln-title {
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.vuln-table a {
+    color: #1976d2;
+    text-decoration: none;
+}
+
+.vuln-table a:hover {
+    text-decoration: underline;
+}
+
+.severity-critical {
+    background: #ffebee;
+    color: #c62828;
+    border: 1px solid #ef5350;
+}
+
+.severity-high {
+    background: #fff3e0;
+    color: #e65100;
+    border: 1px solid #ff9800;
+}
+
+.severity-medium {
+    background: #fff9c4;
+    color: #f57f17;
+    border: 1px solid #fbc02d;
+}
+
+.severity-low {
+    background: #e8f5e9;
+    color: #2e7d32;
+    border: 1px solid #66bb6a;
+}
+
+.severity-unknown {
+    background: #f5f5f5;
+    color: #666;
+    border: 1px solid #ccc;
 }

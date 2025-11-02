@@ -37,6 +37,8 @@ type Server struct {
 	authConfig            auth.Config
 	setScanIntervalFunc   func(int) // Callback to update scan interval
 	notificationService   *notifications.NotificationService
+	vulnScanner           VulnerabilityScanner
+	vulnScheduler         VulnerabilityScheduler
 }
 
 // TelemetryScheduler interface for submitting telemetry on demand
@@ -225,6 +227,18 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/notifications/silences/{id}", s.handleDeleteNotificationSilence).Methods("DELETE")
 
 	api.HandleFunc("/notifications/status", s.handleGetNotificationStatus).Methods("GET")
+
+	// Vulnerability endpoints
+	api.HandleFunc("/vulnerabilities/summary", s.handleGetVulnerabilitySummary).Methods("GET")
+	api.HandleFunc("/vulnerabilities/scans", s.handleGetAllVulnerabilityScans).Methods("GET")
+	api.HandleFunc("/vulnerabilities/image/{imageId}", s.handleGetImageVulnerabilities).Methods("GET")
+	api.HandleFunc("/vulnerabilities/container/{hostId}/{containerId}", s.handleGetContainerVulnerabilities).Methods("GET")
+	api.HandleFunc("/vulnerabilities/scan/{imageId}", s.handleTriggerImageScan).Methods("POST")
+	api.HandleFunc("/vulnerabilities/scan-all", s.handleTriggerScanAll).Methods("POST")
+	api.HandleFunc("/vulnerabilities/queue", s.handleGetScanQueue).Methods("GET")
+	api.HandleFunc("/vulnerabilities/update-db", s.handleUpdateTrivyDB).Methods("POST")
+	api.HandleFunc("/vulnerabilities/settings", s.handleGetVulnerabilitySettings).Methods("GET")
+	api.HandleFunc("/vulnerabilities/settings", s.handleUpdateVulnerabilitySettings).Methods("PUT")
 
 	// Serve static files (embedded web frontend) - also protected
 	s.router.PathPrefix("/").Handler(authMiddleware(http.FileServer(http.Dir("./web"))))

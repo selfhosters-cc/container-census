@@ -32,8 +32,15 @@ FROM alpine:latest
 # Build arg for docker group GID (defaults to 999, can be overridden at runtime)
 ARG DOCKER_GID=999
 
-# Install ca-certificates for HTTPS, timezone data, and su-exec for user switching
-RUN apk --no-cache add ca-certificates tzdata su-exec
+# Install ca-certificates for HTTPS, timezone data, su-exec for user switching, and wget for Trivy installation
+RUN apk --no-cache add ca-certificates tzdata su-exec wget
+
+# Install Trivy for vulnerability scanning
+# Download and install Trivy binary
+ARG TRIVY_VERSION=0.58.1
+RUN wget -qO- https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz | tar -xzf - -C /usr/local/bin trivy && \
+    chmod +x /usr/local/bin/trivy && \
+    trivy --version
 
 # Create docker group with default GID and census user
 # Note: The actual GID can be added at runtime using docker-compose group_add
@@ -63,8 +70,8 @@ COPY --from=builder /build/config/config.yaml.example ./config/config.yaml.examp
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Create data directory with correct permissions
-RUN mkdir -p ./data && chown -R census:census /app
+# Create data directory and Trivy cache directory with correct permissions
+RUN mkdir -p ./data ./data/.trivy && chown -R census:census /app
 
 # Note: We start as root so the entrypoint can fix volume permissions
 # The entrypoint will switch to census user after fixing permissions

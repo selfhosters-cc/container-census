@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/container-census/container-census/internal/models"
-	"github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	imagetypes "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 )
 
@@ -49,7 +49,7 @@ func (s *Scanner) ScanHost(ctx context.Context, host models.Host) ([]models.Cont
 	defer dockerClient.Close()
 
 	// List containers (including stopped ones)
-	containers, err := dockerClient.ContainerList(ctx, types.ContainerListOptions{
+	containers, err := dockerClient.ContainerList(ctx, containertypes.ListOptions{
 		All: true,
 	})
 	if err != nil {
@@ -58,7 +58,7 @@ func (s *Scanner) ScanHost(ctx context.Context, host models.Host) ([]models.Cont
 
 	// Get image information for size data
 	imageMap := make(map[string]int64) // imageID -> size
-	images, err := dockerClient.ImageList(ctx, types.ImageListOptions{})
+	images, err := dockerClient.ImageList(ctx, imagetypes.ListOptions{})
 	if err == nil {
 		for _, img := range images {
 			imageMap[img.ID] = img.Size
@@ -189,7 +189,7 @@ func (s *Scanner) ScanHost(ctx context.Context, host models.Host) ([]models.Cont
 				defer statsStream.Body.Close()
 
 				// Read first sample (baseline)
-				var baseline types.StatsJSON
+				var baseline containertypes.StatsResponse
 				decoder := json.NewDecoder(statsStream.Body)
 				if err := decoder.Decode(&baseline); err != nil {
 					log.Printf("Failed to decode first sample for container %s on host %s: %v", containerName, host.Name, err)
@@ -197,7 +197,7 @@ func (s *Scanner) ScanHost(ctx context.Context, host models.Host) ([]models.Cont
 				}
 
 				// Read second sample (current)
-				var current types.StatsJSON
+				var current containertypes.StatsResponse
 				if err := decoder.Decode(&current); err != nil {
 					log.Printf("Failed to decode second sample for container %s on host %s: %v", containerName, host.Name, err)
 					return
@@ -409,7 +409,7 @@ func (s *Scanner) StartContainer(ctx context.Context, host models.Host, containe
 	}
 	defer dockerClient.Close()
 
-	return dockerClient.ContainerStart(ctx, containerID, types.ContainerStartOptions{})
+	return dockerClient.ContainerStart(ctx, containerID, containertypes.StartOptions{})
 }
 
 // StopContainer stops a container on a specific host
@@ -460,7 +460,7 @@ func (s *Scanner) RemoveContainer(ctx context.Context, host models.Host, contain
 	}
 	defer dockerClient.Close()
 
-	return dockerClient.ContainerRemove(ctx, containerID, types.ContainerRemoveOptions{
+	return dockerClient.ContainerRemove(ctx, containerID, containertypes.RemoveOptions{
 		Force: force,
 	})
 }
@@ -477,7 +477,7 @@ func (s *Scanner) GetContainerLogs(ctx context.Context, host models.Host, contai
 	}
 	defer dockerClient.Close()
 
-	options := types.ContainerLogsOptions{
+	options := containertypes.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Timestamps: true,
@@ -502,7 +502,7 @@ func (s *Scanner) GetContainerLogs(ctx context.Context, host models.Host, contai
 // Image Management Operations
 
 // ListImages lists all images on a specific host
-func (s *Scanner) ListImages(ctx context.Context, host models.Host) ([]types.ImageSummary, error) {
+func (s *Scanner) ListImages(ctx context.Context, host models.Host) ([]imagetypes.Summary, error) {
 	if isAgentHost(host.Address) {
 		return s.listAgentImages(ctx, host)
 	}
@@ -513,7 +513,7 @@ func (s *Scanner) ListImages(ctx context.Context, host models.Host) ([]types.Ima
 	}
 	defer dockerClient.Close()
 
-	images, err := dockerClient.ImageList(ctx, types.ImageListOptions{All: true})
+	images, err := dockerClient.ImageList(ctx, imagetypes.ListOptions{All: true})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list images: %w", err)
 	}
@@ -533,7 +533,7 @@ func (s *Scanner) RemoveImage(ctx context.Context, host models.Host, imageID str
 	}
 	defer dockerClient.Close()
 
-	_, err = dockerClient.ImageRemove(ctx, imageID, types.ImageRemoveOptions{
+	_, err = dockerClient.ImageRemove(ctx, imageID, imagetypes.RemoveOptions{
 		Force: force,
 	})
 	return err

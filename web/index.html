@@ -8,37 +8,46 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
 </head>
 <body>
+    <!-- Top Navigation Bar -->
+    <header class="top-navbar">
+        <div class="top-navbar-left">
+            <button id="sidebarToggle" class="sidebar-toggle-btn" aria-label="Toggle sidebar">
+                <span>☰</span>
+            </button>
+            <div class="top-navbar-logo">
+                <h1>🐳 Census</h1>
+                <span id="versionBadge" class="version-badge">v0.0.0</span>
+            </div>
+        </div>
+        <div class="top-navbar-right">
+            <div class="notification-bell-container">
+                <button id="notificationBell" class="notification-bell" aria-label="Notifications">
+                    <span>🔔</span>
+                    <span id="notificationBadge" class="notification-count-badge"></span>
+                </button>
+                <div id="notificationDropdown" class="notification-dropdown">
+                    <div class="notification-dropdown-header">
+                        <h4>Notifications</h4>
+                        <button id="markAllRead" class="btn-text">Mark all read</button>
+                    </div>
+                    <div id="notificationList" class="notification-list">
+                        <div class="notification-empty">No notifications</div>
+                    </div>
+                    <div class="notification-dropdown-footer">
+                        <button id="viewAllNotifications" class="btn-text">View all</button>
+                        <button id="clearNotifications" class="btn-text">Clear all</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
     <div class="app-layout">
         <!-- Sidebar -->
         <aside class="sidebar">
             <div class="sidebar-header">
                 <div class="sidebar-logo">
-                    <h1>🐳 Census</h1>
-                    <span id="versionBadge" class="version-badge">v0.0.0</span>
-                </div>
-                <div class="sidebar-header-actions">
-                    <div class="notification-bell-container">
-                        <button id="notificationBell" class="notification-bell" aria-label="Notifications">
-                            <span>🔔</span>
-                            <span id="notificationBadge" class="notification-count-badge"></span>
-                        </button>
-                        <div id="notificationDropdown" class="notification-dropdown">
-                            <div class="notification-dropdown-header">
-                                <h4>Notifications</h4>
-                                <button id="markAllRead" class="btn-text">Mark all read</button>
-                            </div>
-                            <div id="notificationList" class="notification-list">
-                                <div class="notification-empty">No notifications</div>
-                            </div>
-                            <div class="notification-dropdown-footer">
-                                <button id="viewAllNotifications" class="btn-text">View all</button>
-                                <button id="clearNotifications" class="btn-text">Clear all</button>
-                            </div>
-                        </div>
-                    </div>
-                    <button id="sidebarToggle" class="sidebar-toggle" aria-label="Toggle sidebar">
-                        <span>☰</span>
-                    </button>
+                    Container Census
                 </div>
             </div>
 
@@ -72,6 +81,20 @@
                         <div class="sidebar-stat-label">Last Scan</div>
                     </div>
                 </div>
+                <div class="sidebar-stat-item clickable" onclick="switchTab('security', true)" title="Click to view Security tab">
+                    <span class="sidebar-stat-icon">🚨</span>
+                    <div class="sidebar-stat-content">
+                        <div class="sidebar-stat-value severity-critical" id="criticalVulns">-</div>
+                        <div class="sidebar-stat-label">Critical</div>
+                    </div>
+                </div>
+                <div class="sidebar-stat-item clickable" onclick="switchTab('security', true)" title="Click to view Security tab">
+                    <span class="sidebar-stat-icon">⚠️</span>
+                    <div class="sidebar-stat-content">
+                        <div class="sidebar-stat-value severity-high" id="highVulns">-</div>
+                        <div class="sidebar-stat-label">High</div>
+                    </div>
+                </div>
             </div>
 
             <!-- Navigation -->
@@ -94,43 +117,49 @@
                     <span class="nav-badge" id="imagesBadge"></span>
                     <span class="nav-shortcut">3</span>
                 </button>
-                <button class="nav-item" data-tab="graph" data-shortcut="4">
-                    <span class="nav-icon">🕸️</span>
-                    <span class="nav-label">Graph</span>
+                <button class="nav-item" data-tab="security" data-shortcut="4">
+                    <span class="nav-icon">🛡️</span>
+                    <span class="nav-label">Security</span>
+                    <span class="nav-badge" id="securityBadge"></span>
                     <span class="nav-shortcut">4</span>
                 </button>
-                <button class="nav-item" data-tab="hosts" data-shortcut="5">
+                <button class="nav-item" data-tab="graph" data-shortcut="5">
+                    <span class="nav-icon">🕸️</span>
+                    <span class="nav-label">Graph</span>
+                    <span class="nav-shortcut">5</span>
+                </button>
+                <button class="nav-item" data-tab="hosts" data-shortcut="6">
                     <span class="nav-icon">🖥️</span>
                     <span class="nav-label">Hosts</span>
                     <span class="nav-badge" id="hostsBadge"></span>
-                    <span class="nav-shortcut">5</span>
-                </button>
-                <button class="nav-item" data-tab="history" data-shortcut="6">
-                    <span class="nav-icon">📜</span>
-                    <span class="nav-label">History</span>
                     <span class="nav-shortcut">6</span>
                 </button>
-                <button class="nav-item" data-tab="activity" data-shortcut="7">
+                <button class="nav-item" data-tab="history" data-shortcut="7">
+                    <span class="nav-icon">📜</span>
+                    <span class="nav-label">History</span>
+                    <span class="nav-shortcut">7</span>
+                </button>
+                <button class="nav-item" data-tab="activity" data-shortcut="8">
                     <span class="nav-icon">📋</span>
                     <span class="nav-label">Activity Log</span>
                     <span class="nav-badge" id="activityBadge"></span>
-                    <span class="nav-shortcut">7</span>
-                </button>
-                <button class="nav-item" data-tab="reports" data-shortcut="8">
-                    <span class="nav-icon">📈</span>
-                    <span class="nav-label">Reports</span>
                     <span class="nav-shortcut">8</span>
                 </button>
-                <button class="nav-item" data-tab="notifications" data-shortcut="9">
+                <button class="nav-item" data-tab="reports" data-shortcut="9">
+                    <span class="nav-icon">📈</span>
+                    <span class="nav-label">Reports</span>
+                    <span class="nav-shortcut">9</span>
+                </button>
+                <button class="nav-item" data-tab="notifications" data-shortcut="0">
                     <span class="nav-icon">🔔</span>
                     <span class="nav-label">Notifications</span>
                     <span class="nav-badge" id="notificationsSidebarBadge"></span>
-                    <span class="nav-shortcut">9</span>
+                    <span class="nav-shortcut">0</span>
                 </button>
-                <button class="nav-item" data-tab="settings" data-shortcut="0">
+                <button class="nav-item" data-tab="settings" data-shortcut="S">
                     <span class="nav-icon">⚙️</span>
                     <span class="nav-label">Settings</span>
-                    <span class="nav-shortcut">0</span>
+                    <span class="nav-shortcut">S</span>
                 </button>
             </nav>
 
@@ -213,6 +242,109 @@
                             </tr>
                         </tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="securityTab" class="tab-content">
+            <div class="security-section">
+                <div class="security-header">
+                    <h2>🛡️ Vulnerability Scanner</h2>
+                    <div class="security-actions">
+                        <button id="scanAllImagesBtn" class="btn btn-primary">
+                            🔄 Scan All Images
+                        </button>
+                        <button id="updateTrivyDBBtn" class="btn btn-secondary">
+                            📥 Update Database
+                        </button>
+                        <button id="exportVulnerabilitiesBtn" class="btn btn-secondary">
+                            📊 Export
+                        </button>
+                        <button id="vulnerabilitySettingsBtn" class="btn btn-secondary">
+                            ⚙️ Settings
+                        </button>
+                    </div>
+                </div>
+
+                <div class="security-summary-cards">
+                    <div class="security-summary-card">
+                        <div class="security-summary-icon">📊</div>
+                        <div class="security-summary-content">
+                            <div class="security-summary-label">Total Scanned</div>
+                            <div class="security-summary-value" id="totalScannedImages">-</div>
+                        </div>
+                    </div>
+                    <div class="security-summary-card critical">
+                        <div class="security-summary-icon">🚨</div>
+                        <div class="security-summary-content">
+                            <div class="security-summary-label">Critical Vulnerabilities</div>
+                            <div class="security-summary-value" id="totalCriticalVulns">-</div>
+                        </div>
+                    </div>
+                    <div class="security-summary-card high">
+                        <div class="security-summary-icon">⚠️</div>
+                        <div class="security-summary-content">
+                            <div class="security-summary-label">High Vulnerabilities</div>
+                            <div class="security-summary-value" id="totalHighVulns">-</div>
+                        </div>
+                    </div>
+                    <div class="security-summary-card">
+                        <div class="security-summary-icon">🛡️</div>
+                        <div class="security-summary-content">
+                            <div class="security-summary-label">At Risk Images</div>
+                            <div class="security-summary-value" id="atRiskImages">-</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="security-chart-container">
+                    <canvas id="vulnerabilitySeverityChart"></canvas>
+                </div>
+
+                <div class="security-queue-status" id="securityQueueStatus" style="display: none;">
+                    <div class="queue-status-icon">⏳</div>
+                    <div class="queue-status-content">
+                        <strong>Scanning in progress:</strong>
+                        <span id="queueStatusText">-</span>
+                    </div>
+                </div>
+
+                <div class="security-table-container">
+                    <div class="security-table-header">
+                        <h3>Vulnerability Scans</h3>
+                        <div class="security-filters">
+                            <select id="securitySeverityFilter" class="filter-select">
+                                <option value="">All Severities</option>
+                                <option value="critical">Critical</option>
+                                <option value="high">High</option>
+                                <option value="medium">Medium</option>
+                                <option value="low">Low</option>
+                                <option value="clean">Clean</option>
+                            </select>
+                            <input type="text" id="securitySearchInput" class="search-input" placeholder="Search images...">
+                        </div>
+                    </div>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Image Name</th>
+                                    <th>Total</th>
+                                    <th>Critical</th>
+                                    <th>High</th>
+                                    <th>Medium</th>
+                                    <th>Low</th>
+                                    <th>Scanned</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="securityScansBody">
+                                <tr>
+                                    <td colspan="8" class="loading">Loading...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
@@ -992,6 +1124,133 @@
             <div class="modal-footer">
                 <button type="button" onclick="closeAddSilenceModal()" class="btn btn-secondary">Cancel</button>
                 <button type="submit" form="addSilenceForm" class="btn btn-primary">Add Silence</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Vulnerability Settings Modal -->
+    <div id="vulnerabilitySettingsModal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3>⚙️ Vulnerability Scanner Settings</h3>
+                <button class="close-btn" onclick="closeVulnerabilitySettingsModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="vulnerabilitySettingsForm">
+                    <div class="settings-section">
+                        <h4>General Settings</h4>
+                        <div class="form-group">
+                            <label class="toggle-label">
+                                <input type="checkbox" id="vulnEnabled">
+                                <span>Enable Vulnerability Scanning</span>
+                            </label>
+                            <small>When enabled, images will be scanned for vulnerabilities using Trivy</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="toggle-label">
+                                <input type="checkbox" id="vulnAutoScan">
+                                <span>Auto-scan New Images</span>
+                            </label>
+                            <small>Automatically queue new images for scanning when discovered</small>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <h4>Performance Settings</h4>
+                        <div class="form-group">
+                            <label for="vulnWorkerPoolSize">Worker Pool Size (1-10)</label>
+                            <input type="number" id="vulnWorkerPoolSize" min="1" max="10" required>
+                            <small>Number of concurrent scan workers (more = faster but more CPU)</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="vulnScanTimeout">Scan Timeout (minutes, 1-60)</label>
+                            <input type="number" id="vulnScanTimeout" min="1" max="60" required>
+                            <small>Maximum time allowed per scan before timeout</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="vulnMaxQueueSize">Max Queue Size (10-1000)</label>
+                            <input type="number" id="vulnMaxQueueSize" min="10" max="1000" required>
+                            <small>Maximum number of images that can be queued for scanning</small>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <h4>Cache & Rescan Settings</h4>
+                        <div class="form-group">
+                            <label for="vulnCacheTTL">Cache TTL (hours, 1-168)</label>
+                            <input type="number" id="vulnCacheTTL" min="1" max="168" required>
+                            <small>How long to cache scan results before considering them stale</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="vulnRescanInterval">Rescan Interval (hours, 24-720)</label>
+                            <input type="number" id="vulnRescanInterval" min="24" max="720" required>
+                            <small>How often to automatically rescan images (168 = weekly)</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="vulnDBUpdateInterval">Database Update Interval (hours, 1-168)</label>
+                            <input type="number" id="vulnDBUpdateInterval" min="1" max="168" required>
+                            <small>How often to update the Trivy vulnerability database</small>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <h4>Data Retention</h4>
+                        <div class="form-group">
+                            <label for="vulnRetentionDays">Scan Retention (days, 1-365)</label>
+                            <input type="number" id="vulnRetentionDays" min="1" max="365" required>
+                            <small>How long to keep scan metadata before cleanup</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="vulnDetailedRetentionDays">Detailed Retention (days, 1-90)</label>
+                            <input type="number" id="vulnDetailedRetentionDays" min="1" max="90" required>
+                            <small>How long to keep detailed vulnerability data before cleanup</small>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <h4>Notification Alerts</h4>
+                        <div class="form-group">
+                            <label class="toggle-label">
+                                <input type="checkbox" id="vulnAlertCritical">
+                                <span>Alert on Critical Vulnerabilities</span>
+                            </label>
+                            <small>Send notifications when critical vulnerabilities are found</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="toggle-label">
+                                <input type="checkbox" id="vulnAlertHigh">
+                                <span>Alert on High Vulnerabilities</span>
+                            </label>
+                            <small>Send notifications when high-severity vulnerabilities are found</small>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <h4>Storage</h4>
+                        <div class="form-group">
+                            <label for="vulnCacheDir">Cache Directory</label>
+                            <input type="text" id="vulnCacheDir" required readonly>
+                            <small>Directory where Trivy stores cache data (read-only)</small>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" onclick="closeVulnerabilitySettingsModal()" class="btn btn-secondary">Cancel</button>
+                <button type="submit" form="vulnerabilitySettingsForm" class="btn btn-primary">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Vulnerability Details Modal -->
+    <div id="vulnerabilityDetailsModal" class="modal">
+        <div class="modal-content large-modal">
+            <div class="modal-header">
+                <h2>🔍 Vulnerability Details: <span id="vulnDetailsImageName"></span></h2>
+                <button class="close-btn" onclick="closeVulnerabilityDetailsModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="vulnDetailsContent" class="loading">Loading vulnerabilities...</div>
             </div>
         </div>
     </div>

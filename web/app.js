@@ -12,6 +12,9 @@ let lastRefreshTime = null;
 let lastRefreshInterval = null;
 let statsModalRefreshInterval = null;
 let isSidebarOpen = false;
+let vulnerabilityCache = {}; // Cache vulnerability data by imageID
+let vulnerabilityScansMap = {}; // Pre-loaded map of all scans to avoid 404s
+let vulnerabilitySummary = null; // Cache overall summary
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -35,7 +38,7 @@ function initializeRouting() {
     const hash = window.location.hash.slice(1); // Remove #
     if (hash && hash.startsWith('/')) {
         const tab = hash.slice(1); // Remove leading /
-        const validTabs = ['containers', 'monitoring', 'images', 'graph', 'hosts', 'history', 'activity', 'notifications', 'settings'];
+        const validTabs = ['containers', 'monitoring', 'images', 'security', 'graph', 'hosts', 'history', 'activity', 'notifications', 'settings'];
         if (validTabs.includes(tab)) {
             currentTab = tab;
             switchTab(tab, false); // Don't push to history on initial load
@@ -47,7 +50,7 @@ function initializeRouting() {
         const hash = window.location.hash.slice(1);
         if (hash && hash.startsWith('/')) {
             const tab = hash.slice(1);
-            const validTabs = ['containers', 'monitoring', 'images', 'graph', 'hosts', 'history', 'activity', 'notifications', 'settings'];
+            const validTabs = ['containers', 'monitoring', 'images', 'security', 'graph', 'hosts', 'history', 'activity', 'notifications', 'settings'];
             if (validTabs.includes(tab)) {
                 currentTab = tab;
                 switchTab(tab, false); // Don't push to history on hash change
@@ -399,6 +402,26 @@ function setupEventListeners() {
     document.getElementById('zoomOutBtn')?.addEventListener('click', zoomOut);
     document.getElementById('zoomResetBtn')?.addEventListener('click', zoomReset);
     document.getElementById('fitGraphBtn')?.addEventListener('click', fitGraph);
+
+    // Security tab handlers
+    document.getElementById('scanAllImagesBtn')?.addEventListener('click', scanAllImages);
+    document.getElementById('updateTrivyDBBtn')?.addEventListener('click', updateTrivyDB);
+    document.getElementById('exportVulnerabilitiesBtn')?.addEventListener('click', exportVulnerabilities);
+    document.getElementById('vulnerabilitySettingsBtn')?.addEventListener('click', openVulnerabilitySettingsModal);
+    document.getElementById('securitySearchInput')?.addEventListener('input', filterSecurityScans);
+    document.getElementById('securitySeverityFilter')?.addEventListener('change', filterSecurityScans);
+
+    // Vulnerability settings modal
+    const vulnSettingsForm = document.getElementById('vulnerabilitySettingsForm');
+    if (vulnSettingsForm) {
+        vulnSettingsForm.addEventListener('submit', saveVulnerabilitySettings);
+    }
+    const vulnSettingsModal = document.getElementById('vulnerabilitySettingsModal');
+    if (vulnSettingsModal) {
+        vulnSettingsModal.addEventListener('click', (e) => {
+            if (e.target.classList.contains('modal')) closeVulnerabilitySettingsModal();
+        });
+    }
 }
 
 // Tab Management
@@ -445,6 +468,8 @@ function switchTab(tab, updateHistory = true) {
         loadMonitoringData();
     } else if (tab === 'images') {
         loadImages();
+    } else if (tab === 'security') {
+        loadSecurityTab();
     } else if (tab === 'hosts') {
         loadHosts().then(() => renderHosts(hosts));
     } else if (tab === 'graph') {
@@ -1675,6 +1700,54 @@ function updateStats() {
     } else {
         document.getElementById('lastScan').textContent = 'Never';
     }
+
+    // Update vulnerability stats (if available)
+    updateVulnerabilityStats();
+}
+
+// Update vulnerability statistics in sidebar
+async function updateVulnerabilityStats() {
+    const criticalElem = document.getElementById('criticalVulns');
+    const highElem = document.getElementById('highVulns');
+
+    if (!criticalElem || !highElem) return;
+
+    // If we don't have summary yet, fetch it
+    if (!vulnerabilitySummary) {
+        try {
+            vulnerabilitySummary = await loadVulnerabilitySummary();
+        } catch (error) {
+            console.error('Error loading vulnerability summary:', error);
+            criticalElem.textContent = '-';
+            highElem.textContent = '-';
+            return;
+        }
+    }
+
+    if (vulnerabilitySummary && vulnerabilitySummary.summary) {
+        const s = vulnerabilitySummary.summary;
+        const critical = s.severity_counts?.critical || 0;
+        const high = s.severity_counts?.high || 0;
+
+        criticalElem.textContent = critical;
+        highElem.textContent = high;
+
+        // Add visual indication for high counts
+        if (critical > 0) {
+            criticalElem.style.fontWeight = 'bold';
+        } else {
+            criticalElem.style.fontWeight = 'normal';
+        }
+
+        if (high > 0) {
+            highElem.style.fontWeight = 'bold';
+        } else {
+            highElem.style.fontWeight = 'normal';
+        }
+    } else {
+        criticalElem.textContent = '-';
+        highElem.textContent = '-';
+    }
 }
 
 function updateHostFilter() {
@@ -1713,6 +1786,9 @@ function filterContainers() {
     });
 
     renderContainers(filtered);
+
+    // Load vulnerability badges asynchronously
+    loadAllVulnerabilityBadges();
 }
 
 function filterImages() {
@@ -4537,4 +4613,640 @@ function formatDateTime(timestamp) {
     if (!timestamp) return '-';
     const date = new Date(timestamp);
     return date.toLocaleString();
+}
+
+// ===== Vulnerability Scanning =====
+
+// Fetch vulnerability scan for an image
+async function getVulnerabilityScan(imageID) {
+    // Check cache first
+    if (vulnerabilityCache[imageID]) {
+        return vulnerabilityCache[imageID];
+    }
+
+    // If not in cache, try loading from the pre-loaded scans map
+    if (vulnerabilityScansMap && vulnerabilityScansMap[imageID]) {
+        vulnerabilityCache[imageID] = vulnerabilityScansMap[imageID];
+        return vulnerabilityScansMap[imageID];
+    }
+
+    // Mark as null in cache to avoid repeated 404 requests
+    vulnerabilityCache[imageID] = null;
+    return null;
+}
+
+// Pre-load all vulnerability scans to avoid 404 requests
+async function preloadVulnerabilityScans() {
+    try {
+        const response = await fetch('/api/vulnerabilities/scans?limit=1000');
+        if (response.ok) {
+            const scans = await response.json();
+            // Build a map of imageID -> scan data
+            vulnerabilityScansMap = {};
+            scans.forEach(scan => {
+                vulnerabilityScansMap[scan.image_id] = {
+                    scan: scan,
+                    vulnerabilities: scan.vulnerabilities || []
+                };
+            });
+            return vulnerabilityScansMap;
+        }
+    } catch (error) {
+        console.error('Error preloading vulnerability scans:', error);
+    }
+    return {};
+}
+
+// Fetch vulnerability summary (all images)
+async function loadVulnerabilitySummary() {
+    try {
+        const response = await fetch('/api/vulnerabilities/summary');
+        if (response.ok) {
+            vulnerabilitySummary = await response.json();
+            return vulnerabilitySummary;
+        }
+    } catch (error) {
+        console.error('Error fetching vulnerability summary:', error);
+    }
+    return null;
+}
+
+// Generate vulnerability badge HTML
+function getVulnerabilityBadgeHTML(scan) {
+    if (!scan) {
+        // No scan found
+        return '<span class="vulnerability-badge not-scanned" title="Not scanned">🛡️ Not Scanned</span>';
+    }
+
+    if (!scan.scan.success) {
+        // Scan failed
+        return '<span class="vulnerability-badge not-scanned" title="Scan failed">⚠️ Scan Failed</span>';
+    }
+
+    const counts = scan.scan.severity_counts || {};
+    const total = scan.scan.total_vulnerabilities || 0;
+    const critical = counts.critical || 0;
+    const high = counts.high || 0;
+    const medium = counts.medium || 0;
+    const low = counts.low || 0;
+
+    if (total === 0) {
+        return '<span class="vulnerability-badge clean" title="No vulnerabilities found">✓ Clean</span>';
+    }
+
+    // Determine severity class based on highest severity found
+    let badgeClass = 'low';
+    let icon = '🛡️';
+    if (critical > 0) {
+        badgeClass = 'critical';
+        icon = '🚨';
+    } else if (high > 0) {
+        badgeClass = 'high';
+        icon = '⚠️';
+    } else if (medium > 0) {
+        badgeClass = 'medium';
+        icon = '⚡';
+    }
+
+    // Format badge text
+    let badgeText = `${icon} ${total}`;
+    if (critical > 0 || high > 0) {
+        badgeText += ` (${critical}C ${high}H)`;
+    }
+
+    const titleParts = [];
+    if (critical > 0) titleParts.push(`${critical} Critical`);
+    if (high > 0) titleParts.push(`${high} High`);
+    if (medium > 0) titleParts.push(`${medium} Medium`);
+    if (low > 0) titleParts.push(`${low} Low`);
+    const title = `Total: ${total} vulnerabilities - ${titleParts.join(', ')}`;
+
+    return `<span class="vulnerability-badge ${badgeClass}" title="${title}">${badgeText}</span>`;
+}
+
+// Add vulnerability badge to container card (called asynchronously)
+async function addVulnerabilityBadge(containerElement, imageID) {
+    const scan = await getVulnerabilityScan(imageID);
+    const badgeHTML = getVulnerabilityBadgeHTML(scan);
+
+    // Find the image row in the container card
+    const imageRow = containerElement.querySelector('.detail-value.image-value');
+    if (imageRow && imageRow.parentElement) {
+        // Add badge after the image name
+        const badgeContainer = document.createElement('span');
+        badgeContainer.innerHTML = badgeHTML;
+        imageRow.parentElement.appendChild(badgeContainer.firstChild);
+    }
+}
+
+// Load vulnerability badges for all visible containers
+async function loadAllVulnerabilityBadges() {
+    const containerCards = document.querySelectorAll('.container-card-modern');
+
+    // Get the current filtered containers being displayed
+    const searchTerm = document.getElementById('searchInput')?.value.toLowerCase() || '';
+    const hostFilter = document.getElementById('hostFilter')?.value || '';
+    const stateFilter = document.getElementById('stateFilter')?.value || '';
+
+    const filtered = containers.filter(container => {
+        const matchesSearch = searchTerm === '' ||
+            container.name.toLowerCase().includes(searchTerm) ||
+            container.image.toLowerCase().includes(searchTerm) ||
+            container.host_name.toLowerCase().includes(searchTerm);
+
+        const matchesHost = hostFilter === '' || container.host_id.toString() === hostFilter;
+        const matchesState = stateFilter === '' || container.state === stateFilter;
+
+        return matchesSearch && matchesHost && matchesState;
+    });
+
+    // Pre-load all vulnerability scans to avoid 404 errors
+    await preloadVulnerabilityScans();
+
+    // Now add badges to each card
+    containerCards.forEach((card, index) => {
+        if (filtered[index] && filtered[index].image_id) {
+            addVulnerabilityBadge(card, filtered[index].image_id);
+        }
+    });
+}
+
+// ===== Security Tab =====
+
+let allVulnerabilityScans = [];
+let securityChart = null;
+
+// Load the security tab
+async function loadSecurityTab() {
+    try {
+        // Load summary and all scans in parallel
+        const [summary, scans] = await Promise.all([
+            loadVulnerabilitySummary(),
+            loadAllVulnerabilityScans()
+        ]);
+
+        allVulnerabilityScans = scans || [];
+
+        // Update summary cards
+        updateSecuritySummaryCards(summary);
+
+        // Render security chart
+        renderSecurityChart(summary);
+
+        // Update queue status
+        updateQueueStatus(summary?.queue_status);
+
+        // Render scans table
+        filterSecurityScans();
+
+    } catch (error) {
+        console.error('Error loading security tab:', error);
+    }
+}
+
+// Load all vulnerability scans
+async function loadAllVulnerabilityScans() {
+    try {
+        const response = await fetch('/api/vulnerabilities/scans?limit=1000');
+        if (response.ok) {
+            return await response.json();
+        }
+    } catch (error) {
+        console.error('Error fetching vulnerability scans:', error);
+    }
+    return [];
+}
+
+// Update security summary cards
+function updateSecuritySummaryCards(summary) {
+    if (!summary) {
+        document.getElementById('totalScannedImages').textContent = '-';
+        document.getElementById('totalCriticalVulns').textContent = '-';
+        document.getElementById('totalHighVulns').textContent = '-';
+        document.getElementById('atRiskImages').textContent = '-';
+        return;
+    }
+
+    // Handle both wrapped (summary.summary) and direct summary objects
+    const s = summary.summary || summary;
+    document.getElementById('totalScannedImages').textContent = s.total_images_scanned || 0;
+    document.getElementById('totalCriticalVulns').textContent = s.severity_counts?.critical || 0;
+    document.getElementById('totalHighVulns').textContent = s.severity_counts?.high || 0;
+    document.getElementById('atRiskImages').textContent = s.images_with_vulnerabilities || 0;
+}
+
+// Render security severity chart
+function renderSecurityChart(summary) {
+    const ctx = document.getElementById('vulnerabilitySeverityChart');
+    if (!ctx) return;
+
+    // Handle both wrapped (summary.summary) and direct summary objects
+    const s = summary?.summary || summary || {};
+    const severityCounts = s.severity_counts || {};
+    const data = {
+        labels: ['Critical', 'High', 'Medium', 'Low'],
+        datasets: [{
+            data: [
+                severityCounts.critical || 0,
+                severityCounts.high || 0,
+                severityCounts.medium || 0,
+                severityCounts.low || 0
+            ],
+            backgroundColor: [
+                '#ff1744',  // Critical
+                '#ff9800',  // High
+                '#ffc107',  // Medium
+                '#4caf50'   // Low
+            ],
+            borderWidth: 2,
+            borderColor: '#1e1e1e'
+        }]
+    };
+
+    if (securityChart) {
+        securityChart.destroy();
+    }
+
+    securityChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: data,
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        color: '#333',
+                        font: { size: 14 },
+                        padding: 15,
+                        usePointStyle: true
+                    }
+                },
+                title: {
+                    display: true,
+                    text: 'Vulnerability Distribution by Severity',
+                    color: '#333',
+                    font: { size: 16, weight: 'bold' },
+                    padding: { bottom: 20 }
+                }
+            }
+        }
+    });
+}
+
+// Update queue status
+function updateQueueStatus(queueStatus) {
+    const queueDiv = document.getElementById('securityQueueStatus');
+    if (!queueDiv) return;
+
+    if (!queueStatus) {
+        queueDiv.style.display = 'none';
+        return;
+    }
+
+    // Show status if there's any activity OR worker info
+    const hasActivity = queueStatus.in_progress > 0 || queueStatus.queued > 0;
+    const hasWorkerInfo = queueStatus.total_workers && queueStatus.total_workers > 0;
+
+    if (!hasActivity && !hasWorkerInfo) {
+        queueDiv.style.display = 'none';
+        return;
+    }
+
+    queueDiv.style.display = 'flex';
+    const statusText = document.getElementById('queueStatusText');
+
+    let text = '';
+    if (hasWorkerInfo) {
+        text = `${queueStatus.total_workers} workers (${queueStatus.active_workers || 0} active)`;
+        if (hasActivity) {
+            text += ` - ${queueStatus.in_progress} scanning, ${queueStatus.queued} queued`;
+        }
+    } else if (hasActivity) {
+        text = `${queueStatus.in_progress} scanning, ${queueStatus.queued} queued`;
+    }
+
+    statusText.textContent = text;
+}
+
+// Filter security scans table
+function filterSecurityScans() {
+    const searchTerm = document.getElementById('securitySearchInput')?.value.toLowerCase() || '';
+    const severityFilter = document.getElementById('securitySeverityFilter')?.value || '';
+
+    const filtered = allVulnerabilityScans.filter(scan => {
+        const matchesSearch = searchTerm === '' ||
+            scan.image_name.toLowerCase().includes(searchTerm) ||
+            scan.image_id.toLowerCase().includes(searchTerm);
+
+        let matchesSeverity = true;
+        if (severityFilter) {
+            if (severityFilter === 'clean') {
+                matchesSeverity = scan.total_vulnerabilities === 0;
+            } else if (severityFilter === 'critical') {
+                matchesSeverity = (scan.severity_counts?.critical || 0) > 0;
+            } else if (severityFilter === 'high') {
+                matchesSeverity = (scan.severity_counts?.high || 0) > 0;
+            } else if (severityFilter === 'medium') {
+                matchesSeverity = (scan.severity_counts?.medium || 0) > 0;
+            } else if (severityFilter === 'low') {
+                matchesSeverity = (scan.severity_counts?.low || 0) > 0;
+            }
+        }
+
+        return matchesSearch && matchesSeverity;
+    });
+
+    renderSecurityScansTable(filtered);
+}
+
+// Render security scans table
+function renderSecurityScansTable(scans) {
+    const tbody = document.getElementById('securityScansBody');
+    if (!tbody) return;
+
+    if (scans.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="loading">No scans found</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = scans.map(scan => {
+        const counts = scan.severity_counts || {};
+        const total = scan.total_vulnerabilities || 0;
+        const critical = counts.critical || 0;
+        const high = counts.high || 0;
+        const medium = counts.medium || 0;
+        const low = counts.low || 0;
+        const scannedTime = formatTimeAgo(new Date(scan.scanned_at));
+
+        // Determine row class based on highest severity
+        let rowClass = '';
+        if (critical > 0) rowClass = 'severity-critical';
+        else if (high > 0) rowClass = 'severity-high';
+        else if (medium > 0) rowClass = 'severity-medium';
+
+        return `
+            <tr class="${rowClass}">
+                <td><code>${escapeHtml(scan.image_name)}</code></td>
+                <td>${total}</td>
+                <td><span class="severity-badge critical">${critical}</span></td>
+                <td><span class="severity-badge high">${high}</span></td>
+                <td><span class="severity-badge medium">${medium}</span></td>
+                <td><span class="severity-badge low">${low}</span></td>
+                <td>${scannedTime}</td>
+                <td>
+                    <button class="btn btn-sm btn-primary" onclick="viewVulnerabilityDetails('${escapeAttr(scan.image_id)}', '${escapeAttr(scan.image_name)}')">
+                        🔍 Details
+                    </button>
+                    <button class="btn btn-sm btn-secondary" onclick="rescanImage('${escapeAttr(scan.image_id)}', '${escapeAttr(scan.image_name)}')">
+                        🔄 Rescan
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// Trigger scan for all images
+async function scanAllImages() {
+    try {
+        const response = await fetch('/api/vulnerabilities/scan-all', { method: 'POST' });
+        if (response.ok) {
+            const data = await response.json();
+            showNotification(`Queued ${data.images_queued} images for scanning`, 'success');
+            // Reload security tab after a short delay
+            setTimeout(loadSecurityTab, 2000);
+        } else {
+            const error = await response.json();
+            showNotification(`Failed to queue scans: ${error.error}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error triggering scan-all:', error);
+        showNotification('Failed to queue scans', 'error');
+    }
+}
+
+// Trigger scan for a specific image
+async function rescanImage(imageID, imageName) {
+    try {
+        const response = await fetch(`/api/vulnerabilities/scan/${encodeURIComponent(imageID)}`, { method: 'POST' });
+        if (response.ok) {
+            showNotification(`Queued ${imageName} for scanning`, 'success');
+            // Just update the queue status, don't reload the entire table
+            // This prevents the row from disappearing while the scan is in progress
+            const summary = await loadVulnerabilitySummary();
+            updateQueueStatus(summary?.queue_status);
+        } else {
+            const error = await response.json();
+            showNotification(`Failed to queue scan: ${error.error}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error triggering scan:', error);
+        showNotification('Failed to queue scan', 'error');
+    }
+}
+
+// Update Trivy database
+async function updateTrivyDB() {
+    try {
+        showNotification('Updating Trivy database... This may take a few minutes.', 'info');
+        const response = await fetch('/api/vulnerabilities/update-db', { method: 'POST' });
+        if (response.ok) {
+            showNotification('Trivy database updated successfully', 'success');
+        } else {
+            const error = await response.json();
+            showNotification(`Failed to update database: ${error.error}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error updating Trivy DB:', error);
+        showNotification('Failed to update database', 'error');
+    }
+}
+
+// View vulnerability details
+async function viewVulnerabilityDetails(imageID, imageName) {
+    document.getElementById('vulnDetailsImageName').textContent = imageName;
+    document.getElementById('vulnerabilityDetailsModal').classList.add('show');
+    document.getElementById('vulnDetailsContent').innerHTML = '<div class="loading">Loading vulnerabilities...</div>';
+
+    try {
+        const response = await fetch(`/api/vulnerabilities/image/${encodeURIComponent(imageID)}`);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        renderVulnerabilityDetails(data);
+    } catch (error) {
+        console.error('Error loading vulnerability details:', error);
+        document.getElementById('vulnDetailsContent').innerHTML = `<div class="error">Failed to load vulnerability details: ${error.message}</div>`;
+    }
+}
+
+function closeVulnerabilityDetailsModal() {
+    document.getElementById('vulnerabilityDetailsModal').classList.remove('show');
+}
+
+function renderVulnerabilityDetails(data) {
+    if (!data || !data.vulnerabilities || data.vulnerabilities.length === 0) {
+        document.getElementById('vulnDetailsContent').innerHTML = '<p class="empty-message">No vulnerabilities found for this image.</p>';
+        return;
+    }
+
+    const vulns = data.vulnerabilities;
+
+    // Group by severity
+    const bySeverity = {
+        CRITICAL: vulns.filter(v => v.severity === 'CRITICAL'),
+        HIGH: vulns.filter(v => v.severity === 'HIGH'),
+        MEDIUM: vulns.filter(v => v.severity === 'MEDIUM'),
+        LOW: vulns.filter(v => v.severity === 'LOW'),
+        UNKNOWN: vulns.filter(v => v.severity === 'UNKNOWN' || !v.severity)
+    };
+
+    const html = `
+        <div class="vuln-details-summary">
+            <div class="vuln-stat">
+                <span class="severity-badge severity-critical">${bySeverity.CRITICAL.length}</span> Critical
+            </div>
+            <div class="vuln-stat">
+                <span class="severity-badge severity-high">${bySeverity.HIGH.length}</span> High
+            </div>
+            <div class="vuln-stat">
+                <span class="severity-badge severity-medium">${bySeverity.MEDIUM.length}</span> Medium
+            </div>
+            <div class="vuln-stat">
+                <span class="severity-badge severity-low">${bySeverity.LOW.length}</span> Low
+            </div>
+        </div>
+
+        ${['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN'].map(severity => {
+            const items = bySeverity[severity];
+            if (items.length === 0) return '';
+
+            return `
+                <div class="vuln-severity-section">
+                    <h3><span class="severity-badge severity-${severity.toLowerCase()}">${severity}</span> (${items.length})</h3>
+                    <table class="vuln-table">
+                        <thead>
+                            <tr>
+                                <th>CVE ID</th>
+                                <th>Package</th>
+                                <th>Installed</th>
+                                <th>Fixed In</th>
+                                <th>Title</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${items.map(v => `
+                                <tr>
+                                    <td>
+                                        <a href="https://nvd.nist.gov/vuln/detail/${escapeHtml(v.vulnerability_id)}" target="_blank" rel="noopener">
+                                            ${escapeHtml(v.vulnerability_id)}
+                                        </a>
+                                    </td>
+                                    <td><code>${escapeHtml(v.pkg_name)}</code></td>
+                                    <td><code>${escapeHtml(v.installed_version || 'N/A')}</code></td>
+                                    <td><code>${escapeHtml(v.fixed_version || 'Not Fixed')}</code></td>
+                                    <td class="vuln-title">${escapeHtml(v.title || 'No description')}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }).join('')}
+    `;
+
+    document.getElementById('vulnDetailsContent').innerHTML = html;
+}
+
+// Export vulnerabilities (placeholder)
+function exportVulnerabilities() {
+    showNotification('Export functionality coming soon!', 'info');
+    // TODO: Export vulnerability data as CSV/JSON
+}
+
+// ===== Vulnerability Settings Modal =====
+
+let currentVulnerabilitySettings = null;
+
+// Open vulnerability settings modal
+async function openVulnerabilitySettingsModal() {
+    try {
+        const response = await fetch('/api/vulnerabilities/settings');
+        if (response.ok) {
+            currentVulnerabilitySettings = await response.json();
+            populateVulnerabilitySettingsForm(currentVulnerabilitySettings);
+            document.getElementById('vulnerabilitySettingsModal').classList.add('active');
+        } else {
+            showNotification('Failed to load vulnerability settings', 'error');
+        }
+    } catch (error) {
+        console.error('Error loading vulnerability settings:', error);
+        showNotification('Failed to load vulnerability settings', 'error');
+    }
+}
+
+// Close vulnerability settings modal
+function closeVulnerabilitySettingsModal() {
+    document.getElementById('vulnerabilitySettingsModal').classList.remove('active');
+}
+
+// Populate vulnerability settings form
+function populateVulnerabilitySettingsForm(settings) {
+    document.getElementById('vulnEnabled').checked = settings.enabled || false;
+    document.getElementById('vulnAutoScan').checked = settings.auto_scan_new_images || false;
+    document.getElementById('vulnWorkerPoolSize').value = settings.worker_pool_size || 5;
+    document.getElementById('vulnScanTimeout').value = settings.scan_timeout_minutes || 10;
+    document.getElementById('vulnMaxQueueSize').value = settings.max_queue_size || 100;
+    document.getElementById('vulnCacheTTL').value = settings.cache_ttl_hours || 24;
+    document.getElementById('vulnRescanInterval').value = settings.rescan_interval_hours || 168;
+    document.getElementById('vulnDBUpdateInterval').value = settings.db_update_interval_hours || 24;
+    document.getElementById('vulnRetentionDays').value = settings.retention_days || 90;
+    document.getElementById('vulnDetailedRetentionDays').value = settings.detailed_retention_days || 30;
+    document.getElementById('vulnAlertCritical').checked = settings.alert_on_critical || false;
+    document.getElementById('vulnAlertHigh').checked = settings.alert_on_high || false;
+    document.getElementById('vulnCacheDir').value = settings.cache_dir || '/app/data/.trivy';
+}
+
+// Save vulnerability settings
+async function saveVulnerabilitySettings(event) {
+    event.preventDefault();
+
+    const settings = {
+        enabled: document.getElementById('vulnEnabled').checked,
+        auto_scan_new_images: document.getElementById('vulnAutoScan').checked,
+        worker_pool_size: parseInt(document.getElementById('vulnWorkerPoolSize').value),
+        scan_timeout_minutes: parseInt(document.getElementById('vulnScanTimeout').value),
+        max_queue_size: parseInt(document.getElementById('vulnMaxQueueSize').value),
+        cache_ttl_hours: parseInt(document.getElementById('vulnCacheTTL').value),
+        rescan_interval_hours: parseInt(document.getElementById('vulnRescanInterval').value),
+        db_update_interval_hours: parseInt(document.getElementById('vulnDBUpdateInterval').value),
+        retention_days: parseInt(document.getElementById('vulnRetentionDays').value),
+        detailed_retention_days: parseInt(document.getElementById('vulnDetailedRetentionDays').value),
+        alert_on_critical: document.getElementById('vulnAlertCritical').checked,
+        alert_on_high: document.getElementById('vulnAlertHigh').checked,
+        cache_dir: document.getElementById('vulnCacheDir').value
+    };
+
+    try {
+        const response = await fetch('/api/vulnerabilities/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(settings)
+        });
+
+        if (response.ok) {
+            showNotification('Vulnerability settings saved successfully', 'success');
+            closeVulnerabilitySettingsModal();
+        } else {
+            const error = await response.json();
+            showNotification(`Failed to save settings: ${error.error}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error saving vulnerability settings:', error);
+        showNotification('Failed to save settings', 'error');
+    }
 }

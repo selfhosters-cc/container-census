@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/container-census/container-census/internal/models"
-	"github.com/docker/docker/api/types"
+	imagetypes "github.com/docker/docker/api/types/image"
 )
 
 // AgentClient handles communication with remote agents
@@ -173,7 +173,7 @@ func (s *Scanner) getAgentContainerLogs(ctx context.Context, host models.Host, c
 	return result["logs"], nil
 }
 
-func (s *Scanner) listAgentImages(ctx context.Context, host models.Host) ([]types.ImageSummary, error) {
+func (s *Scanner) listAgentImages(ctx context.Context, host models.Host) ([]imagetypes.Summary, error) {
 	resp, err := s.agentRequest(ctx, host, "GET", "/api/images", nil)
 	if err != nil {
 		return nil, err
@@ -185,7 +185,7 @@ func (s *Scanner) listAgentImages(ctx context.Context, host models.Host) ([]type
 		return nil, fmt.Errorf("agent error: %s", string(body))
 	}
 
-	var images []types.ImageSummary
+	var images []imagetypes.Summary
 	if err := json.NewDecoder(resp.Body).Decode(&images); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}

@@ -19,10 +19,20 @@ type DB struct {
 
 // New creates a new database connection and initializes schema
 func New(dbPath string) (*DB, error) {
-	conn, err := sql.Open("sqlite3", dbPath)
+	// Add SQLite parameters for better concurrency and time parsing
+	// _parseTime=true: Parse TIME columns into time.Time
+	// _busy_timeout=5000: Wait up to 5 seconds for locks
+	// _journal_mode=WAL: Enable Write-Ahead Logging for better concurrency
+	dsn := dbPath + "?_parseTime=true&_busy_timeout=5000&_journal_mode=WAL"
+	conn, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
+
+	// Set connection pool limits to prevent lock contention
+	// Max 10 open connections, WAL mode allows multiple readers + 1 writer
+	conn.SetMaxOpenConns(10)
+	conn.SetMaxIdleConns(5)
 
 	// Enable foreign keys
 	if _, err := conn.Exec("PRAGMA foreign_keys = ON"); err != nil {
@@ -257,6 +267,63 @@ func (db *DB) initSchema() error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_threshold_state_container ON notification_threshold_state(container_id, host_id);
+
+	CREATE TABLE IF NOT EXISTS vulnerability_scans (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		image_id TEXT NOT NULL UNIQUE,
+		image_name TEXT NOT NULL,
+		scanned_at TIMESTAMP NOT NULL,
+		scan_duration_ms INTEGER NOT NULL,
+		success BOOLEAN NOT NULL,
+		error TEXT,
+		trivy_db_version TEXT,
+		total_vulnerabilities INTEGER DEFAULT 0,
+		critical_count INTEGER DEFAULT 0,
+		high_count INTEGER DEFAULT 0,
+		medium_count INTEGER DEFAULT 0,
+		low_count INTEGER DEFAULT 0,
+		unknown_count INTEGER DEFAULT 0
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_vuln_scans_image ON vulnerability_scans(image_id);
+	CREATE INDEX IF NOT EXISTS idx_vuln_scans_scanned_at ON vulnerability_scans(scanned_at);
+
+	CREATE TABLE IF NOT EXISTS vulnerabilities (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		image_id TEXT NOT NULL,
+		vulnerability_id TEXT NOT NULL,
+		pkg_name TEXT NOT NULL,
+		installed_version TEXT,
+		fixed_version TEXT,
+		severity TEXT NOT NULL,
+		title TEXT,
+		description TEXT,
+		published_date TIMESTAMP,
+		last_modified_date TIMESTAMP,
+		primary_url TEXT,
+		FOREIGN KEY (image_id) REFERENCES vulnerability_scans(image_id) ON DELETE CASCADE
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_vulns_image ON vulnerabilities(image_id);
+	CREATE INDEX IF NOT EXISTS idx_vulns_severity ON vulnerabilities(severity);
+	CREATE INDEX IF NOT EXISTS idx_vulns_cve ON vulnerabilities(vulnerability_id);
+
+	CREATE TABLE IF NOT EXISTS image_containers (
+		image_id TEXT NOT NULL,
+		container_id TEXT NOT NULL,
+		host_id INTEGER NOT NULL,
+		last_seen TIMESTAMP NOT NULL,
+		PRIMARY KEY (image_id, container_id, host_id)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_image_containers ON image_containers(image_id);
+
+	CREATE TABLE IF NOT EXISTS vulnerability_settings (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		key TEXT NOT NULL UNIQUE,
+		value TEXT NOT NULL,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
 	`
 
 	if _, err := db.conn.Exec(schema); err != nil {

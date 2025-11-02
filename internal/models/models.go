@@ -127,11 +127,12 @@ type ActivityLogEntry struct {
 
 // Config represents application configuration
 type Config struct {
-	Database       DatabaseConfig   `yaml:"database"`
-	Server         ServerConfig     `yaml:"server"`
-	Scanner        ScannerConfig    `yaml:"scanner"`
-	Telemetry      TelemetryConfig  `yaml:"telemetry"`
-	Hosts          []HostConfig     `yaml:"hosts"`
+	Database       DatabaseConfig        `yaml:"database"`
+	Server         ServerConfig          `yaml:"server"`
+	Scanner        ScannerConfig         `yaml:"scanner"`
+	Vulnerability  VulnerabilityConfig   `yaml:"vulnerability"`
+	Telemetry      TelemetryConfig       `yaml:"telemetry"`
+	Hosts          []HostConfig          `yaml:"hosts"`
 }
 
 // DatabaseConfig contains database settings
@@ -157,6 +158,23 @@ type AuthConfig struct {
 type ScannerConfig struct {
 	IntervalSeconds int `yaml:"interval_seconds"`
 	TimeoutSeconds  int `yaml:"timeout_seconds"`
+}
+
+// VulnerabilityConfig contains vulnerability scanner settings
+type VulnerabilityConfig struct {
+	Enabled                bool   `yaml:"enabled"`
+	AutoScanNewImages      bool   `yaml:"auto_scan_new_images"`
+	WorkerPoolSize         int    `yaml:"worker_pool_size"`
+	ScanTimeoutMinutes     int    `yaml:"scan_timeout_minutes"`
+	CacheTTLHours          int    `yaml:"cache_ttl_hours"`
+	RescanIntervalHours    int    `yaml:"rescan_interval_hours"`
+	CacheDir               string `yaml:"cache_dir"`
+	DBUpdateIntervalHours  int    `yaml:"db_update_interval_hours"`
+	RetentionDays          int    `yaml:"retention_days"`
+	DetailedRetentionDays  int    `yaml:"detailed_retention_days"`
+	AlertOnCritical        bool   `yaml:"alert_on_critical"`
+	AlertOnHigh            bool   `yaml:"alert_on_high"`
+	MaxQueueSize           int    `yaml:"max_queue_size"`
 }
 
 // HostConfig contains host configuration

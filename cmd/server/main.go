@@ -22,6 +22,7 @@ import (
 	"github.com/container-census/container-census/internal/storage"
 	"github.com/container-census/container-census/internal/telemetry"
 	"github.com/container-census/container-census/internal/version"
+	"github.com/container-census/container-census/internal/vulnerability"
 )
 
 // Global scan interval that can be updated dynamically
@@ -29,6 +30,12 @@ var (
 	scanIntervalMu     sync.RWMutex
 	scanIntervalValue  int
 	scanIntervalChange = make(chan int, 1)
+)
+
+// Global references for scanner integration
+var (
+	notificationServiceGlobal       *notifications.NotificationService
+	vulnerabilitySchedulerGlobal    *vulnerability.Scheduler
 )
 
 func getScanInterval() int {
@@ -171,6 +178,29 @@ func main() {
 	// Start hourly notification cleanup
 	go runHourlyNotificationCleanup(ctx, db)
 
+	// Initialize vulnerability scanner if enabled
+	if cfg.Vulnerability.Enabled {
+		vulnConfig := convertVulnerabilityConfig(cfg.Vulnerability)
+		vulnScanner := vulnerability.NewScanner(vulnConfig, db)
+		vulnScheduler := vulnerability.NewScheduler(vulnScanner, vulnConfig)
+		vulnScheduler.Start()
+		log.Printf("Vulnerability scanner initialized (%d workers, auto-scan: %v)", vulnConfig.GetWorkerPoolSize(), vulnConfig.GetAutoScanNewImages())
+
+		// Pass to API server
+		apiServer.SetVulnerabilityScanner(vulnScanner, vulnScheduler)
+
+		// Set global reference for container scanner integration
+		vulnerabilitySchedulerGlobal = vulnScheduler
+
+		// Start daily Trivy DB update
+		go runDailyTrivyDBUpdate(ctx, vulnScanner, vulnConfig)
+
+		// Start daily vulnerability cleanup
+		go runDailyVulnerabilityCleanup(ctx, db, vulnConfig)
+	} else {
+		log.Println("Vulnerability scanning disabled")
+	}
+
 	// Start HTTP server
 	go func() {
 		log.Printf("Server listening on http://%s", addr)
@@ -263,9 +293,6 @@ func detectHostType(address string) string {
 	}
 }
 
-// Global notification service reference
-var notificationServiceGlobal *notifications.NotificationService
-
 // runPeriodicScans runs scans at regular intervals
 func runPeriodicScans(ctx context.Context, db *storage.DB, scan *scanner.Scanner, intervalSeconds int) {
 	currentInterval := getScanInterval()
@@ -352,6 +379,11 @@ func performScan(ctx context.Context, db *storage.DB, scan *scanner.Scanner) {
 				log.Printf("Failed to save containers for host %s: %v", host.Name, err)
 			}
 
+			// Queue unique images for vulnerability scanning
+			if vulnerabilitySchedulerGlobal != nil {
+				queueImagesForScanning(containers, host.ID, db)
+			}
+
 			// Process notifications for this host
 			if notificationServiceGlobal != nil {
 				if err := notificationServiceGlobal.ProcessEvents(ctx, host.ID); err != nil {
@@ -364,6 +396,37 @@ func performScan(ctx context.Context, db *storage.DB, scan *scanner.Scanner) {
 		if _, err := db.SaveScanResult(result); err != nil {
 			log.Printf("Failed to save scan result for host %s: %v", host.Name, err)
 		}
+	}
+}
+
+// queueImagesForScanning queues unique images found in containers for vulnerability scanning
+func queueImagesForScanning(containers []models.Container, hostID int64, db *storage.DB) {
+	// Track unique images
+	seenImages := make(map[string]string) // imageID -> imageName
+
+	for _, container := range containers {
+		if container.ImageID == "" {
+			continue
+		}
+
+		// Only queue each image once
+		if _, seen := seenImages[container.ImageID]; !seen {
+			seenImages[container.ImageID] = container.Image
+
+			// Update image-to-container mapping
+			if err := db.UpdateImageContainer(container.ImageID, container.ID, int(hostID)); err != nil {
+				log.Printf("Warning: Failed to update image-container mapping: %v", err)
+			}
+
+			// Queue for scanning (non-blocking)
+			if err := vulnerabilitySchedulerGlobal.QueueScan(container.ImageID, container.Image, 0); err != nil {
+				log.Printf("Warning: Failed to queue image for scanning: %v", err)
+			}
+		}
+	}
+
+	if len(seenImages) > 0 {
+		log.Printf("Queued %d unique images for vulnerability scanning", len(seenImages))
 	}
 }
 
@@ -480,4 +543,106 @@ func getEnvInt(key string, defaultValue int) int {
 		}
 	}
 	return defaultValue
+}
+
+// convertVulnerabilityConfig converts models.VulnerabilityConfig to vulnerability.Config
+func convertVulnerabilityConfig(cfg models.VulnerabilityConfig) *vulnerability.Config {
+	return &vulnerability.Config{
+		Enabled:                cfg.Enabled,
+		AutoScanNewImages:      cfg.AutoScanNewImages,
+		WorkerPoolSize:         cfg.WorkerPoolSize,
+		ScanTimeoutMinutes:     cfg.ScanTimeoutMinutes,
+		CacheTTLHours:          cfg.CacheTTLHours,
+		RescanIntervalHours:    cfg.RescanIntervalHours,
+		CacheDir:               cfg.CacheDir,
+		DBUpdateIntervalHours:  cfg.DBUpdateIntervalHours,
+		RetentionDays:          cfg.RetentionDays,
+		DetailedRetentionDays:  cfg.DetailedRetentionDays,
+		AlertOnCritical:        cfg.AlertOnCritical,
+		AlertOnHigh:            cfg.AlertOnHigh,
+		MaxQueueSize:           cfg.MaxQueueSize,
+	}
+}
+
+// runDailyTrivyDBUpdate updates the Trivy database daily
+func runDailyTrivyDBUpdate(ctx context.Context, scanner *vulnerability.Scanner, config *vulnerability.Config) {
+	// Calculate time until next 2 AM
+	now := time.Now()
+	next2AM := time.Date(now.Year(), now.Month(), now.Day(), 2, 0, 0, 0, now.Location())
+	if now.After(next2AM) {
+		next2AM = next2AM.Add(24 * time.Hour)
+	}
+	initialDelay := time.Until(next2AM)
+
+	log.Printf("Trivy database will be updated at %s", next2AM.Format("2006-01-02 15:04:05"))
+	time.Sleep(initialDelay)
+
+	// Run first update
+	log.Println("Running Trivy database update...")
+	updateCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	if err := scanner.UpdateTrivyDB(updateCtx); err != nil {
+		log.Printf("Trivy database update failed: %v", err)
+	} else {
+		log.Println("Trivy database updated successfully")
+	}
+	cancel()
+
+	// Run daily at 2 AM
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			log.Println("Running scheduled Trivy database update...")
+			updateCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+			if err := scanner.UpdateTrivyDB(updateCtx); err != nil {
+				log.Printf("Trivy database update failed: %v", err)
+			} else {
+				log.Println("Trivy database updated successfully")
+			}
+			cancel()
+		}
+	}
+}
+
+// runDailyVulnerabilityCleanup performs vulnerability data cleanup daily
+func runDailyVulnerabilityCleanup(ctx context.Context, db *storage.DB, config *vulnerability.Config) {
+	// Calculate time until next 3 AM
+	now := time.Now()
+	next3AM := time.Date(now.Year(), now.Month(), now.Day(), 3, 0, 0, 0, now.Location())
+	if now.After(next3AM) {
+		next3AM = next3AM.Add(24 * time.Hour)
+	}
+	initialDelay := time.Until(next3AM)
+
+	log.Printf("Vulnerability cleanup will run at %s", next3AM.Format("2006-01-02 15:04:05"))
+	time.Sleep(initialDelay)
+
+	// Run first cleanup
+	if err := db.CleanupOldVulnerabilityData(config.RetentionDays, config.DetailedRetentionDays); err != nil {
+		log.Printf("Vulnerability cleanup failed: %v", err)
+	} else {
+		log.Println("Vulnerability cleanup completed successfully")
+	}
+
+	// Run daily at 3 AM
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			log.Println("Running scheduled vulnerability cleanup...")
+			if err := db.CleanupOldVulnerabilityData(config.RetentionDays, config.DetailedRetentionDays); err != nil {
+				log.Printf("Vulnerability cleanup failed: %v", err)
+			} else {
+				log.Println("Vulnerability cleanup completed successfully")
+			}
+		}
+	}
 }
