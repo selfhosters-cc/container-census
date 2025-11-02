@@ -324,6 +324,12 @@ func (db *DB) initSchema() error {
 		value TEXT NOT NULL,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
+
+	CREATE TABLE IF NOT EXISTS user_preferences (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
 	`
 
 	if _, err := db.conn.Exec(schema); err != nil {
@@ -2176,4 +2182,54 @@ func (db *DB) GetChangesReport(start, end time.Time, hostFilter int64) (*models.
 	}
 
 	return report, nil
+}
+
+// GetPreference retrieves a single user preference by key
+func (db *DB) GetPreference(key string) (string, error) {
+	var value string
+	err := db.conn.QueryRow(`SELECT value FROM user_preferences WHERE key = ?`, key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", nil // Return empty string if preference doesn't exist
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to get preference: %w", err)
+	}
+	return value, nil
+}
+
+// SetPreference sets a user preference value (insert or update)
+func (db *DB) SetPreference(key, value string) error {
+	_, err := db.conn.Exec(`
+		INSERT INTO user_preferences (key, value, updated_at)
+		VALUES (?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP
+	`, key, value, value)
+	if err != nil {
+		return fmt.Errorf("failed to set preference: %w", err)
+	}
+	return nil
+}
+
+// GetAllPreferences retrieves all user preferences as a map
+func (db *DB) GetAllPreferences() (map[string]string, error) {
+	rows, err := db.conn.Query(`SELECT key, value FROM user_preferences`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query preferences: %w", err)
+	}
+	defer rows.Close()
+
+	prefs := make(map[string]string)
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			return nil, fmt.Errorf("failed to scan preference: %w", err)
+		}
+		prefs[key] = value
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating preferences: %w", err)
+	}
+
+	return prefs, nil
 }

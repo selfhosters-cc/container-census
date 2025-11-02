@@ -419,15 +419,16 @@ func queueImagesForScanning(containers []models.Container, hostID int64, db *sto
 			}
 
 			// Queue for scanning (non-blocking)
+			// Note: QueueScan internally checks NeedsScan() and returns nil if already scanned recently
 			if err := vulnerabilitySchedulerGlobal.QueueScan(container.ImageID, container.Image, 0); err != nil {
 				log.Printf("Warning: Failed to queue image for scanning: %v", err)
 			}
 		}
 	}
 
-	if len(seenImages) > 0 {
-		log.Printf("Queued %d unique images for vulnerability scanning", len(seenImages))
-	}
+	// Note: Not logging queue count here because QueueScan silently skips images that
+	// don't need scanning (already scanned within cache TTL). Check queue status on
+	// Security tab to see actual scanning activity.
 }
 
 // checkForUpdates checks for new versions and logs a warning if an update is available

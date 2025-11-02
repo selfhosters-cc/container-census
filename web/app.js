@@ -30,6 +30,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (typeof initNotifications === 'function') {
         initNotifications();
     }
+
+    // Setup help menu
+    setupHelpMenu();
+
+    // Check if onboarding tour should be shown
+    checkAndShowOnboarding();
 });
 
 // URL Hash Routing
@@ -38,7 +44,7 @@ function initializeRouting() {
     const hash = window.location.hash.slice(1); // Remove #
     if (hash && hash.startsWith('/')) {
         const tab = hash.slice(1); // Remove leading /
-        const validTabs = ['containers', 'monitoring', 'images', 'security', 'graph', 'hosts', 'history', 'activity', 'notifications', 'settings'];
+        const validTabs = ['containers', 'monitoring', 'images', 'security', 'graph', 'hosts', 'history', 'activity', 'reports', 'notifications', 'settings'];
         if (validTabs.includes(tab)) {
             currentTab = tab;
             switchTab(tab, false); // Don't push to history on initial load
@@ -50,7 +56,7 @@ function initializeRouting() {
         const hash = window.location.hash.slice(1);
         if (hash && hash.startsWith('/')) {
             const tab = hash.slice(1);
-            const validTabs = ['containers', 'monitoring', 'images', 'security', 'graph', 'hosts', 'history', 'activity', 'notifications', 'settings'];
+            const validTabs = ['containers', 'monitoring', 'images', 'security', 'graph', 'hosts', 'history', 'activity', 'reports', 'notifications', 'settings'];
             if (validTabs.includes(tab)) {
                 currentTab = tab;
                 switchTab(tab, false); // Don't push to history on hash change
@@ -461,6 +467,11 @@ function switchTab(tab, updateHistory = true) {
     // Restore filter state for this tab (but search is already cleared above)
     restoreFilterState();
 
+    // Stop security tab polling when leaving
+    if (tab !== 'security') {
+        stopQueueStatusPolling();
+    }
+
     // Auto-refresh data when switching to a tab
     if (tab === 'containers') {
         loadContainers();
@@ -669,6 +680,12 @@ async function renderMiniChart(canvasId, hostId, containerId) {
             placeholder.style.display = 'none';
         }
         canvas.style.display = 'block';
+
+        // Destroy existing chart if it exists to avoid "Canvas is already in use" error
+        const existingChart = Chart.getChart(canvasId);
+        if (existingChart) {
+            existingChart.destroy();
+        }
 
         const ctx = canvas.getContext('2d');
 
@@ -1004,12 +1021,10 @@ async function loadActivityLog() {
 async function triggerScan() {
     const btn = document.getElementById('scanBtn');
     const btnIcon = document.getElementById('scanBtnIcon');
-    const btnText = document.getElementById('scanBtnText');
 
     btn.disabled = true;
     btn.classList.add('scanning');
     if (btnIcon) btnIcon.classList.add('spinning');
-    if (btnText) btnText.textContent = 'Scanning...';
 
     showToast('Scan Started', 'Scanning all configured hosts...', 'info');
 
@@ -1017,7 +1032,6 @@ async function triggerScan() {
         btn.disabled = false;
         btn.classList.remove('scanning');
         if (btnIcon) btnIcon.classList.remove('spinning');
-        if (btnText) btnText.textContent = 'Trigger Scan';
     };
 
     try {
@@ -1046,7 +1060,7 @@ async function triggerScan() {
 async function submitTelemetry() {
     const btn = document.getElementById('submitTelemetryBtn');
     btn.disabled = true;
-    btn.textContent = 'Submitting...';
+    btn.classList.add('submitting');
 
     // Add visual indicator to collector items
     const collectorItems = document.querySelectorAll('.collector-item');
@@ -1085,7 +1099,7 @@ async function submitTelemetry() {
         });
     } finally {
         btn.disabled = false;
-        btn.textContent = 'Submit Telemetry';
+        btn.classList.remove('submitting');
     }
 }
 
@@ -1708,9 +1722,8 @@ function updateStats() {
 // Update vulnerability statistics in sidebar
 async function updateVulnerabilityStats() {
     const criticalElem = document.getElementById('criticalVulns');
-    const highElem = document.getElementById('highVulns');
 
-    if (!criticalElem || !highElem) return;
+    if (!criticalElem) return;
 
     // If we don't have summary yet, fetch it
     if (!vulnerabilitySummary) {
@@ -1719,7 +1732,6 @@ async function updateVulnerabilityStats() {
         } catch (error) {
             console.error('Error loading vulnerability summary:', error);
             criticalElem.textContent = '-';
-            highElem.textContent = '-';
             return;
         }
     }
@@ -1727,10 +1739,8 @@ async function updateVulnerabilityStats() {
     if (vulnerabilitySummary && vulnerabilitySummary.summary) {
         const s = vulnerabilitySummary.summary;
         const critical = s.severity_counts?.critical || 0;
-        const high = s.severity_counts?.high || 0;
 
         criticalElem.textContent = critical;
-        highElem.textContent = high;
 
         // Add visual indication for high counts
         if (critical > 0) {
@@ -1738,15 +1748,6 @@ async function updateVulnerabilityStats() {
         } else {
             criticalElem.style.fontWeight = 'normal';
         }
-
-        if (high > 0) {
-            highElem.style.fontWeight = 'bold';
-        } else {
-            highElem.style.fontWeight = 'normal';
-        }
-    } else {
-        criticalElem.textContent = '-';
-        highElem.textContent = '-';
     }
 }
 
@@ -4679,7 +4680,12 @@ function getVulnerabilityBadgeHTML(scan) {
     }
 
     if (!scan.scan.success) {
-        // Scan failed
+        // Check if it's a remote image (not available for scanning)
+        const error = scan.scan.error || '';
+        if (error.includes('image not available for scanning') || error.includes('not available')) {
+            return '<span class="vulnerability-badge remote" title="Remote image - not available for scanning">🌐 Remote</span>';
+        }
+        // Other scan failures
         return '<span class="vulnerability-badge not-scanned" title="Scan failed">⚠️ Scan Failed</span>';
     }
 
@@ -4775,6 +4781,7 @@ async function loadAllVulnerabilityBadges() {
 
 let allVulnerabilityScans = [];
 let securityChart = null;
+let scanningImages = new Set(); // Track images currently being scanned
 
 // Load the security tab
 async function loadSecurityTab() {
@@ -4793,14 +4800,53 @@ async function loadSecurityTab() {
         // Render security chart
         renderSecurityChart(summary);
 
+        // Render vulnerability trends chart
+        renderVulnerabilityTrendsChart();
+
         // Update queue status
         updateQueueStatus(summary?.queue_status);
+
+        // Update scan count badge (use allVulnerabilityScans for total, not filtered)
+        const scanCountBadge = document.getElementById('scanCountBadge');
+        if (scanCountBadge && allVulnerabilityScans) {
+            scanCountBadge.textContent = `${allVulnerabilityScans.length} scan${allVulnerabilityScans.length !== 1 ? 's' : ''}`;
+        }
 
         // Render scans table
         filterSecurityScans();
 
+        // Start periodic queue status updates (every 3 seconds)
+        startQueueStatusPolling();
+
     } catch (error) {
         console.error('Error loading security tab:', error);
+    }
+}
+
+// Poll queue status periodically to update button states
+let queueStatusInterval = null;
+function startQueueStatusPolling() {
+    // Clear existing interval
+    if (queueStatusInterval) {
+        clearInterval(queueStatusInterval);
+    }
+
+    // Poll every 3 seconds
+    queueStatusInterval = setInterval(async () => {
+        try {
+            const summary = await loadVulnerabilitySummary();
+            updateQueueStatus(summary?.queue_status);
+        } catch (error) {
+            console.error('Error polling queue status:', error);
+        }
+    }, 3000);
+}
+
+// Stop polling when leaving security tab
+function stopQueueStatusPolling() {
+    if (queueStatusInterval) {
+        clearInterval(queueStatusInterval);
+        queueStatusInterval = null;
     }
 }
 
@@ -4859,7 +4905,7 @@ function renderSecurityChart(summary) {
                 '#4caf50'   // Low
             ],
             borderWidth: 2,
-            borderColor: '#1e1e1e'
+            borderColor: 'white'
         }]
     };
 
@@ -4878,21 +4924,195 @@ function renderSecurityChart(summary) {
                     position: 'bottom',
                     labels: {
                         color: '#333',
-                        font: { size: 14 },
-                        padding: 15,
+                        font: { size: 13 },
+                        padding: 12,
                         usePointStyle: true
                     }
                 },
                 title: {
-                    display: true,
-                    text: 'Vulnerability Distribution by Severity',
-                    color: '#333',
-                    font: { size: 16, weight: 'bold' },
-                    padding: { bottom: 20 }
+                    display: false
                 }
             }
         }
     });
+}
+
+// Global variable for trends chart
+let trendsChart = null;
+
+// Render vulnerability trends chart
+async function renderVulnerabilityTrendsChart() {
+    const ctx = document.getElementById('vulnerabilityTrendsChart');
+    if (!ctx) return;
+
+    try {
+        // Fetch all scans
+        const response = await fetch('/api/vulnerabilities/scans?limit=1000', {
+            headers: { 'Authorization': 'Basic ' + btoa(authUsername + ':' + authPassword) }
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to fetch scans');
+        }
+
+        const scans = await response.json();
+
+        // Group scans by date (last 30 days) and calculate aggregates
+        const now = new Date();
+        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+        const dailyData = {};
+
+        scans.forEach(scan => {
+            if (!scan.scan || !scan.scan.success || !scan.scan.scanned_at) return;
+
+            const scanDate = new Date(scan.scan.scanned_at);
+            if (scanDate < thirtyDaysAgo) return;
+
+            const dateKey = scanDate.toISOString().split('T')[0];
+
+            if (!dailyData[dateKey]) {
+                dailyData[dateKey] = {
+                    critical: 0,
+                    high: 0,
+                    medium: 0,
+                    low: 0,
+                    total: 0,
+                    count: 0
+                };
+            }
+
+            const counts = scan.scan.severity_counts || {};
+            dailyData[dateKey].critical += counts.critical || 0;
+            dailyData[dateKey].high += counts.high || 0;
+            dailyData[dateKey].medium += counts.medium || 0;
+            dailyData[dateKey].low += counts.low || 0;
+            dailyData[dateKey].total += scan.scan.total_vulnerabilities || 0;
+            dailyData[dateKey].count++;
+        });
+
+        // Sort dates and create labels
+        const sortedDates = Object.keys(dailyData).sort();
+        const labels = sortedDates.map(date => {
+            const d = new Date(date);
+            return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        });
+
+        const criticalData = sortedDates.map(date => dailyData[date].critical);
+        const highData = sortedDates.map(date => dailyData[date].high);
+        const mediumData = sortedDates.map(date => dailyData[date].medium);
+        const lowData = sortedDates.map(date => dailyData[date].low);
+
+        if (trendsChart) {
+            trendsChart.destroy();
+        }
+
+        trendsChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Critical',
+                        data: criticalData,
+                        borderColor: '#ff1744',
+                        backgroundColor: 'rgba(255, 23, 68, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4
+                    },
+                    {
+                        label: 'High',
+                        data: highData,
+                        borderColor: '#ff9800',
+                        backgroundColor: 'rgba(255, 152, 0, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4
+                    },
+                    {
+                        label: 'Medium',
+                        data: mediumData,
+                        borderColor: '#ffc107',
+                        backgroundColor: 'rgba(255, 193, 7, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4
+                    },
+                    {
+                        label: 'Low',
+                        data: lowData,
+                        borderColor: '#4caf50',
+                        backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false
+                },
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            color: '#333',
+                            font: { size: 13 },
+                            padding: 12,
+                            usePointStyle: true
+                        }
+                    },
+                    title: {
+                        display: false
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        padding: 12,
+                        titleFont: { size: 14, weight: 'bold' },
+                        bodyFont: { size: 13 },
+                        callbacks: {
+                            footer: function(context) {
+                                let total = 0;
+                                context.forEach(item => {
+                                    total += item.parsed.y;
+                                });
+                                return 'Total: ' + total;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: {
+                            display: false
+                        },
+                        ticks: {
+                            color: '#666',
+                            font: { size: 11 }
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            color: 'rgba(0, 0, 0, 0.05)'
+                        },
+                        ticks: {
+                            color: '#666',
+                            font: { size: 11 },
+                            precision: 0
+                        }
+                    }
+                }
+            }
+        });
+    } catch (error) {
+        console.error('Error rendering trends chart:', error);
+    }
 }
 
 // Update queue status
@@ -4902,7 +5122,18 @@ function updateQueueStatus(queueStatus) {
 
     if (!queueStatus) {
         queueDiv.style.display = 'none';
+        scanningImages.clear();
         return;
+    }
+
+    // Update set of images currently being scanned
+    scanningImages.clear();
+    if (queueStatus.queue_items && Array.isArray(queueStatus.queue_items)) {
+        queueStatus.queue_items.forEach(item => {
+            if (item.image_id) {
+                scanningImages.add(item.image_id);
+            }
+        });
     }
 
     // Show status if there's any activity OR worker info
@@ -4928,6 +5159,9 @@ function updateQueueStatus(queueStatus) {
     }
 
     statusText.textContent = text;
+
+    // Re-render table to update button states
+    filterSecurityScans();
 }
 
 // Filter security scans table
@@ -4980,6 +5214,12 @@ function renderSecurityScansTable(scans) {
         const low = counts.low || 0;
         const scannedTime = formatTimeAgo(new Date(scan.scanned_at));
 
+        // Check if this image is currently being scanned
+        const isScanning = scanningImages.has(scan.image_id);
+        const rescanBtnClass = isScanning ? 'btn btn-sm btn-secondary' : 'btn btn-sm btn-secondary';
+        const rescanBtnDisabled = isScanning ? 'disabled' : '';
+        const rescanBtnText = isScanning ? '⏳ Scanning...' : '🔄 Rescan';
+
         // Determine row class based on highest severity
         let rowClass = '';
         if (critical > 0) rowClass = 'severity-critical';
@@ -4999,8 +5239,8 @@ function renderSecurityScansTable(scans) {
                     <button class="btn btn-sm btn-primary" onclick="viewVulnerabilityDetails('${escapeAttr(scan.image_id)}', '${escapeAttr(scan.image_name)}')">
                         🔍 Details
                     </button>
-                    <button class="btn btn-sm btn-secondary" onclick="rescanImage('${escapeAttr(scan.image_id)}', '${escapeAttr(scan.image_name)}')">
-                        🔄 Rescan
+                    <button class="${rescanBtnClass}" onclick="rescanImage('${escapeAttr(scan.image_id)}', '${escapeAttr(scan.image_name)}')" ${rescanBtnDisabled}>
+                        ${rescanBtnText}
                     </button>
                 </td>
             </tr>
@@ -5175,7 +5415,11 @@ let currentVulnerabilitySettings = null;
 // Open vulnerability settings modal
 async function openVulnerabilitySettingsModal() {
     try {
-        const response = await fetch('/api/vulnerabilities/settings');
+        const response = await fetch('/api/vulnerabilities/settings', {
+            headers: {
+                'Authorization': 'Basic ' + btoa(authUsername + ':' + authPassword)
+            }
+        });
         if (response.ok) {
             currentVulnerabilitySettings = await response.json();
             populateVulnerabilitySettingsForm(currentVulnerabilitySettings);
@@ -5248,5 +5492,131 @@ async function saveVulnerabilitySettings(event) {
     } catch (error) {
         console.error('Error saving vulnerability settings:', error);
         showNotification('Failed to save settings', 'error');
+    }
+}
+
+// ============================================
+// Onboarding and Help Functions
+// ============================================
+
+// Global onboarding tour instance
+let onboardingTourInstance = null;
+
+// Start the onboarding tour
+async function startOnboardingTour() {
+    if (!window.OnboardingTour) {
+        showToast('Error', 'Onboarding tour not loaded', 'error');
+        return;
+    }
+
+    if (!onboardingTourInstance) {
+        onboardingTourInstance = new OnboardingTour();
+    }
+
+    await onboardingTourInstance.start();
+    closeHelpMenu();
+}
+
+// Initialize onboarding check on load
+async function checkAndShowOnboarding() {
+    // Wait a bit for page to fully load
+    setTimeout(async () => {
+        if (window.OnboardingTour) {
+            const shouldShow = await OnboardingTour.shouldShow();
+            if (shouldShow) {
+                startOnboardingTour();
+            }
+        }
+    }, 1000);
+}
+
+// Show changelog modal
+async function showChangelogModal() {
+    const modal = document.getElementById('changelogModal');
+    const content = document.getElementById('changelogContent');
+
+    if (!modal || !content) return;
+
+    modal.classList.add('show');
+    content.innerHTML = '<div class="loading">Loading changelog...</div>';
+
+    try {
+        const response = await fetch('/api/changelog');
+        if (response.ok) {
+            const markdown = await response.text();
+            content.innerHTML = renderMarkdownChangelog(markdown);
+        } else {
+            content.innerHTML = '<div class="error">Changelog not available</div>';
+        }
+    } catch (error) {
+        console.error('Error loading changelog:', error);
+        content.innerHTML = '<div class="error">Failed to load changelog</div>';
+    }
+
+    closeHelpMenu();
+}
+
+// Close changelog modal
+function closeChangelogModal() {
+    const modal = document.getElementById('changelogModal');
+    if (modal) {
+        modal.classList.remove('show');
+    }
+}
+
+// Simple markdown to HTML converter for changelog
+function renderMarkdownChangelog(markdown) {
+    let html = markdown
+        // Headers
+        .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+        .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+        .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+        // Bold
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        // Links
+        .replace(/\[([^\]]+)\]\(([^\)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
+        // Lists
+        .replace(/^\* (.+)$/gim, '<li>$1</li>')
+        .replace(/^- (.+)$/gim, '<li>$1</li>')
+        // Paragraphs
+        .replace(/\n\n/g, '</p><p>')
+        // Code blocks
+        .replace(/`([^`]+)`/g, '<code>$1</code>');
+
+    // Wrap lists
+    html = html.replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>');
+
+    // Wrap in paragraph if not already wrapped
+    if (!html.startsWith('<h1>') && !html.startsWith('<h2>')) {
+        html = '<p>' + html + '</p>';
+    }
+
+    return '<div class="changelog-rendered">' + html + '</div>';
+}
+
+// Help menu dropdown handling
+function setupHelpMenu() {
+    const helpBtn = document.getElementById('helpMenuBtn');
+    const helpDropdown = document.getElementById('helpDropdown');
+
+    if (helpBtn && helpDropdown) {
+        helpBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            helpDropdown.classList.toggle('show');
+        });
+
+        // Close when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!helpBtn.contains(e.target) && !helpDropdown.contains(e.target)) {
+                helpDropdown.classList.remove('show');
+            }
+        });
+    }
+}
+
+function closeHelpMenu() {
+    const helpDropdown = document.getElementById('helpDropdown');
+    if (helpDropdown) {
+        helpDropdown.classList.remove('show');
     }
 }

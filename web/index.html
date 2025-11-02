@@ -20,6 +20,34 @@
             </div>
         </div>
         <div class="top-navbar-right">
+            <button id="scanBtn" class="top-navbar-icon-btn" title="Trigger Scan" aria-label="Trigger Scan">
+                <span id="scanBtnIcon">🔄</span>
+            </button>
+            <button id="submitTelemetryBtn" class="top-navbar-icon-btn" title="Submit Telemetry" aria-label="Submit Telemetry">
+                <span>📡</span>
+            </button>
+            <div class="help-menu-container">
+                <button id="helpMenuBtn" class="top-navbar-icon-btn" title="Help" aria-label="Help">
+                    <span>❓</span>
+                </button>
+                <div id="helpDropdown" class="help-dropdown">
+                    <button class="help-menu-item" onclick="startOnboardingTour()">
+                        <span>🎓</span> Take Tour
+                    </button>
+                    <button class="help-menu-item" onclick="showChangelogModal()">
+                        <span>📋</span> What's New
+                    </button>
+                    <a href="https://github.com/selfhosters-cc/container-census" target="_blank" class="help-menu-item">
+                        <span>📚</span> Documentation
+                    </a>
+                    <a href="https://github.com/selfhosters-cc/container-census/issues" target="_blank" class="help-menu-item">
+                        <span>💬</span> Give Feedback
+                    </a>
+                </div>
+            </div>
+            <button class="top-navbar-icon-btn" onclick="switchTab('settings', true)" title="Settings (S)" aria-label="Settings">
+                <span>⚙️</span>
+            </button>
             <div class="notification-bell-container">
                 <button id="notificationBell" class="notification-bell" aria-label="Notifications">
                     <span>🔔</span>
@@ -84,15 +112,8 @@
                 <div class="sidebar-stat-item clickable" onclick="switchTab('security', true)" title="Click to view Security tab">
                     <span class="sidebar-stat-icon">🚨</span>
                     <div class="sidebar-stat-content">
-                        <div class="sidebar-stat-value severity-critical" id="criticalVulns">-</div>
-                        <div class="sidebar-stat-label">Critical</div>
-                    </div>
-                </div>
-                <div class="sidebar-stat-item clickable" onclick="switchTab('security', true)" title="Click to view Security tab">
-                    <span class="sidebar-stat-icon">⚠️</span>
-                    <div class="sidebar-stat-content">
-                        <div class="sidebar-stat-value severity-high" id="highVulns">-</div>
-                        <div class="sidebar-stat-label">High</div>
+                        <div class="sidebar-stat-value" id="criticalVulns">-</div>
+                        <div class="sidebar-stat-label">Critical Vulns</div>
                     </div>
                 </div>
             </div>
@@ -156,22 +177,10 @@
                     <span class="nav-badge" id="notificationsSidebarBadge"></span>
                     <span class="nav-shortcut">0</span>
                 </button>
-                <button class="nav-item" data-tab="settings" data-shortcut="S">
-                    <span class="nav-icon">⚙️</span>
-                    <span class="nav-label">Settings</span>
-                    <span class="nav-shortcut">S</span>
-                </button>
             </nav>
 
             <!-- Actions -->
             <div class="sidebar-actions">
-                <button id="scanBtn" class="btn btn-secondary btn-block">
-                    <span id="scanBtnIcon">🔄</span>
-                    <span id="scanBtnText">Trigger Scan</span>
-                </button>
-                <button id="submitTelemetryBtn" class="btn btn-info btn-block">
-                    📡 Submit Telemetry
-                </button>
                 <label class="auto-refresh-toggle">
                     <input type="checkbox" id="autoRefresh" checked>
                     <span>Auto-refresh (30s)</span>
@@ -247,9 +256,12 @@
         </div>
 
         <div id="securityTab" class="tab-content">
-            <div class="security-section">
-                <div class="security-header">
-                    <h2>🛡️ Vulnerability Scanner</h2>
+            <div class="security-section-modern">
+                <div class="security-header-modern">
+                    <div class="security-title-group">
+                        <h2>🛡️ Vulnerability Scanner</h2>
+                        <p class="security-subtitle">Monitor and track security vulnerabilities across all container images</p>
+                    </div>
                     <div class="security-actions">
                         <button id="scanAllImagesBtn" class="btn btn-primary">
                             🔄 Scan All Images
@@ -257,48 +269,45 @@
                         <button id="updateTrivyDBBtn" class="btn btn-secondary">
                             📥 Update Database
                         </button>
-                        <button id="exportVulnerabilitiesBtn" class="btn btn-secondary">
-                            📊 Export
-                        </button>
                         <button id="vulnerabilitySettingsBtn" class="btn btn-secondary">
                             ⚙️ Settings
                         </button>
                     </div>
                 </div>
 
-                <div class="security-summary-cards">
-                    <div class="security-summary-card">
-                        <div class="security-summary-icon">📊</div>
-                        <div class="security-summary-content">
-                            <div class="security-summary-label">Total Scanned</div>
-                            <div class="security-summary-value" id="totalScannedImages">-</div>
+                <div class="security-summary-grid">
+                    <div class="security-summary-card-modern">
+                        <div class="card-header">
+                            <span class="card-icon">📊</span>
+                            <span class="card-label">Total Scanned</span>
                         </div>
+                        <div class="card-value" id="totalScannedImages">-</div>
+                        <div class="card-footer">images analyzed</div>
                     </div>
-                    <div class="security-summary-card critical">
-                        <div class="security-summary-icon">🚨</div>
-                        <div class="security-summary-content">
-                            <div class="security-summary-label">Critical Vulnerabilities</div>
-                            <div class="security-summary-value" id="totalCriticalVulns">-</div>
+                    <div class="security-summary-card-modern critical-card">
+                        <div class="card-header">
+                            <span class="card-icon">🚨</span>
+                            <span class="card-label">Critical</span>
                         </div>
+                        <div class="card-value" id="totalCriticalVulns">-</div>
+                        <div class="card-footer">vulnerabilities</div>
                     </div>
-                    <div class="security-summary-card high">
-                        <div class="security-summary-icon">⚠️</div>
-                        <div class="security-summary-content">
-                            <div class="security-summary-label">High Vulnerabilities</div>
-                            <div class="security-summary-value" id="totalHighVulns">-</div>
+                    <div class="security-summary-card-modern high-card">
+                        <div class="card-header">
+                            <span class="card-icon">⚠️</span>
+                            <span class="card-label">High</span>
                         </div>
+                        <div class="card-value" id="totalHighVulns">-</div>
+                        <div class="card-footer">vulnerabilities</div>
                     </div>
-                    <div class="security-summary-card">
-                        <div class="security-summary-icon">🛡️</div>
-                        <div class="security-summary-content">
-                            <div class="security-summary-label">At Risk Images</div>
-                            <div class="security-summary-value" id="atRiskImages">-</div>
+                    <div class="security-summary-card-modern">
+                        <div class="card-header">
+                            <span class="card-icon">🛡️</span>
+                            <span class="card-label">At Risk</span>
                         </div>
+                        <div class="card-value" id="atRiskImages">-</div>
+                        <div class="card-footer">images affected</div>
                     </div>
-                </div>
-
-                <div class="security-chart-container">
-                    <canvas id="vulnerabilitySeverityChart"></canvas>
                 </div>
 
                 <div class="security-queue-status" id="securityQueueStatus" style="display: none;">
@@ -309,10 +318,34 @@
                     </div>
                 </div>
 
-                <div class="security-table-container">
-                    <div class="security-table-header">
-                        <h3>Vulnerability Scans</h3>
-                        <div class="security-filters">
+                <div class="security-charts-grid">
+                    <div class="security-chart-card">
+                        <div class="chart-card-header">
+                            <h3>Severity Distribution</h3>
+                            <p class="chart-subtitle">Current vulnerability breakdown</p>
+                        </div>
+                        <div class="security-chart-container">
+                            <canvas id="vulnerabilitySeverityChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="security-chart-card">
+                        <div class="chart-card-header">
+                            <h3>Vulnerability Trends</h3>
+                            <p class="chart-subtitle">Changes over time (last 30 days)</p>
+                        </div>
+                        <div class="security-chart-container">
+                            <canvas id="vulnerabilityTrendsChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="security-table-card">
+                    <div class="security-table-header-modern">
+                        <div class="table-title-group">
+                            <h3>Vulnerability Scans</h3>
+                            <span class="scan-count" id="scanCountBadge">0 scans</span>
+                        </div>
+                        <div class="security-filters-modern">
                             <select id="securitySeverityFilter" class="filter-select">
                                 <option value="">All Severities</option>
                                 <option value="critical">Critical</option>
@@ -321,11 +354,11 @@
                                 <option value="low">Low</option>
                                 <option value="clean">Clean</option>
                             </select>
-                            <input type="text" id="securitySearchInput" class="search-input" placeholder="Search images...">
+                            <input type="text" id="securitySearchInput" class="search-input" placeholder="🔍 Search images...">
                         </div>
                     </div>
                     <div class="table-container">
-                        <table>
+                        <table class="security-table-modern">
                             <thead>
                                 <tr>
                                     <th>Image Name</th>
@@ -1255,11 +1288,30 @@
         </div>
     </div>
 
+    <!-- Changelog Modal -->
+    <div id="changelogModal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3>What's New</h3>
+                <button class="close-btn" onclick="closeChangelogModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="changelogContent" class="changelog-content loading">Loading changelog...</div>
+            </div>
+        </div>
+    </div>
+
     <!-- Cytoscape.js for graph visualization -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.29.2/cytoscape.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
+
+    <!-- Shepherd.js for onboarding tour -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/shepherd.js@11.2.0/dist/css/shepherd.css"/>
+    <script src="https://cdn.jsdelivr.net/npm/shepherd.js@11.2.0/dist/js/shepherd.min.js"></script>
+
     <script src="notifications.js?v=5"></script>
+    <script src="onboarding.js?v=1"></script>
     <script src="app.js?v=11"></script>
 </body>
 </html>

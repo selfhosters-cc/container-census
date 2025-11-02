@@ -240,6 +240,13 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/vulnerabilities/settings", s.handleGetVulnerabilitySettings).Methods("GET")
 	api.HandleFunc("/vulnerabilities/settings", s.handleUpdateVulnerabilitySettings).Methods("PUT")
 
+	// User preferences endpoints
+	api.HandleFunc("/preferences", s.handleGetPreferences).Methods("GET")
+	api.HandleFunc("/preferences", s.handleUpdatePreferences).Methods("PUT")
+
+	// Changelog endpoint
+	api.HandleFunc("/changelog", s.handleGetChangelog).Methods("GET")
+
 	// Serve static files (embedded web frontend) - also protected
 	s.router.PathPrefix("/").Handler(authMiddleware(http.FileServer(http.Dir("./web"))))
 }
@@ -1737,4 +1744,67 @@ func (s *Server) handleGetChangesReport(w http.ResponseWriter, r *http.Request) 
 	}
 
 	respondJSON(w, http.StatusOK, report)
+}
+
+// handleGetPreferences returns all user preferences
+func (s *Server) handleGetPreferences(w http.ResponseWriter, r *http.Request) {
+	prefs, err := s.db.GetAllPreferences()
+	if err != nil {
+		log.Printf("Error getting preferences: %v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to get preferences: "+err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, prefs)
+}
+
+// handleUpdatePreferences updates user preferences
+func (s *Server) handleUpdatePreferences(w http.ResponseWriter, r *http.Request) {
+	var prefs map[string]string
+	if err := json.NewDecoder(r.Body).Decode(&prefs); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+		return
+	}
+
+	// Update each preference
+	for key, value := range prefs {
+		if err := s.db.SetPreference(key, value); err != nil {
+			log.Printf("Error setting preference %s: %v", key, err)
+			respondError(w, http.StatusInternalServerError, "Failed to set preference: "+err.Error())
+			return
+		}
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"status": "success"})
+}
+
+// handleGetChangelog serves the CHANGELOG.md file
+func (s *Server) handleGetChangelog(w http.ResponseWriter, r *http.Request) {
+	// Try to read CHANGELOG.md from various possible locations
+	possiblePaths := []string{
+		"CHANGELOG.md",
+		"/app/CHANGELOG.md",
+		"../CHANGELOG.md",
+	}
+
+	var content []byte
+	var err error
+	found := false
+
+	for _, path := range possiblePaths {
+		content, err = os.ReadFile(path)
+		if err == nil {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		respondError(w, http.StatusNotFound, "Changelog not found")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write(content)
 }

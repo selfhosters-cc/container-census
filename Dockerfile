@@ -60,6 +60,9 @@ COPY --from=builder /build/census .
 # Copy version file
 COPY --from=builder /build/.version ./.version
 
+# Copy changelog for "What's New" feature
+COPY --from=builder /build/CHANGELOG.md ./CHANGELOG.md
+
 # Copy web frontend
 COPY --from=builder /build/web ./web
 
