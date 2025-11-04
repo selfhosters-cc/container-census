@@ -432,7 +432,7 @@ function renderSilencesList() {
             <div class="silence-item-header">
                 <div class="silence-item-title">
                     ${silence.reason || 'Silence'}
-                    ${silence.ends_at ? `<span class="detail-value">(Expires: ${formatTimestamp(silence.ends_at)})</span>` : ''}
+                    ${silence.silenced_until ? `<span class="detail-value">(Expires: ${formatTimestamp(silence.silenced_until)})</span>` : ''}
                 </div>
                 <div class="silence-item-actions">
                     <button class="btn btn-sm btn-danger" onclick="deleteSilence(${silence.id})">Remove</button>
@@ -823,7 +823,7 @@ async function handleAddSilence(e) {
         container_id: document.getElementById('silenceContainer').value || '',
         host_pattern: document.getElementById('silenceHostPattern').value || '',
         container_pattern: document.getElementById('silenceContainerPattern').value || '',
-        ends_at: document.getElementById('silenceEndsAt').value || null
+        silenced_until: document.getElementById('silenceEndsAt').value || null
     };
 
     const hostId = document.getElementById('silenceHost').value;

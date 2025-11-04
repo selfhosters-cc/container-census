@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/container-census/container-census/internal/models"
-	"github.com/docker/docker/api/types"
-	containertypes "github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/gorilla/mux"
 )
@@ -150,7 +150,7 @@ func (a *Agent) handleInfo(w http.ResponseWriter, r *http.Request) {
 func (a *Agent) handleListContainers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	containers, err := a.dockerClient.ContainerList(ctx, types.ContainerListOptions{
+	containers, err := a.dockerClient.ContainerList(ctx, container.ListOptions{
 		All: true,
 	})
 	if err != nil {
@@ -275,7 +275,7 @@ func (a *Agent) handleListContainers(w http.ResponseWriter, r *http.Request) {
 				defer statsStream.Body.Close()
 
 				// Read first sample (baseline)
-				var baseline types.StatsJSON
+				var baseline container.StatsResponse
 				decoder := json.NewDecoder(statsStream.Body)
 				if err := decoder.Decode(&baseline); err != nil {
 					log.Printf("Failed to decode first sample for container %s: %v", containerName, err)
@@ -283,7 +283,7 @@ func (a *Agent) handleListContainers(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Read second sample (current)
-				var current types.StatsJSON
+				var current container.StatsResponse
 				if err := decoder.Decode(&current); err != nil {
 					log.Printf("Failed to decode second sample for container %s: %v", containerName, err)
 					return
@@ -346,7 +346,7 @@ func (a *Agent) handleStartContainer(w http.ResponseWriter, r *http.Request) {
 	containerID := vars["id"]
 
 	ctx := r.Context()
-	if err := a.dockerClient.ContainerStart(ctx, containerID, types.ContainerStartOptions{}); err != nil {
+	if err := a.dockerClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to start container: "+err.Error())
 		return
 	}
@@ -364,7 +364,7 @@ func (a *Agent) handleStopContainer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	stopOptions := containertypes.StopOptions{
+	stopOptions := container.StopOptions{
 		Timeout: &timeout,
 	}
 
@@ -386,7 +386,7 @@ func (a *Agent) handleRestartContainer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	stopOptions := containertypes.StopOptions{
+	stopOptions := container.StopOptions{
 		Timeout: &timeout,
 	}
 
@@ -405,7 +405,7 @@ func (a *Agent) handleRemoveContainer(w http.ResponseWriter, r *http.Request) {
 	force := r.URL.Query().Get("force") == "true"
 
 	ctx := r.Context()
-	if err := a.dockerClient.ContainerRemove(ctx, containerID, types.ContainerRemoveOptions{
+	if err := a.dockerClient.ContainerRemove(ctx, containerID, container.RemoveOptions{
 		Force: force,
 	}); err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to remove container: "+err.Error())
@@ -425,7 +425,7 @@ func (a *Agent) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	options := types.ContainerLogsOptions{
+	options := container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Timestamps: true,
@@ -452,7 +452,7 @@ func (a *Agent) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 func (a *Agent) handleListImages(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	images, err := a.dockerClient.ImageList(ctx, types.ImageListOptions{All: true})
+	images, err := a.dockerClient.ImageList(ctx, image.ListOptions{All: true})
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to list images: "+err.Error())
 		return
@@ -468,7 +468,7 @@ func (a *Agent) handleRemoveImage(w http.ResponseWriter, r *http.Request) {
 	force := r.URL.Query().Get("force") == "true"
 
 	ctx := r.Context()
-	_, err := a.dockerClient.ImageRemove(ctx, imageID, types.ImageRemoveOptions{
+	_, err := a.dockerClient.ImageRemove(ctx, imageID, image.RemoveOptions{
 		Force: force,
 	})
 	if err != nil {
@@ -499,7 +499,7 @@ func (a *Agent) handleGetTelemetry(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	// Get container list
-	containers, err := a.dockerClient.ContainerList(ctx, types.ContainerListOptions{
+	containers, err := a.dockerClient.ContainerList(ctx, container.ListOptions{
 		All: true,
 	})
 	if err != nil {

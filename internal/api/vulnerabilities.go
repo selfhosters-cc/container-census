@@ -19,12 +19,14 @@ type VulnerabilityScanner interface {
 	UpdateTrivyDB(ctx context.Context) error
 	GetConfig() *vulnerability.Config
 	SetConfig(config *vulnerability.Config)
+	InvalidateCache(imageID string)
 }
 
 // VulnerabilityScheduler interface for the vulnerability scheduler
 type VulnerabilityScheduler interface {
 	QueueScan(imageID, imageName string, priority int) error
 	QueueScanBlocking(imageID, imageName string, priority int) error
+	ForceQueueScan(imageID, imageName string, priority int) error
 	GetQueueStatus() vulnerability.ScanQueueStatus
 	RescanAll(imageIDs map[string]string) int
 	UpdateConfig(config *vulnerability.Config)
@@ -177,8 +179,13 @@ func (s *Server) handleTriggerImageScan(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	// Queue the scan with high priority
-	err = s.vulnScheduler.QueueScan(imageID, imageName, 10)
+	// Invalidate cache to force a fresh scan
+	if s.vulnScanner != nil {
+		s.vulnScanner.InvalidateCache(imageID)
+	}
+
+	// Force queue the scan with high priority (skip cache check)
+	err = s.vulnScheduler.ForceQueueScan(imageID, imageName, 10)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to queue scan: "+err.Error())
 		return

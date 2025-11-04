@@ -55,12 +55,12 @@ func TestWebhookChannel_SuccessfulDelivery(t *testing.T) {
 	// Send notification
 	event := models.NotificationEvent{
 		EventType:     "container_stopped",
-		ID:   "test123",
+		ContainerID:   "test123",
 		ContainerName: "web-server",
 		HostID:        1,
 		HostName:      "host1",
 		Image:         "nginx:latest",
-		ScannedAt:     time.Now(),
+		Timestamp:     time.Now(),
 	}
 
 	ctx := context.Background()
@@ -116,7 +116,7 @@ func TestWebhookChannel_CustomHeaders(t *testing.T) {
 	event := models.NotificationEvent{
 		EventType:     "test",
 		ContainerName: "test",
-		ScannedAt:     time.Now(),
+		Timestamp:     time.Now(),
 	}
 
 	ctx := context.Background()
@@ -171,7 +171,7 @@ func TestWebhookChannel_RetryLogic(t *testing.T) {
 	event := models.NotificationEvent{
 		EventType:     "test",
 		ContainerName: "test",
-		ScannedAt:     time.Now(),
+		Timestamp:     time.Now(),
 	}
 
 	ctx := context.Background()
@@ -211,7 +211,7 @@ func TestWebhookChannel_RetryExhaustion(t *testing.T) {
 	event := models.NotificationEvent{
 		EventType:     "test",
 		ContainerName: "test",
-		ScannedAt:     time.Now(),
+		Timestamp:     time.Now(),
 	}
 
 	ctx := context.Background()
@@ -252,7 +252,7 @@ func TestWebhookChannel_AllEventFields(t *testing.T) {
 	// Event with all optional fields
 	event := models.NotificationEvent{
 		EventType:     "new_image",
-		ID:   "abc123",
+		ContainerID:   "abc123",
 		ContainerName: "app",
 		HostID:        1,
 		HostName:      "host1",
@@ -263,10 +263,10 @@ func TestWebhookChannel_AllEventFields(t *testing.T) {
 		NewImage:      "app:v2",
 		CPUPercent:    85.5,
 		MemoryPercent: 92.3,
-		Metadata: map[string]string{
+		Metadata: map[string]interface{}{
 			"key": "value",
 		},
-		ScannedAt: time.Now(),
+		Timestamp: time.Now(),
 	}
 
 	ctx := context.Background()

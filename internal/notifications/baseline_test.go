@@ -1,6 +1,7 @@
 package notifications
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -10,7 +11,7 @@ import (
 )
 
 // setupTestBaseline creates a test baseline collector
-func setupTestBaseline(t *testing.T) (*BaselineCollector, *storage.Store) {
+func setupTestBaseline(t *testing.T) (*BaselineCollector, *storage.DB) {
 	t.Helper()
 
 	tmpfile, err := os.CreateTemp("", "baseline-test-*.db")
@@ -30,7 +31,7 @@ func setupTestBaseline(t *testing.T) (*BaselineCollector, *storage.Store) {
 
 	bc := NewBaselineCollector(db)
 
-	return bc, store
+	return bc, db
 }
 
 // TestBaselineCollection_Calculate48HourAverage tests baseline calculation
@@ -38,10 +39,12 @@ func TestBaselineCollection_Calculate48HourAverage(t *testing.T) {
 	bc, db := setupTestBaseline(t)
 
 	// Create host
-	host := &models.Host{Name: "test-host", Address: "unix:///", Enabled: true, CollectStats: true}
-	if err := db.SaveHost(host); err != nil {
-		t.Fatalf("Failed to save host: %v", err)
+	host := models.Host{Name: "test-host", Address: "unix:///", Enabled: true, CollectStats: true}
+	hostID, err := db.AddHost(host)
+	if err != nil {
+		t.Fatalf("Failed to add host: %v", err)
 	}
+	host.ID = hostID
 
 	now := time.Now()
 
@@ -66,13 +69,13 @@ func TestBaselineCollection_Calculate48HourAverage(t *testing.T) {
 	}
 
 	// Collect baseline
-	err := bc.CollectBaselines()
+	err = bc.UpdateBaselines(context.Background())
 	if err != nil {
 		t.Fatalf("CollectBaselines failed: %v", err)
 	}
 
 	// Retrieve baseline
-	baseline, err := db.GetContainerBaseline(host.ID, "baseline123")
+	baseline, err := db.GetContainerBaseline("baseline123", host.ID)
 	if err != nil {
 		t.Fatalf("GetContainerBaseline failed: %v", err)
 	}
@@ -104,10 +107,12 @@ func TestBaselineCollection_MinimumSamples(t *testing.T) {
 	bc, db := setupTestBaseline(t)
 
 	// Create host
-	host := &models.Host{Name: "test-host", Address: "unix:///", Enabled: true, CollectStats: true}
-	if err := db.SaveHost(host); err != nil {
-		t.Fatalf("Failed to save host: %v", err)
+	host := models.Host{Name: "test-host", Address: "unix:///", Enabled: true, CollectStats: true}
+	hostID, err := db.AddHost(host)
+	if err != nil {
+		t.Fatalf("Failed to add host: %v", err)
 	}
+	host.ID = hostID
 
 	now := time.Now()
 
@@ -132,13 +137,13 @@ func TestBaselineCollection_MinimumSamples(t *testing.T) {
 	}
 
 	// Collect baseline
-	err := bc.CollectBaselines()
+	err = bc.UpdateBaselines(context.Background())
 	if err != nil {
 		t.Fatalf("CollectBaselines failed: %v", err)
 	}
 
 	// Retrieve baseline
-	baseline, err := db.GetContainerBaseline(host.ID, "few-samples")
+	baseline, err := db.GetContainerBaseline("few-samples", host.ID)
 	if err != nil {
 		t.Fatalf("GetContainerBaseline failed: %v", err)
 	}
@@ -159,10 +164,12 @@ func TestBaselineCollection_ImageChange(t *testing.T) {
 	bc, db := setupTestBaseline(t)
 
 	// Create host
-	host := &models.Host{Name: "test-host", Address: "unix:///", Enabled: true, CollectStats: true}
-	if err := db.SaveHost(host); err != nil {
-		t.Fatalf("Failed to save host: %v", err)
+	host := models.Host{Name: "test-host", Address: "unix:///", Enabled: true, CollectStats: true}
+	hostID, err := db.AddHost(host)
+	if err != nil {
+		t.Fatalf("Failed to add host: %v", err)
 	}
+	host.ID = hostID
 
 	now := time.Now()
 
@@ -187,12 +194,12 @@ func TestBaselineCollection_ImageChange(t *testing.T) {
 	}
 
 	// Collect initial baseline
-	if err := bc.CollectBaselines(); err != nil {
+	if err := bc.UpdateBaselines(context.Background()); err != nil {
 		t.Fatalf("CollectBaselines failed: %v", err)
 	}
 
 	// Verify initial baseline
-	baseline1, err := db.GetContainerBaseline(host.ID, "img-change")
+	baseline1, err := db.GetContainerBaseline("img-change", host.ID)
 	if err != nil {
 		t.Fatalf("GetContainerBaseline failed: %v", err)
 	}
@@ -226,12 +233,12 @@ func TestBaselineCollection_ImageChange(t *testing.T) {
 	}
 
 	// Collect new baseline
-	if err := bc.CollectBaselines(); err != nil {
+	if err := bc.UpdateBaselines(context.Background()); err != nil {
 		t.Fatalf("CollectBaselines failed: %v", err)
 	}
 
 	// Should have updated baseline with new image
-	baseline2, err := db.GetContainerBaseline(host.ID, "img-change")
+	baseline2, err := db.GetContainerBaseline("img-change", host.ID)
 	if err != nil {
 		t.Fatalf("GetContainerBaseline failed: %v", err)
 	}
@@ -254,10 +261,12 @@ func TestBaselineCollection_MultipleContainers(t *testing.T) {
 	bc, db := setupTestBaseline(t)
 
 	// Create host
-	host := &models.Host{Name: "test-host", Address: "unix:///", Enabled: true, CollectStats: true}
-	if err := db.SaveHost(host); err != nil {
-		t.Fatalf("Failed to save host: %v", err)
+	host := models.Host{Name: "test-host", Address: "unix:///", Enabled: true, CollectStats: true}
+	hostID, err := db.AddHost(host)
+	if err != nil {
+		t.Fatalf("Failed to add host: %v", err)
 	}
+	host.ID = hostID
 
 	now := time.Now()
 
@@ -286,13 +295,13 @@ func TestBaselineCollection_MultipleContainers(t *testing.T) {
 	}
 
 	// Collect baselines
-	if err := bc.CollectBaselines(); err != nil {
+	if err := bc.UpdateBaselines(context.Background()); err != nil {
 		t.Fatalf("CollectBaselines failed: %v", err)
 	}
 
 	// Verify all containers have baselines
 	for _, containerID := range containers {
-		baseline, err := db.GetContainerBaseline(host.ID, containerID)
+		baseline, err := db.GetContainerBaseline(containerID, host.ID)
 		if err != nil {
 			t.Fatalf("GetContainerBaseline failed for %s: %v", containerID, err)
 		}
@@ -312,10 +321,12 @@ func TestBaselineCollection_NoStatsData(t *testing.T) {
 	bc, db := setupTestBaseline(t)
 
 	// Create host
-	host := &models.Host{Name: "test-host", Address: "unix:///", Enabled: true, CollectStats: true}
-	if err := db.SaveHost(host); err != nil {
-		t.Fatalf("Failed to save host: %v", err)
+	host := models.Host{Name: "test-host", Address: "unix:///", Enabled: true, CollectStats: true}
+	hostID, err := db.AddHost(host)
+	if err != nil {
+		t.Fatalf("Failed to add host: %v", err)
 	}
+	host.ID = hostID
 
 	// Create container without stats
 	container := models.Container{
@@ -333,13 +344,13 @@ func TestBaselineCollection_NoStatsData(t *testing.T) {
 	}
 
 	// Collect baselines (should not fail)
-	err := bc.CollectBaselines()
+	err = bc.UpdateBaselines(context.Background())
 	if err != nil {
 		t.Fatalf("CollectBaselines failed: %v", err)
 	}
 
 	// Should not have baseline
-	baseline, err := db.GetContainerBaseline(host.ID, "no-stats")
+	baseline, err := db.GetContainerBaseline("no-stats", host.ID)
 	if err != nil {
 		t.Fatalf("GetContainerBaseline failed: %v", err)
 	}
@@ -354,10 +365,12 @@ func TestBaselineCollection_StoppedContainers(t *testing.T) {
 	bc, db := setupTestBaseline(t)
 
 	// Create host
-	host := &models.Host{Name: "test-host", Address: "unix:///", Enabled: true, CollectStats: true}
-	if err := db.SaveHost(host); err != nil {
-		t.Fatalf("Failed to save host: %v", err)
+	host := models.Host{Name: "test-host", Address: "unix:///", Enabled: true, CollectStats: true}
+	hostID, err := db.AddHost(host)
+	if err != nil {
+		t.Fatalf("Failed to add host: %v", err)
 	}
+	host.ID = hostID
 
 	now := time.Now()
 
@@ -399,12 +412,12 @@ func TestBaselineCollection_StoppedContainers(t *testing.T) {
 	}
 
 	// Collect baselines
-	if err := bc.CollectBaselines(); err != nil {
+	if err := bc.UpdateBaselines(context.Background()); err != nil {
 		t.Fatalf("CollectBaselines failed: %v", err)
 	}
 
 	// May or may not have baseline depending on logic
-	baseline, err := db.GetContainerBaseline(host.ID, "stopped-later")
+	baseline, err := db.GetContainerBaseline("stopped-later", host.ID)
 	if err != nil {
 		t.Fatalf("GetContainerBaseline failed: %v", err)
 	}
@@ -468,10 +481,12 @@ func TestBaselineCollection_DisabledStatsHost(t *testing.T) {
 	bc, db := setupTestBaseline(t)
 
 	// Create host with stats disabled
-	host := &models.Host{Name: "no-stats-host", Address: "unix:///", Enabled: true, CollectStats: false}
-	if err := db.SaveHost(host); err != nil {
-		t.Fatalf("Failed to save host: %v", err)
+	host := models.Host{Name: "no-stats-host", Address: "unix:///", Enabled: true, CollectStats: false}
+	hostID, err := db.AddHost(host)
+	if err != nil {
+		t.Fatalf("Failed to add host: %v", err)
 	}
+	host.ID = hostID
 
 	now := time.Now()
 
@@ -496,12 +511,12 @@ func TestBaselineCollection_DisabledStatsHost(t *testing.T) {
 	}
 
 	// Collect baselines
-	if err := bc.CollectBaselines(); err != nil {
+	if err := bc.UpdateBaselines(context.Background()); err != nil {
 		t.Fatalf("CollectBaselines failed: %v", err)
 	}
 
 	// Should not create baseline for host with stats disabled
-	baseline, err := db.GetContainerBaseline(host.ID, "disabled-stats")
+	baseline, err := db.GetContainerBaseline("disabled-stats", host.ID)
 	if err != nil {
 		t.Fatalf("GetContainerBaseline failed: %v", err)
 	}

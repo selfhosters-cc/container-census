@@ -207,9 +207,9 @@ func TestContainerHistory(t *testing.T) {
 	}
 
 	// Retrieve containers
-	retrieved, err := db.GetContainers()
+	retrieved, err := db.GetLatestContainers()
 	if err != nil {
-		t.Fatalf("GetContainers failed: %v", err)
+		t.Fatalf("GetLatestContainers failed: %v", err)
 	}
 
 	if len(retrieved) < 2 {
@@ -219,7 +219,7 @@ func TestContainerHistory(t *testing.T) {
 	// Verify data
 	found := false
 	for _, c := range retrieved {
-		if c.ContainerID == "abc123" && c.Name == "web-server" {
+		if c.ID == "abc123" && c.Name == "web-server" {
 			found = true
 			if c.Image != "nginx:latest" {
 				t.Errorf("Expected image nginx:latest, got %s", c.Image)
@@ -270,8 +270,8 @@ func TestContainerStats(t *testing.T) {
 		}
 	}
 
-	// Test GetContainerStats - should return data points
-	stats, err := db.GetContainerStats(host.ID, "stats123", "1h")
+	// Test GetContainerStats - should return data points (signature: containerID, hostID, hoursBack)
+	stats, err := db.GetContainerStats("stats123", host.ID, 1)
 	if err != nil {
 		t.Fatalf("GetContainerStats failed: %v", err)
 	}
@@ -326,14 +326,16 @@ func TestStatsAggregation(t *testing.T) {
 		}
 	}
 
-	// Run aggregation
-	if err := db.AggregateOldStats(); err != nil {
+	// Run aggregation (returns count of aggregated rows)
+	aggregated, err := db.AggregateOldStats()
+	if err != nil {
 		t.Fatalf("AggregateOldStats failed: %v", err)
 	}
+	t.Logf("Aggregated %d rows", aggregated)
 
 	// Verify aggregated data exists
 	var count int
-	err := db.db.QueryRow("SELECT COUNT(*) FROM container_stats_aggregates WHERE container_id = ? AND host_id = ?",
+	err = db.conn.QueryRow("SELECT COUNT(*) FROM container_stats_aggregates WHERE container_id = ? AND host_id = ?",
 		"agg123", host.ID).Scan(&count)
 	if err != nil {
 		t.Fatalf("Failed to query aggregates: %v", err)
@@ -344,7 +346,7 @@ func TestStatsAggregation(t *testing.T) {
 	}
 
 	// Verify old granular data was deleted
-	err = db.db.QueryRow("SELECT COUNT(*) FROM containers WHERE container_id = ? AND host_id = ? AND timestamp < ?",
+	err = db.conn.QueryRow("SELECT COUNT(*) FROM containers WHERE container_id = ? AND host_id = ? AND scanned_at < ?",
 		"agg123", host.ID, time.Now().Add(-1*time.Hour)).Scan(&count)
 	if err != nil {
 		t.Fatalf("Failed to query old containers: %v", err)
@@ -359,15 +361,24 @@ func TestStatsAggregation(t *testing.T) {
 func TestScanResults(t *testing.T) {
 	db := setupTestDB(t)
 
+	// Need to create a host first for scan results
+	host := models.Host{Name: "scan-host", Address: "unix:///", Enabled: true}
+	hostID, err := db.AddHost(host)
+	if err != nil {
+		t.Fatalf("Failed to add host: %v", err)
+	}
+
 	result := models.ScanResult{
-		ScannedAt:      time.Now(),
-		TotalContainers: 15,
-		RunningContainers: 12,
-		Duration:       time.Second * 5,
+		HostID:         hostID,
+		HostName:       "scan-host",
+		StartedAt:      time.Now().Add(-5 * time.Second),
+		CompletedAt:    time.Now(),
+		ContainersFound: 15,
 		Success:        true,
 	}
 
-	if err := db.SaveScanResult(result); err != nil {
+	_, err = db.SaveScanResult(result)
+	if err != nil {
 		t.Fatalf("SaveScanResult failed: %v", err)
 	}
 
@@ -382,11 +393,8 @@ func TestScanResults(t *testing.T) {
 	}
 
 	retrieved := results[0]
-	if retrieved.TotalContainers != result.TotalContainers {
-		t.Errorf("Expected %d total containers, got %d", result.TotalContainers, retrieved.TotalContainers)
-	}
-	if retrieved.RunningContainers != result.RunningContainers {
-		t.Errorf("Expected %d running containers, got %d", result.RunningContainers, retrieved.RunningContainers)
+	if retrieved.ContainersFound != result.ContainersFound {
+		t.Errorf("Expected %d containers found, got %d", result.ContainersFound, retrieved.ContainersFound)
 	}
 	if !retrieved.Success {
 		t.Error("Expected scan result to be successful")
@@ -434,8 +442,8 @@ func TestGetContainerLifecycleEvents(t *testing.T) {
 		}
 	}
 
-	// Get lifecycle events
-	events, err := db.GetContainerLifecycleEvents(host.ID, "event123", 10)
+	// Get lifecycle events (signature: containerName, hostID)
+	events, err := db.GetContainerLifecycleEvents("event-container", host.ID)
 	if err != nil {
 		t.Fatalf("GetContainerLifecycleEvents failed: %v", err)
 	}
@@ -486,7 +494,7 @@ func TestDatabaseSchema(t *testing.T) {
 
 	for _, table := range tables {
 		var name string
-		err := db.db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name)
+		err := db.conn.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name)
 		if err == sql.ErrNoRows {
 			t.Errorf("Table %s does not exist", table)
 		} else if err != nil {
@@ -541,7 +549,7 @@ func TestConcurrentAccess(t *testing.T) {
 
 	// Verify all writes succeeded
 	var count int
-	err := db.db.QueryRow("SELECT COUNT(*) FROM containers WHERE container_id = ?", "concurrent123").Scan(&count)
+	err = db.conn.QueryRow("SELECT COUNT(*) FROM containers WHERE container_id = ?", "concurrent123").Scan(&count)
 	if err != nil {
 		t.Fatalf("Failed to count containers: %v", err)
 	}

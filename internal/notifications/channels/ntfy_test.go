@@ -47,7 +47,7 @@ func TestNtfyChannel_BasicSend(t *testing.T) {
 	event := models.NotificationEvent{
 		EventType:     "container_stopped",
 		ContainerName: "web",
-		ScannedAt:     time.Now(),
+		Timestamp:     time.Now(),
 	}
 
 	ctx := context.Background()
@@ -92,7 +92,7 @@ func TestNtfyChannel_BearerAuth(t *testing.T) {
 
 	event := models.NotificationEvent{
 		EventType: "test",
-		ScannedAt: time.Now(),
+		Timestamp: time.Now(),
 	}
 
 	ctx := context.Background()
@@ -145,7 +145,7 @@ func TestNtfyChannel_PriorityMapping(t *testing.T) {
 
 			event := models.NotificationEvent{
 				EventType: tt.eventType,
-				ScannedAt: time.Now(),
+				Timestamp: time.Now(),
 			}
 
 			ctx := context.Background()
@@ -185,7 +185,7 @@ func TestNtfyChannel_Tags(t *testing.T) {
 
 	event := models.NotificationEvent{
 		EventType: "high_cpu",
-		ScannedAt: time.Now(),
+		Timestamp: time.Now(),
 	}
 
 	ctx := context.Background()

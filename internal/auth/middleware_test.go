@@ -13,7 +13,13 @@ func TestMiddleware_ValidCredentials(t *testing.T) {
 	username := "admin"
 	password := "secret123"
 
-	middleware := NewMiddleware(true, username, password)
+	config := Config{
+		Enabled:  true,
+		Username: username,
+		Password: password,
+	}
+
+	middleware := BasicAuthMiddleware(config)
 
 	// Create test handler
 	handlerCalled := false
@@ -24,7 +30,7 @@ func TestMiddleware_ValidCredentials(t *testing.T) {
 	})
 
 	// Wrap with auth
-	authHandler := middleware.RequireAuth(handler)
+	authHandler := middleware(handler)
 
 	// Create request with valid credentials
 	req := httptest.NewRequest("GET", "/api/test", nil)
@@ -49,14 +55,20 @@ func TestMiddleware_ValidCredentials(t *testing.T) {
 
 // TestMiddleware_InvalidCredentials tests authentication failure
 func TestMiddleware_InvalidCredentials(t *testing.T) {
-	middleware := NewMiddleware(true, "admin", "correct-password")
+	config := Config{
+		Enabled:  true,
+		Username: "admin",
+		Password: "correct-password",
+	}
+
+	middleware := BasicAuthMiddleware(config)
 
 	handlerCalled := false
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handlerCalled = true
 	})
 
-	authHandler := middleware.RequireAuth(handler)
+	authHandler := middleware(handler)
 
 	tests := []struct {
 		name     string
@@ -94,14 +106,20 @@ func TestMiddleware_InvalidCredentials(t *testing.T) {
 
 // TestMiddleware_MissingAuthHeader tests missing Authorization header
 func TestMiddleware_MissingAuthHeader(t *testing.T) {
-	middleware := NewMiddleware(true, "admin", "password")
+	config := Config{
+		Enabled:  true,
+		Username: "admin",
+		Password: "password",
+	}
+
+	middleware := BasicAuthMiddleware(config)
 
 	handlerCalled := false
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handlerCalled = true
 	})
 
-	authHandler := middleware.RequireAuth(handler)
+	authHandler := middleware(handler)
 
 	req := httptest.NewRequest("GET", "/api/test", nil)
 	// No Authorization header
@@ -118,21 +136,28 @@ func TestMiddleware_MissingAuthHeader(t *testing.T) {
 	}
 
 	// Verify WWW-Authenticate header is set
-	if rec.Header().Get("WWW-Authenticate") != `Basic realm="Restricted"` {
-		t.Errorf("Expected WWW-Authenticate header, got '%s'", rec.Header().Get("WWW-Authenticate"))
+	wwwAuth := rec.Header().Get("WWW-Authenticate")
+	if wwwAuth != `Basic realm="Container Census", charset="UTF-8"` {
+		t.Errorf("Expected WWW-Authenticate header, got '%s'", wwwAuth)
 	}
 }
 
 // TestMiddleware_MalformedAuthHeader tests malformed authorization headers
 func TestMiddleware_MalformedAuthHeader(t *testing.T) {
-	middleware := NewMiddleware(true, "admin", "password")
+	config := Config{
+		Enabled:  true,
+		Username: "admin",
+		Password: "password",
+	}
+
+	middleware := BasicAuthMiddleware(config)
 
 	handlerCalled := false
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handlerCalled = true
 	})
 
-	authHandler := middleware.RequireAuth(handler)
+	authHandler := middleware(handler)
 
 	tests := []struct {
 		name   string
@@ -170,7 +195,13 @@ func TestMiddleware_MalformedAuthHeader(t *testing.T) {
 
 // TestMiddleware_DisabledAuth tests that auth can be disabled
 func TestMiddleware_DisabledAuth(t *testing.T) {
-	middleware := NewMiddleware(false, "admin", "password")
+	config := Config{
+		Enabled:  false,
+		Username: "admin",
+		Password: "password",
+	}
+
+	middleware := BasicAuthMiddleware(config)
 
 	handlerCalled := false
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -178,7 +209,7 @@ func TestMiddleware_DisabledAuth(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	authHandler := middleware.RequireAuth(handler)
+	authHandler := middleware(handler)
 
 	// Request without any auth
 	req := httptest.NewRequest("GET", "/api/test", nil)
@@ -198,13 +229,19 @@ func TestMiddleware_DisabledAuth(t *testing.T) {
 // This is a behavioral test - we can't directly test timing, but we can verify
 // that the comparison function is being used
 func TestMiddleware_TimingAttackResistance(t *testing.T) {
-	middleware := NewMiddleware(true, "admin", "password123")
+	config := Config{
+		Enabled:  true,
+		Username: "admin",
+		Password: "password123",
+	}
+
+	middleware := BasicAuthMiddleware(config)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	authHandler := middleware.RequireAuth(handler)
+	authHandler := middleware(handler)
 
 	// Try various lengths of passwords
 	tests := []string{
@@ -215,8 +252,8 @@ func TestMiddleware_TimingAttackResistance(t *testing.T) {
 		"passw",
 		"passwo",
 		"passwor",
-		"password12", // One char off
-		"password123", // Correct
+		"password12",   // One char off
+		"password123",  // Correct
 		"password1234", // One char extra
 	}
 
@@ -251,7 +288,13 @@ func TestMiddleware_TimingAttackResistance(t *testing.T) {
 
 // TestMiddleware_MultipleRequests tests handling multiple requests
 func TestMiddleware_MultipleRequests(t *testing.T) {
-	middleware := NewMiddleware(true, "admin", "password")
+	config := Config{
+		Enabled:  true,
+		Username: "admin",
+		Password: "password",
+	}
+
+	middleware := BasicAuthMiddleware(config)
 
 	callCount := 0
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -259,7 +302,7 @@ func TestMiddleware_MultipleRequests(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	authHandler := middleware.RequireAuth(handler)
+	authHandler := middleware(handler)
 
 	// Send 5 valid requests
 	for i := 0; i < 5; i++ {
@@ -282,7 +325,13 @@ func TestMiddleware_MultipleRequests(t *testing.T) {
 
 // TestMiddleware_ConcurrentRequests tests thread-safe operation
 func TestMiddleware_ConcurrentRequests(t *testing.T) {
-	middleware := NewMiddleware(true, "admin", "password")
+	config := Config{
+		Enabled:  true,
+		Username: "admin",
+		Password: "password",
+	}
+
+	middleware := BasicAuthMiddleware(config)
 
 	successCount := 0
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -290,7 +339,7 @@ func TestMiddleware_ConcurrentRequests(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	authHandler := middleware.RequireAuth(handler)
+	authHandler := middleware(handler)
 
 	done := make(chan bool)
 
@@ -320,13 +369,19 @@ func TestMiddleware_ConcurrentRequests(t *testing.T) {
 
 // TestMiddleware_DifferentHTTPMethods tests auth works for all HTTP methods
 func TestMiddleware_DifferentHTTPMethods(t *testing.T) {
-	middleware := NewMiddleware(true, "admin", "password")
+	config := Config{
+		Enabled:  true,
+		Username: "admin",
+		Password: "password",
+	}
+
+	middleware := BasicAuthMiddleware(config)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	authHandler := middleware.RequireAuth(handler)
+	authHandler := middleware(handler)
 
 	methods := []string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}
 
@@ -346,13 +401,19 @@ func TestMiddleware_DifferentHTTPMethods(t *testing.T) {
 
 // TestMiddleware_CaseInsensitiveUsername tests username comparison
 func TestMiddleware_CaseInsensitiveUsername(t *testing.T) {
-	middleware := NewMiddleware(true, "admin", "password")
+	config := Config{
+		Enabled:  true,
+		Username: "admin",
+		Password: "password",
+	}
+
+	middleware := BasicAuthMiddleware(config)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	authHandler := middleware.RequireAuth(handler)
+	authHandler := middleware(handler)
 
 	// Try different cases
 	tests := []struct {
@@ -391,20 +452,26 @@ func TestMiddleware_SpecialCharactersInPassword(t *testing.T) {
 		"p@ssw0rd!",
 		"pass:word",
 		"pass word",
-		"пароль", // Unicode
-		"パスワード", // Japanese
+		"пароль",     // Unicode
+		"パスワード",      // Japanese
 		"🔒secure🔒", // Emojis
 	}
 
 	for _, password := range specialPasswords {
 		t.Run(password, func(t *testing.T) {
-			middleware := NewMiddleware(true, "admin", password)
+			config := Config{
+				Enabled:  true,
+				Username: "admin",
+				Password: password,
+			}
+
+			middleware := BasicAuthMiddleware(config)
 
 			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			})
 
-			authHandler := middleware.RequireAuth(handler)
+			authHandler := middleware(handler)
 
 			req := httptest.NewRequest("GET", "/api/test", nil)
 			credentials := base64.StdEncoding.EncodeToString([]byte("admin:" + password))

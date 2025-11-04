@@ -425,7 +425,8 @@ func (db *DB) GetActiveSilences() ([]models.NotificationSilence, error) {
 	}
 	defer rows.Close()
 
-	var silences []models.NotificationSilence
+	// Initialize with empty slice to avoid null JSON encoding
+	silences := make([]models.NotificationSilence, 0)
 	for rows.Next() {
 		var s models.NotificationSilence
 		var hostID sql.NullInt64

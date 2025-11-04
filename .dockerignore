@@ -4,7 +4,9 @@
 
 # Documentation
 README.md
-*.md
+CLAUDE.md
+docs/*.md
+!CHANGELOG.md
 
 # Data
 data/

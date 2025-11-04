@@ -4754,7 +4754,7 @@ async function addVulnerabilityBadge(containerElement, imageID) {
 
         // Make badge clickable if it has vulnerabilities
         if (scan && scan.scan && scan.scan.success) {
-            const imageName = imageRow.textContent.trim();
+            const imageName = scan.scan.image_name || imageID;
             badge.style.cursor = 'pointer';
             badge.onclick = () => viewVulnerabilityDetails(imageID, imageName);
         }
@@ -4982,9 +4982,9 @@ function renderVulnerabilityTrendsChart(scans) {
         const dailyData = {};
 
         scans.forEach(scan => {
-            if (!scan.scan || !scan.scan.success || !scan.scan.scanned_at) return;
+            if (!scan.success || !scan.scanned_at) return;
 
-            const scanDate = new Date(scan.scan.scanned_at);
+            const scanDate = new Date(scan.scanned_at);
             if (scanDate < thirtyDaysAgo) return;
 
             const dateKey = scanDate.toISOString().split('T')[0];
@@ -5000,12 +5000,12 @@ function renderVulnerabilityTrendsChart(scans) {
                 };
             }
 
-            const counts = scan.scan.severity_counts || {};
+            const counts = scan.severity_counts || {};
             dailyData[dateKey].critical += counts.critical || 0;
             dailyData[dateKey].high += counts.high || 0;
             dailyData[dateKey].medium += counts.medium || 0;
             dailyData[dateKey].low += counts.low || 0;
-            dailyData[dateKey].total += scan.scan.total_vulnerabilities || 0;
+            dailyData[dateKey].total += scan.total_vulnerabilities || 0;
             dailyData[dateKey].count++;
         });
 
@@ -5330,10 +5330,16 @@ async function rescanImage(imageID, imageName) {
         });
         if (response.ok) {
             showNotification(`Queued ${imageName} for scanning`, 'success');
-            // Just update the queue status, don't reload the entire table
-            // This prevents the row from disappearing while the scan is in progress
+            // Add to scanning set and update UI immediately
+            scanningImages.add(imageID);
+            renderSecurityScansTable(allVulnerabilityScans);
+
+            // Update the queue status
             const summary = await loadVulnerabilitySummary();
             updateQueueStatus(summary?.queue_status);
+
+            // Poll for scan completion
+            pollForScanCompletion(imageID);
         } else {
             const error = await response.json();
             showNotification(`Failed to queue scan: ${error.error}`, 'error');
@@ -5342,6 +5348,38 @@ async function rescanImage(imageID, imageName) {
         console.error('Error triggering scan:', error);
         showNotification('Failed to queue scan', 'error');
     }
+}
+
+// Poll for scan completion and refresh data when done
+async function pollForScanCompletion(imageID) {
+    const maxAttempts = 60; // Poll for up to 10 minutes (60 * 10s)
+    let attempts = 0;
+
+    const pollInterval = setInterval(async () => {
+        attempts++;
+
+        // Check queue status
+        const summary = await loadVulnerabilitySummary();
+        updateQueueStatus(summary?.queue_status);
+
+        // Check if this image is still in the queue
+        const stillScanning = scanningImages.has(imageID);
+
+        if (!stillScanning || attempts >= maxAttempts) {
+            clearInterval(pollInterval);
+
+            // Reload scan data to show updated results
+            await preloadVulnerabilityScans();
+            if (currentTab === 'security') {
+                filterSecurityScans();
+            }
+
+            // Clear vulnerability scan cache for this image
+            if (vulnScanCache.has(imageID)) {
+                vulnScanCache.delete(imageID);
+            }
+        }
+    }, 10000); // Poll every 10 seconds
 }
 
 // Update Trivy database

@@ -11,7 +11,7 @@ import (
 )
 
 // setupTestInAppChannel creates a test in-app channel with database
-func setupTestInAppChannel(t *testing.T) (*InAppChannel, *storage.Store) {
+func setupTestInAppChannel(t *testing.T) (*InAppChannel, *storage.DB) {
 	t.Helper()
 
 	tmpfile, err := os.CreateTemp("", "inapp-test-*.db")
@@ -40,7 +40,7 @@ func setupTestInAppChannel(t *testing.T) (*InAppChannel, *storage.Store) {
 		t.Fatalf("NewInAppChannel failed: %v", err)
 	}
 
-	return iac, store
+	return iac, db
 }
 
 // TestInAppChannel_BasicSend tests basic in-app notification
@@ -48,23 +48,25 @@ func TestInAppChannel_BasicSend(t *testing.T) {
 	iac, db := setupTestInAppChannel(t)
 
 	// Create host for the event
-	host := &models.Host{Name: "test-host", Address: "unix:///", Enabled: true}
-	if err := db.SaveHost(host); err != nil {
-		t.Fatalf("Failed to save host: %v", err)
+	host := models.Host{Name: "test-host", Address: "unix:///", Enabled: true}
+	hostID, err := db.AddHost(host)
+	if err != nil {
+		t.Fatalf("Failed to add host: %v", err)
 	}
+	host.ID = hostID
 
 	event := models.NotificationEvent{
 		EventType:     "container_stopped",
-		ID:   "test123",
+		ContainerID:   "test123",
 		ContainerName: "web-server",
 		HostID:        host.ID,
 		HostName:      "test-host",
 		Image:         "nginx:latest",
-		ScannedAt:     time.Now(),
+		Timestamp:     time.Now(),
 	}
 
 	ctx := context.Background()
-	err := iac.Send(ctx, "Container stopped", event)
+	err = iac.Send(ctx, "Container stopped", event)
 	if err != nil {
 		t.Fatalf("Send failed: %v", err)
 	}
@@ -101,10 +103,12 @@ func TestInAppChannel_BasicSend(t *testing.T) {
 func TestInAppChannel_AllEventTypes(t *testing.T) {
 	iac, db := setupTestInAppChannel(t)
 
-	host := &models.Host{Name: "test-host", Address: "unix:///", Enabled: true}
-	if err := db.SaveHost(host); err != nil {
-		t.Fatalf("Failed to save host: %v", err)
+	host := models.Host{Name: "test-host", Address: "unix:///", Enabled: true}
+	hostID, err := db.AddHost(host)
+	if err != nil {
+		t.Fatalf("Failed to add host: %v", err)
 	}
+	host.ID = hostID
 
 	events := []struct {
 		eventType string
@@ -123,10 +127,10 @@ func TestInAppChannel_AllEventTypes(t *testing.T) {
 	for _, e := range events {
 		event := models.NotificationEvent{
 			EventType:     e.eventType,
-			ID:   "test123",
+			ContainerID:   "test123",
 			ContainerName: "test-container",
 			HostID:        host.ID,
-			ScannedAt:     time.Now(),
+			Timestamp:     time.Now(),
 		}
 
 		err := iac.Send(ctx, e.message, event)
@@ -150,25 +154,27 @@ func TestInAppChannel_AllEventTypes(t *testing.T) {
 func TestInAppChannel_WithMetadata(t *testing.T) {
 	iac, db := setupTestInAppChannel(t)
 
-	host := &models.Host{Name: "test-host", Address: "unix:///", Enabled: true}
-	if err := db.SaveHost(host); err != nil {
-		t.Fatalf("Failed to save host: %v", err)
+	host := models.Host{Name: "test-host", Address: "unix:///", Enabled: true}
+	hostID, err := db.AddHost(host)
+	if err != nil {
+		t.Fatalf("Failed to add host: %v", err)
 	}
+	host.ID = hostID
 
 	event := models.NotificationEvent{
 		EventType:     "high_cpu",
-		ID:   "test123",
+		ContainerID:   "test123",
 		ContainerName: "cpu-hog",
 		HostID:        host.ID,
 		CPUPercent:    85.5,
 		MemoryPercent: 60.2,
 		OldImage:      "app:v1",
 		NewImage:      "app:v2",
-		ScannedAt:     time.Now(),
+		Timestamp:     time.Now(),
 	}
 
 	ctx := context.Background()
-	err := iac.Send(ctx, "High CPU detected", event)
+	err = iac.Send(ctx, "High CPU detected", event)
 	if err != nil {
 		t.Fatalf("Send failed: %v", err)
 	}
@@ -182,14 +188,14 @@ func TestInAppChannel_WithMetadata(t *testing.T) {
 		t.Fatalf("Expected 1 notification, got %d", len(logs))
 	}
 
-	// Verify metadata fields are preserved
+	// Verify metadata fields are preserved in metadata map
 	log := logs[0]
-	if log.CPUPercent != 85.5 {
-		t.Errorf("Expected CPU 85.5, got %f", log.CPUPercent)
+	if cpuVal, ok := log.Metadata["cpu_percent"].(float64); !ok || cpuVal != 85.5 {
+		t.Errorf("Expected CPU 85.5 in metadata, got %v", log.Metadata["cpu_percent"])
 	}
 
-	if log.MemoryPercent != 60.2 {
-		t.Errorf("Expected memory 60.2, got %f", log.MemoryPercent)
+	if memVal, ok := log.Metadata["memory_percent"].(float64); !ok || memVal != 60.2 {
+		t.Errorf("Expected memory 60.2 in metadata, got %v", log.Metadata["memory_percent"])
 	}
 }
 
@@ -236,10 +242,12 @@ func TestInAppChannel_TypeAndName(t *testing.T) {
 func TestInAppChannel_MultipleNotifications(t *testing.T) {
 	iac, db := setupTestInAppChannel(t)
 
-	host := &models.Host{Name: "test-host", Address: "unix:///", Enabled: true}
-	if err := db.SaveHost(host); err != nil {
-		t.Fatalf("Failed to save host: %v", err)
+	host := models.Host{Name: "test-host", Address: "unix:///", Enabled: true}
+	hostID, err := db.AddHost(host)
+	if err != nil {
+		t.Fatalf("Failed to add host: %v", err)
 	}
+	host.ID = hostID
 
 	ctx := context.Background()
 
@@ -247,10 +255,10 @@ func TestInAppChannel_MultipleNotifications(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		event := models.NotificationEvent{
 			EventType:     "container_stopped",
-			ID:   "test123",
+			ContainerID:   "test123",
 			ContainerName: "web-server",
 			HostID:        host.ID,
-			ScannedAt:     time.Now(),
+			Timestamp:     time.Now(),
 		}
 
 		err := iac.Send(ctx, "Container stopped", event)
@@ -281,10 +289,12 @@ func TestInAppChannel_MultipleNotifications(t *testing.T) {
 func TestInAppChannel_ConcurrentSends(t *testing.T) {
 	iac, db := setupTestInAppChannel(t)
 
-	host := &models.Host{Name: "test-host", Address: "unix:///", Enabled: true}
-	if err := db.SaveHost(host); err != nil {
-		t.Fatalf("Failed to save host: %v", err)
+	host := models.Host{Name: "test-host", Address: "unix:///", Enabled: true}
+	hostID, err := db.AddHost(host)
+	if err != nil {
+		t.Fatalf("Failed to add host: %v", err)
 	}
+	host.ID = hostID
 
 	ctx := context.Background()
 	done := make(chan bool)
@@ -295,10 +305,10 @@ func TestInAppChannel_ConcurrentSends(t *testing.T) {
 		go func(id int) {
 			event := models.NotificationEvent{
 				EventType:     "test",
-				ID:   "test123",
+				ContainerID:   "test123",
 				ContainerName: "test",
 				HostID:        host.ID,
-				ScannedAt:     time.Now(),
+				Timestamp:     time.Now(),
 			}
 
 			err := iac.Send(ctx, "Test notification", event)

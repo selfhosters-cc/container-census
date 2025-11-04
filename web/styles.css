@@ -41,12 +41,19 @@ header h1 {
 }
 
 .version-badge {
-    background-color: rgba(255, 255, 255, 0.2);
+    background-color: #4a90e2;
+    color: white;
     padding: 5px 12px;
     border-radius: 20px;
     font-size: 0.85rem;
     font-weight: 500;
-    backdrop-filter: blur(10px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    transition: all 0.2s ease;
+}
+
+.version-badge:hover {
+    background-color: #357abd;
+    transform: scale(1.05);
 }
 
 .header-actions {
@@ -745,6 +752,7 @@ tbody tr:hover {
     align-items: center;
 }
 
+.modal-header h2,
 .modal-header h3 {
     margin: 0;
     color: #333;

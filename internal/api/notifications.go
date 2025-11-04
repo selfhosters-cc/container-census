@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/container-census/container-census/internal/models"
 	"github.com/gorilla/mux"
@@ -309,10 +310,55 @@ func (s *Server) handleGetNotificationSilences(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleCreateNotificationSilence(w http.ResponseWriter, r *http.Request) {
-	var silence models.NotificationSilence
-	if err := json.NewDecoder(r.Body).Decode(&silence); err != nil {
+	// Use a custom struct to handle flexible datetime formats from HTML inputs
+	var req struct {
+		HostID           *int64 `json:"host_id,omitempty"`
+		ContainerID      string `json:"container_id,omitempty"`
+		ContainerName    string `json:"container_name,omitempty"`
+		HostPattern      string `json:"host_pattern,omitempty"`
+		ContainerPattern string `json:"container_pattern,omitempty"`
+		SilencedUntil    string `json:"silenced_until"`
+		Reason           string `json:"reason,omitempty"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
 		return
+	}
+
+	// Parse the datetime with flexible format support
+	// HTML datetime-local inputs send: "2026-11-04T14:06" (without seconds/timezone)
+	var silencedUntil time.Time
+	var err error
+
+	// Try multiple datetime formats
+	formats := []string{
+		time.RFC3339,                // "2006-01-02T15:04:05Z07:00"
+		"2006-01-02T15:04:05",       // "2026-11-04T14:06:05"
+		"2006-01-02T15:04",          // "2026-11-04T14:06" (HTML datetime-local)
+		time.RFC3339Nano,            // with nanoseconds
+	}
+
+	for _, format := range formats {
+		silencedUntil, err = time.Parse(format, req.SilencedUntil)
+		if err == nil {
+			break
+		}
+	}
+
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid silenced_until format. Use ISO 8601 format (e.g., 2026-11-04T14:06)")
+		return
+	}
+
+	silence := models.NotificationSilence{
+		HostID:           req.HostID,
+		ContainerID:      req.ContainerID,
+		ContainerName:    req.ContainerName,
+		HostPattern:      req.HostPattern,
+		ContainerPattern: req.ContainerPattern,
+		SilencedUntil:    silencedUntil,
+		Reason:           req.Reason,
 	}
 
 	// Validate that silence has either host_id, container_id, or patterns

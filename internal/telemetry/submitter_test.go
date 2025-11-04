@@ -98,18 +98,15 @@ func TestSubmitPrivateEnabledCommunityDisabled(t *testing.T) {
 
 	// Create config with private enabled, community disabled
 	config := models.TelemetryConfig{
-		Enabled:       true,
 		IntervalHours: 24,
 		Endpoints: []models.TelemetryEndpoint{
 			{
 				Name:    "community",
 				URL:     communityServer.URL,
-				Enabled: false, // DISABLED
 			},
 			{
 				Name:    "private",
 				URL:     privateServer.URL,
-				Enabled: true, // ENABLED
 			},
 		},
 	}
@@ -170,18 +167,15 @@ func TestSubmitCommunityEnabledPrivateDisabled(t *testing.T) {
 
 	// Create config with community enabled, private disabled
 	config := models.TelemetryConfig{
-		Enabled:       true,
 		IntervalHours: 24,
 		Endpoints: []models.TelemetryEndpoint{
 			{
 				Name:    "community",
 				URL:     communityServer.URL,
-				Enabled: true, // ENABLED
 			},
 			{
 				Name:    "private",
 				URL:     privateServer.URL,
-				Enabled: false, // DISABLED
 			},
 		},
 	}
@@ -256,18 +250,15 @@ func TestSubmitBothEnabled(t *testing.T) {
 
 	// Create config with both enabled
 	config := models.TelemetryConfig{
-		Enabled:       true,
 		IntervalHours: 24,
 		Endpoints: []models.TelemetryEndpoint{
 			{
 				Name:    "community",
 				URL:     communityServer.URL,
-				Enabled: true, // ENABLED
 			},
 			{
 				Name:    "private",
 				URL:     privateServer.URL,
-				Enabled: true, // ENABLED
 			},
 		},
 	}
@@ -328,18 +319,15 @@ func TestSubmitBothDisabled(t *testing.T) {
 
 	// Create config with both disabled
 	config := models.TelemetryConfig{
-		Enabled:       true,
 		IntervalHours: 24,
 		Endpoints: []models.TelemetryEndpoint{
 			{
 				Name:    "community",
 				URL:     communityServer.URL,
-				Enabled: false, // DISABLED
 			},
 			{
 				Name:    "private",
 				URL:     privateServer.URL,
-				Enabled: false, // DISABLED
 			},
 		},
 	}
@@ -400,18 +388,15 @@ func TestSubmitTelemetryGloballyDisabled(t *testing.T) {
 
 	// Create config with telemetry globally disabled
 	config := models.TelemetryConfig{
-		Enabled:       false, // GLOBALLY DISABLED
 		IntervalHours: 24,
 		Endpoints: []models.TelemetryEndpoint{
 			{
 				Name:    "community",
 				URL:     communityServer.URL,
-				Enabled: true, // Endpoint is enabled but global flag is off
 			},
 			{
 				Name:    "private",
 				URL:     privateServer.URL,
-				Enabled: true, // Endpoint is enabled but global flag is off
 			},
 		},
 	}
@@ -470,18 +455,15 @@ func TestSubmitWithFailure(t *testing.T) {
 	defer successServer.Close()
 
 	config := models.TelemetryConfig{
-		Enabled:       true,
 		IntervalHours: 24,
 		Endpoints: []models.TelemetryEndpoint{
 			{
 				Name:    "failing",
 				URL:     failingServer.URL,
-				Enabled: true,
 			},
 			{
 				Name:    "working",
 				URL:     successServer.URL,
-				Enabled: true,
 			},
 		},
 	}
@@ -536,18 +518,15 @@ func TestSubmitWithEmptyURL(t *testing.T) {
 	defer server.Close()
 
 	config := models.TelemetryConfig{
-		Enabled:       true,
 		IntervalHours: 24,
 		Endpoints: []models.TelemetryEndpoint{
 			{
 				Name:    "empty-url",
 				URL:     "", // EMPTY URL
-				Enabled: true,
 			},
 			{
 				Name:    "valid",
 				URL:     server.URL,
-				Enabled: true,
 			},
 		},
 	}
@@ -596,13 +575,11 @@ func TestCircuitBreaker(t *testing.T) {
 	defer server.Close()
 
 	config := models.TelemetryConfig{
-		Enabled:       true,
 		IntervalHours: 24,
 		Endpoints: []models.TelemetryEndpoint{
 			{
 				Name:    "failing",
 				URL:     server.URL,
-				Enabled: true,
 			},
 		},
 	}

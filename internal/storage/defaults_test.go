@@ -2,6 +2,8 @@ package storage
 
 import (
 	"testing"
+
+	"github.com/container-census/container-census/internal/models"
 )
 
 // TestInitializeDefaultRules tests that default notification rules are created
@@ -9,13 +11,13 @@ func TestInitializeDefaultRules(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Initialize default rules
-	err := db.InitializeDefaultRules()
+	err := db.InitializeDefaultNotifications()
 	if err != nil {
-		t.Fatalf("InitializeDefaultRules failed: %v", err)
+		t.Fatalf("InitializeDefaultNotifications failed: %v", err)
 	}
 
 	// Get all rules
-	rules, err := db.GetNotificationRules()
+	rules, err := db.GetNotificationRules(false)
 	if err != nil {
 		t.Fatalf("GetNotificationRules failed: %v", err)
 	}
@@ -79,18 +81,18 @@ func TestInitializeDefaultRulesIdempotent(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Run initialization twice
-	err := db.InitializeDefaultRules()
+	err := db.InitializeDefaultNotifications()
 	if err != nil {
-		t.Fatalf("First InitializeDefaultRules failed: %v", err)
+		t.Fatalf("First InitializeDefaultNotifications failed: %v", err)
 	}
 
-	err = db.InitializeDefaultRules()
+	err = db.InitializeDefaultNotifications()
 	if err != nil {
-		t.Fatalf("Second InitializeDefaultRules failed: %v", err)
+		t.Fatalf("Second InitializeDefaultNotifications failed: %v", err)
 	}
 
 	// Get all rules
-	rules, err := db.GetNotificationRules()
+	rules, err := db.GetNotificationRules(false)
 	if err != nil {
 		t.Fatalf("GetNotificationRules failed: %v", err)
 	}
@@ -130,12 +132,12 @@ func TestInitializeDefaultRulesIdempotent(t *testing.T) {
 func TestDefaultRuleConfiguration(t *testing.T) {
 	db := setupTestDB(t)
 
-	err := db.InitializeDefaultRules()
+	err := db.InitializeDefaultNotifications()
 	if err != nil {
-		t.Fatalf("InitializeDefaultRules failed: %v", err)
+		t.Fatalf("InitializeDefaultNotifications failed: %v", err)
 	}
 
-	rules, err := db.GetNotificationRules()
+	rules, err := db.GetNotificationRules(false)
 	if err != nil {
 		t.Fatalf("GetNotificationRules failed: %v", err)
 	}
@@ -165,15 +167,15 @@ func TestDefaultRuleConfiguration(t *testing.T) {
 		}
 
 		if rule.Name == "High Resource Usage" {
-			if rule.CPUThreshold <= 0 && rule.MemoryThreshold <= 0 {
+			if rule.CPUThreshold == nil && rule.MemoryThreshold == nil {
 				t.Error("High Resource Usage rule should have thresholds configured")
 			}
 
-			if rule.ThresholdDuration <= 0 {
+			if rule.ThresholdDurationSeconds <= 0 {
 				t.Error("High Resource Usage rule should have threshold duration")
 			}
 
-			if rule.CooldownPeriod <= 0 {
+			if rule.CooldownSeconds <= 0 {
 				t.Error("High Resource Usage rule should have cooldown period")
 			}
 		}
@@ -202,7 +204,7 @@ func TestDefaultRulesWithExistingData(t *testing.T) {
 	channel := &models.NotificationChannel{
 		Name:    "custom-channel",
 		Type:    "webhook",
-		Config:  `{"url":"https://example.com"}`,
+		Config:  map[string]interface{}{"url": "https://example.com"},
 		Enabled: true,
 	}
 	if err := db.SaveNotificationChannel(channel); err != nil {
@@ -214,20 +216,20 @@ func TestDefaultRulesWithExistingData(t *testing.T) {
 		Name:       "custom-rule",
 		EventTypes: []string{"container_started"},
 		Enabled:    true,
-		ChannelIDs: []int{channel.ID},
+		ChannelIDs: []int64{channel.ID},
 	}
 	if err := db.SaveNotificationRule(rule); err != nil {
 		t.Fatalf("Failed to save custom rule: %v", err)
 	}
 
 	// Now initialize defaults
-	err := db.InitializeDefaultRules()
+	err := db.InitializeDefaultNotifications()
 	if err != nil {
-		t.Fatalf("InitializeDefaultRules failed: %v", err)
+		t.Fatalf("InitializeDefaultNotifications failed: %v", err)
 	}
 
 	// Get all rules
-	rules, err := db.GetNotificationRules()
+	rules, err := db.GetNotificationRules(false)
 	if err != nil {
 		t.Fatalf("GetNotificationRules failed: %v", err)
 	}

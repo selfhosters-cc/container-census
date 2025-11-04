@@ -1,0 +1,2 @@
+#!/bin/bash
+SERVER_PORT=3000 CONFIG_PATH=/opt/docker-compose/census-server/census/config/config.yaml AUTH_ENABLED=false DATABASE_PATH=/opt/docker-compose/census-server/census/server/census.db /tmp/census-server
