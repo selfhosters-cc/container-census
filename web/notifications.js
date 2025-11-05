@@ -1090,15 +1090,26 @@ function formatTimeAgo(timestamp) {
     const now = new Date();
     const time = new Date(timestamp);
 
-    if (isNaN(time.getTime())) return 'Invalid date';
+    if (isNaN(time.getTime())) {
+        console.error('Invalid timestamp:', timestamp);
+        return 'Invalid date';
+    }
 
     const diff = Math.floor((now - time) / 1000);
+
+    if (isNaN(diff)) {
+        console.error('Invalid diff calculation:', { now, time, timestamp });
+        return 'Unknown';
+    }
 
     if (diff < 0) return 'Just now';
     if (diff < 60) return `${diff}s ago`;
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
     if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-    return `${Math.floor(diff / 86400)}d ago`;
+
+    const days = Math.floor(diff / 86400);
+    if (isNaN(days)) return 'Unknown';
+    return `${days}d ago`;
 }
 
 function formatTimestamp(timestamp) {

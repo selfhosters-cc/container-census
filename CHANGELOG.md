@@ -5,6 +5,30 @@ All notable changes to Container Census will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2025-11-04
+
+### Changed
+
+- **Database-First Configuration**: Complete migration from YAML config to database storage
+  - All application settings now stored in SQLite database
+  - Config file only used for one-time migration on first run
+  - Settings managed through Web UI and API
+  - Environment variables for deployment-specific settings only (AUTH_*, SERVER_*, DATABASE_PATH)
+  - Export/Import functionality for backup and migration between instances
+
+- **Improved Fresh Install Experience**
+  - Auto-creates local Unix socket host on first run
+  - Interactive onboarding tour for new users
+  - Dashboard as default landing page
+  - Security scanning defaults to disabled (opt-in)
+  - Community telemetry defaults to disabled (opt-in)
+
+- **Enhanced Dashboard**
+  - Functional telemetry toggle - enable/disable directly from dashboard
+  - Security toggle downloads Trivy DB when enabled
+  - Recent Activity section shows scan/telemetry events
+
+
 ## [1.3.0] - 2025-10-30
 
 ### Added
@@ -21,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Background job for automatic hourly aggregation and cleanup
   - Database schema with `container_stats_aggregates` table for long-term storage
 
-- **Prometheus Metrics Endpoint**: Export metrics for Grafana integration
+- **Prometheus Metrics Endpoint - untested**: Export metrics for Grafana integration
   - `/api/metrics` endpoint in Prometheus text format
   - Exports `census_container_cpu_percent` and `census_container_memory_bytes`
   - Labels include container name, host name, and image
@@ -33,13 +57,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Mini sparkline charts showing recent trends (last 20 data points)
   - "View Detailed Stats" button opens modal with full time-series data
   - Filters to show only containers from enabled hosts
-
-- **Scanner Interval Configuration**: UI control for scan frequency
-  - Settings tab now includes scanner interval selector
-  - Options: 1, 2, 5, 10, or 15 minutes
-  - Changes take effect on next scan cycle
-  - Persisted to configuration file
-  - API endpoint: `POST /api/config/scanner`
 
 - **Stats Collection API Endpoints**:
   - `GET /api/containers/{host_id}/{container_id}/stats?range={1h|24h|7d|all}` - Historical stats

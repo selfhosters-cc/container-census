@@ -18,7 +18,7 @@
                 <span>☰</span>
             </button>
             <div class="top-navbar-logo">
-                <h1>🐳 Census</h1>
+                <h1><a href="#" onclick="switchTab('dashboard', true); return false;" style="text-decoration: none; color: inherit;">Census</a></h1>
                 <span id="versionBadge" class="version-badge">v0.0.0</span>
             </div>
         </div>
@@ -219,7 +219,7 @@
             <div class="dashboard-hero">
                 <div class="dashboard-hero-content">
                     <h1 class="dashboard-title">
-                        <span class="dashboard-emoji">🐳</span> Container Census Dashboard
+                        Container Census Dashboard
                     </h1>
                     <p class="dashboard-subtitle">Monitor and manage your multi-host Docker infrastructure</p>
                 </div>
@@ -294,33 +294,6 @@
                 </div>
             </div>
 
-            <!-- Security Scanning -->
-            <div class="dashboard-section">
-                <h2 class="dashboard-section-title">🛡️ Security Scanning</h2>
-                <div class="dashboard-card dashboard-telemetry-card">
-                    <div class="telemetry-header">
-                        <div>
-                            <h3 class="dashboard-card-title-inline">Vulnerability Scanning</h3>
-                            <p class="telemetry-description">Scan container images for security vulnerabilities using Trivy</p>
-                        </div>
-                        <div class="telemetry-toggle">
-                            <label class="toggle-switch-modern">
-                                <input type="checkbox" id="dashSecurityEnabled">
-                                <span class="toggle-slider-modern"></span>
-                            </label>
-                        </div>
-                    </div>
-                    <div class="telemetry-content" id="dashSecurityContent">
-                        <div class="loading">Loading security status...</div>
-                    </div>
-                    <div class="telemetry-footer" id="dashSecurityFooter">
-                        <button onclick="switchTab('security', true)" class="btn btn-secondary">
-                            View Security Details
-                        </button>
-                    </div>
-                </div>
-            </div>
-
             <!-- Telemetry Settings -->
             <div class="dashboard-section">
                 <h2 class="dashboard-section-title">📡 Telemetry & Analytics</h2>
@@ -330,8 +303,9 @@
                             <h3 class="dashboard-card-title-inline">Community Analytics</h3>
                             <p class="telemetry-description">Help improve Container Census by sharing anonymous usage statistics</p>
                         </div>
-                        <div class="telemetry-toggle">
-                            <label class="toggle-switch-modern">
+                        <div class="telemetry-toggle-container">
+                            <div class="toggle-label-inline">Share Data</div>
+                            <label class="toggle-switch-modern toggle-switch-large">
                                 <input type="checkbox" id="dashTelemetryEnabled">
                                 <span class="toggle-slider-modern"></span>
                             </label>
@@ -346,6 +320,34 @@
                         </a>
                         <button onclick="switchTab('settings', true)" class="btn btn-info">
                             Configure Telemetry
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Security Scanning -->
+            <div class="dashboard-section">
+                <h2 class="dashboard-section-title">🛡️ Security Scanning</h2>
+                <div class="dashboard-card dashboard-telemetry-card">
+                    <div class="telemetry-header">
+                        <div>
+                            <h3 class="dashboard-card-title-inline">Vulnerability Scanning</h3>
+                            <p class="telemetry-description">Scan container images for security vulnerabilities using Trivy</p>
+                        </div>
+                        <div class="telemetry-toggle-container">
+                            <div class="toggle-label-inline">Enable Scanning</div>
+                            <label class="toggle-switch-modern toggle-switch-large">
+                                <input type="checkbox" id="dashSecurityEnabled">
+                                <span class="toggle-slider-modern"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="telemetry-content" id="dashSecurityContent">
+                        <div class="loading">Loading security status...</div>
+                    </div>
+                    <div class="telemetry-footer" id="dashSecurityFooter">
+                        <button onclick="switchTab('security', true)" class="btn btn-secondary">
+                            View Security Details
                         </button>
                     </div>
                 </div>

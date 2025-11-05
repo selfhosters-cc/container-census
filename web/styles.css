@@ -2392,6 +2392,15 @@ tbody tr:hover {
     font-weight: 600;
 }
 
+.top-navbar-logo h1 a {
+    cursor: pointer;
+    transition: opacity 0.2s ease;
+}
+
+.top-navbar-logo h1 a:hover {
+    opacity: 0.7;
+}
+
 .sidebar-toggle-btn {
     background: none;
     border: none;
@@ -5877,11 +5886,41 @@ header {
     margin-top: var(--space-2);
 }
 
+.telemetry-toggle-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    background: var(--surface-elevated);
+    border-radius: var(--radius);
+    border: 2px solid var(--border);
+    transition: var(--transition);
+}
+
+.telemetry-toggle-container:hover {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.toggle-label-inline {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+}
+
 .toggle-switch-modern {
     position: relative;
     display: inline-block;
     width: 56px;
     height: 32px;
+}
+
+.toggle-switch-large {
+    width: 68px;
+    height: 38px;
 }
 
 .toggle-switch-modern input {
@@ -5921,6 +5960,15 @@ header {
 
 .toggle-switch-modern input:checked + .toggle-slider-modern:before {
     transform: translateX(24px);
+}
+
+.toggle-switch-large .toggle-slider-modern:before {
+    height: 30px;
+    width: 30px;
+}
+
+.toggle-switch-large input:checked + .toggle-slider-modern:before {
+    transform: translateX(30px);
 }
 
 .telemetry-content {

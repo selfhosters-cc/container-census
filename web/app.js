@@ -309,13 +309,6 @@ function setupKeyboardShortcuts() {
             }
         }
 
-        // 'r' to refresh current tab
-        if (e.key === 'r' || e.key === 'R') {
-            e.preventDefault();
-            loadData();
-            showToast('Refreshed', 'Data reloaded successfully', 'success');
-        }
-
         // 'Escape' to close sidebar on mobile
         if (e.key === 'Escape' && isSidebarOpen) {
             toggleSidebar();
@@ -5970,7 +5963,8 @@ async function renderDashboardSecurity() {
             return;
         }
 
-        const { critical = 0, high = 0, medium = 0, low = 0 } = vulnerabilitySummary;
+        const severityCounts = vulnerabilitySummary.severity_counts || vulnerabilitySummary;
+        const { critical = 0, high = 0, medium = 0, low = 0 } = severityCounts;
         const total = critical + high + medium + low;
 
         if (total === 0) {
@@ -6154,18 +6148,19 @@ async function renderDashboardRecentActivity() {
         }
 
         container.innerHTML = activities.map(activity => {
-            const icon = activity.activity_type === 'scan' ? '🔄' : '📡';
-            const statusColor = activity.status === 'success' ? 'var(--success)' : 'var(--danger)';
+            const icon = activity.type === 'scan' ? '🔄' : '📡';
+            const status = activity.success ? 'Success' : 'Failed';
+            const statusColor = activity.success ? 'var(--success)' : 'var(--danger)';
             const timestamp = new Date(activity.timestamp).toLocaleString();
 
             return `
                 <div style="display: flex; align-items: flex-start; gap: 1rem; padding: 0.75rem 0; border-bottom: 1px solid var(--border-light);">
                     <div style="font-size: 1.5rem;">${icon}</div>
                     <div style="flex: 1;">
-                        <div style="font-weight: 600; color: var(--text-primary);">${escapeHtml(activity.activity_type === 'scan' ? 'Scan' : 'Telemetry')}: ${escapeHtml(activity.target || 'All Hosts')}</div>
+                        <div style="font-weight: 600; color: var(--text-primary);">${escapeHtml(activity.type === 'scan' ? 'Scan' : 'Telemetry')}: ${escapeHtml(activity.target || 'All Hosts')}</div>
                         <div style="font-size: 0.8125rem; color: var(--text-secondary); margin-top: 0.25rem;">${timestamp}</div>
                     </div>
-                    <div style="font-size: 0.875rem; font-weight: 600; color: ${statusColor};">${activity.status}</div>
+                    <div style="font-size: 0.875rem; font-weight: 600; color: ${statusColor};">${status}</div>
                 </div>
             `;
         }).join('');
@@ -6228,14 +6223,65 @@ async function renderDashboardTelemetry() {
         // Add toggle event listener
         toggle.addEventListener('change', async (e) => {
             const newState = e.target.checked;
-            // This would require implementing the toggle functionality
-            showToast('Info', 'Please use Settings tab to configure telemetry', 'info');
-            e.target.checked = !newState; // Revert for now
+            await toggleTelemetry(newState);
         });
 
     } catch (error) {
         console.error('Error loading telemetry status:', error);
         container.innerHTML = '<p class="text-secondary">Failed to load telemetry status</p>';
+    }
+}
+
+async function toggleTelemetry(newState) {
+    const container = document.getElementById('dashTelemetryContent');
+    const toggle = document.getElementById('dashTelemetryEnabled');
+
+    try {
+        // Show loading message
+        container.innerHTML = `
+            <div style="padding: 1rem; text-align: center;">
+                <p style="color: var(--text-secondary);">${newState ? 'Enabling' : 'Disabling'} telemetry...</p>
+            </div>
+        `;
+
+        // Load telemetry endpoints
+        const response = await fetchWithAuth('/api/telemetry/endpoints');
+        if (!response.ok) {
+            throw new Error('Failed to load telemetry endpoints');
+        }
+        const endpoints = await response.json();
+
+        // Find community endpoint
+        const communityEndpoint = endpoints.find(e => e.name === 'community');
+        if (!communityEndpoint) {
+            throw new Error('Community endpoint not found');
+        }
+
+        // Update the endpoint
+        const updateResponse = await fetchWithAuth(`/api/telemetry/endpoints/${encodeURIComponent(communityEndpoint.name)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                enabled: newState
+            })
+        });
+
+        if (!updateResponse.ok) {
+            const error = await updateResponse.json();
+            throw new Error(error.error || 'Failed to update telemetry');
+        }
+
+        showToast('Success', `Telemetry ${newState ? 'enabled' : 'disabled'}`, 'success');
+
+        // Reload the telemetry section
+        await renderDashboardTelemetry();
+
+    } catch (error) {
+        console.error('Error toggling telemetry:', error);
+        showToast('Error', 'Failed to toggle telemetry: ' + error.message, 'error');
+        // Revert toggle
+        toggle.checked = !newState;
+        container.innerHTML = '<p class="text-secondary">Failed to update telemetry</p>';
     }
 }
 
@@ -6255,7 +6301,7 @@ async function loadVulnerabilitySummary() {
                 criticalVulnsEl.textContent = '-';
                 criticalVulnsEl.style.fontWeight = '600';
             }
-            return;
+            return null;
         }
 
         // Load summary if enabled
@@ -6268,13 +6314,17 @@ async function loadVulnerabilitySummary() {
         // Update sidebar stats
         const criticalVulnsEl = document.getElementById('criticalVulns');
         if (criticalVulnsEl) {
-            const criticalCount = vulnerabilitySummary.critical || 0;
+            const criticalCount = vulnerabilitySummary.severity_counts?.critical || 0;
             criticalVulnsEl.textContent = criticalCount;
             criticalVulnsEl.style.fontWeight = criticalCount > 0 ? '700' : '600';
         }
+
+        // Return the full data object (includes summary and queue_status)
+        return data;
     } catch (error) {
         console.error('Error loading vulnerability summary:', error);
-        vulnerabilitySummary = { critical: 0, high: 0, medium: 0, low: 0 };
+        vulnerabilitySummary = { severity_counts: { critical: 0, high: 0, medium: 0, low: 0 } };
+        return vulnerabilitySummary;
     }
 }
 

@@ -36,9 +36,16 @@ ARG DOCKER_GID=999
 RUN apk --no-cache add ca-certificates tzdata su-exec wget
 
 # Install Trivy for vulnerability scanning
-# Download and install Trivy binary
+# Download and install Trivy binary with architecture detection
 ARG TRIVY_VERSION=0.58.1
-RUN wget -qO- https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz | tar -xzf - -C /usr/local/bin trivy && \
+RUN ARCH=$(uname -m) && \
+    case "$ARCH" in \
+        x86_64) TRIVY_ARCH="64bit" ;; \
+        aarch64) TRIVY_ARCH="ARM64" ;; \
+        armv7l) TRIVY_ARCH="ARM" ;; \
+        *) echo "Unsupported architecture: $ARCH" && exit 1 ;; \
+    esac && \
+    wget -qO- https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-${TRIVY_ARCH}.tar.gz | tar -xzf - -C /usr/local/bin trivy && \
     chmod +x /usr/local/bin/trivy && \
     trivy --version
 

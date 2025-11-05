@@ -52,7 +52,7 @@ class OnboardingTour {
                     <p><strong>What's new in this version:</strong></p>
                     <ul>
                         <li>Vulnerability scanning with Trivy</li>
-                        <li>CPU & memory monitoring with trends</li>
+                        <li>CPU & memory monitoring with historical trends</li>
                         <li>Advanced notification system</li>
                         <li>Network graph visualization</li>
                     </ul>

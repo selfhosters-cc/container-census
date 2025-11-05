@@ -6,6 +6,15 @@
 
 Community stats on container usage can be found here: [Selfhosters Stats](https://selfhosters.cc/stats)
 
+##### Dashboard
+![Dashboard](screenshots/server-dashboard.png)
+
+##### Resource Monitoring
+![Dashboard](screenshots/server-resource-monitoring.png)
+
+
+
+
 ##### View / Manage Containers
 ![Main server page](screenshots/server-01.png)
 
@@ -25,8 +34,6 @@ Community stats on container usage can be found here: [Selfhosters Stats](https:
 Can enable public collection ([Selfhosters Stats](https://selfhosters.cc/stats)) or send telemetry information to your own private collector.
 
 ![Telemetry settings view](screenshots/server-07.png)
-
-
 
 #### Want deeper insights?
 ##### Graph view
@@ -58,7 +65,7 @@ Anonymous telemetry is opt-in only and can be enabled anytime from the Settings 
 # Quick Start With Docker Compose
 
 ### Server (required)
-```
+```yaml
   census-server:
     image: ghcr.io/selfhosters-cc/container-census:latest
     container_name: census-server
@@ -73,20 +80,21 @@ Anonymous telemetry is opt-in only and can be enabled anytime from the Settings 
       # Docker socket for scanning local containers
       - /var/run/docker.sock:/var/run/docker.sock
 
-      # Persistent data directory
+      # Persistent data directory (database, settings, scans)
       - ./census/server:/app/data
 
-      # Optional: Mount custom config file
-      # Uncomment to use a custom configuration
-      - ./census/config:/app/config
-
     environment:
-      # Optional: Override config path
-      # CONFIG_PATH: /app/config/config.yaml
-      AUTH_ENABLED: false
-      AUTH_USERNAME: your_username
-      AUTH_PASSWORD: your_secure_password
-      # Timezone
+      # Server Configuration (optional, defaults shown)
+      # SERVER_HOST: "0.0.0.0"
+      # SERVER_PORT: "8080"
+      # DATABASE_PATH: "./data/census.db"
+
+      # Authentication (optional, disabled by default)
+      # AUTH_ENABLED: "false"
+      # AUTH_USERNAME: "your_username"
+      # AUTH_PASSWORD: "your_secure_password"
+
+      # Timezone for telemetry reporting
       TZ: ${TZ:-UTC}
 
     healthcheck:
@@ -96,6 +104,8 @@ Anonymous telemetry is opt-in only and can be enabled anytime from the Settings 
       retries: 3
       start_period: 10s
 ```
+
+> **Note**: All application settings (scanner interval, vulnerability scanning, telemetry endpoints, etc.) are now managed through the Web UI or API. The config file is only used for one-time migration from older versions.
 
 ### Agent to collect data from other hosts
 ```
