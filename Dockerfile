@@ -89,6 +89,9 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 # Set environment variables
 ENV CONFIG_PATH=/app/config/config.yaml
 
+# Optional: Override Trivy cache directory (default: /app/data/.trivy)
+# ENV TRIVY_CACHE_DIR=/custom/path
+
 # Set entrypoint
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 

@@ -15,7 +15,7 @@ import (
 
 	"github.com/container-census/container-census/internal/api"
 	"github.com/container-census/container-census/internal/auth"
-	"github.com/container-census/container-census/internal/config"
+	"github.com/container-census/container-census/internal/migration"
 	"github.com/container-census/container-census/internal/models"
 	"github.com/container-census/container-census/internal/notifications"
 	"github.com/container-census/container-census/internal/scanner"
@@ -38,6 +38,83 @@ var (
 	vulnerabilitySchedulerGlobal    *vulnerability.Scheduler
 )
 
+// serviceRefs holds references to services that need hot-reload
+type serviceRefs struct {
+	db                   *storage.DB
+	scanner              *scanner.Scanner
+	telemetryScheduler   *telemetry.Scheduler
+	telemetryCtx         context.Context
+	telemetryCancel      context.CancelFunc
+	notificationService  *notifications.NotificationService
+	apiServer            *api.Server
+	mu                   sync.RWMutex
+}
+
+var services = &serviceRefs{}
+
+// reloadSettings reloads settings from database and applies them to running services
+func reloadSettings() error {
+	services.mu.Lock()
+	defer services.mu.Unlock()
+
+	// Load settings from DB
+	settings, err := services.db.LoadSystemSettings()
+	if err != nil {
+		return fmt.Errorf("failed to load settings: %w", err)
+	}
+
+	log.Println("Reloading system settings...")
+
+	// Update scan interval
+	setScanInterval(settings.Scanner.IntervalSeconds)
+	log.Printf("✓ Scan interval updated to %d seconds", settings.Scanner.IntervalSeconds)
+
+	// Restart telemetry scheduler if it exists and settings changed
+	if services.telemetryScheduler != nil && services.telemetryCancel != nil {
+		// Cancel existing scheduler
+		services.telemetryCancel()
+
+		// Load endpoints from database
+		endpoints, err := services.db.GetTelemetryEndpoints()
+		if err != nil {
+			log.Printf("Warning: Failed to load telemetry endpoints: %v", err)
+		} else {
+			// Create new telemetry config
+			telemetryConfig := models.TelemetryConfig{
+				IntervalHours: settings.Telemetry.IntervalHours,
+				Endpoints:     endpoints,
+			}
+
+			// Create new scheduler
+			newScheduler, err := telemetry.NewScheduler(services.db, services.scanner, telemetryConfig, settings.Scanner.IntervalSeconds)
+			if err != nil {
+				log.Printf("Warning: Failed to create new telemetry scheduler: %v", err)
+			} else {
+				// Create new context
+				newCtx, newCancel := context.WithCancel(context.Background())
+				services.telemetryCtx = newCtx
+				services.telemetryCancel = newCancel
+				services.telemetryScheduler = newScheduler
+
+				// Start new scheduler
+				go newScheduler.Start(newCtx)
+				log.Printf("✓ Telemetry scheduler restarted (interval: %d hours)", settings.Telemetry.IntervalHours)
+			}
+		}
+	}
+
+	// Update notification service settings if it exists
+	if services.notificationService != nil {
+		// Note: Notification service settings are loaded from environment variables on startup
+		// and cannot be hot-reloaded. This would require refactoring the notification service
+		// to support UpdateSettings() method. For now, log a warning.
+		log.Printf("Note: Notification settings require restart to take effect")
+	}
+
+	log.Println("✅ Settings reloaded successfully")
+	return nil
+}
+
 func getScanInterval() int {
 	scanIntervalMu.RLock()
 	defer scanIntervalMu.RUnlock()
@@ -59,62 +136,96 @@ func setScanInterval(val int) {
 func main() {
 	log.Printf("Starting Container Census v%s...", version.Get())
 
-	// Load configuration
-	configPath := os.Getenv("CONFIG_PATH")
-	if configPath == "" {
-		configPath = "./config/config.yaml"
-	}
-
-	cfg, fromFile := config.LoadOrDefault(configPath)
-	if fromFile {
-		log.Printf("Configuration loaded from file: %s", configPath)
-	} else {
-		log.Printf("Using default configuration (config file not found, using environment variables)")
+	// Get database path from environment or use default
+	dbPath := os.Getenv("DATABASE_PATH")
+	if dbPath == "" {
+		dbPath = "./data/census.db"
 	}
 
 	// Ensure database directory exists
-	dbDir := filepath.Dir(cfg.Database.Path)
+	dbDir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dbDir, 0755); err != nil {
 		log.Fatalf("Failed to create database directory: %v", err)
 	}
 
 	// Initialize database
-	db, err := storage.New(cfg.Database.Path)
+	db, err := storage.New(dbPath)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	defer db.Close()
-	log.Printf("Database initialized: %s", cfg.Database.Path)
+	log.Printf("Database initialized: %s", dbPath)
 
-	// Initialize hosts from config if database is empty
-	if err := initializeHosts(db, cfg.Hosts); err != nil {
-		log.Printf("Warning: Failed to initialize hosts: %v", err)
+	// Store database reference for hot-reload
+	services.db = db
+
+	// Auto-import YAML config on first run (if config file exists)
+	if db.IsFirstRun() {
+		configPath := os.Getenv("CONFIG_PATH")
+		if configPath == "" {
+			configPath = "./config/config.yaml"
+		}
+		log.Println("First run detected - attempting to migrate configuration from YAML to database...")
+		if err := migration.ImportYAMLConfig(configPath, db); err != nil {
+			log.Printf("Warning: Configuration migration failed: %v", err)
+			log.Println("Continuing with default settings...")
+		}
 	}
+
+	// Load settings from database (will use defaults if migration failed)
+	settings, err := db.LoadSystemSettings()
+	if err != nil {
+		log.Fatalf("Failed to load system settings: %v", err)
+	}
+	log.Printf("System settings loaded from database (scanner interval: %ds, telemetry interval: %dh)",
+		settings.Scanner.IntervalSeconds, settings.Telemetry.IntervalHours)
 
 	// Initialize default notification channels and rules
 	if err := db.InitializeDefaultNotifications(); err != nil {
 		log.Printf("Warning: Failed to initialize default notifications: %v", err)
 	}
 
-	// Initialize scanner
-	scan := scanner.New(cfg.Scanner.TimeoutSeconds)
+	// Initialize default telemetry endpoints (community collector)
+	if err := db.InitializeDefaultTelemetryEndpoints(); err != nil {
+		log.Printf("Warning: Failed to initialize default telemetry endpoints: %v", err)
+	}
+
+	// Initialize scanner (using database settings)
+	scan := scanner.New(settings.Scanner.TimeoutSeconds)
 	log.Println("Scanner initialized")
 
-	// Initialize scan interval
-	setScanInterval(cfg.Scanner.IntervalSeconds)
-	log.Printf("Scan interval set to %d seconds", cfg.Scanner.IntervalSeconds)
+	// Store scanner reference for hot-reload
+	services.scanner = scan
 
-	// Initialize API server with authentication config
-	authConfig := convertAuthConfig(cfg.Server.Auth)
+	// Initialize scan interval (from database settings)
+	setScanInterval(settings.Scanner.IntervalSeconds)
+	log.Printf("Scan interval set to %d seconds", settings.Scanner.IntervalSeconds)
+
+	// Get authentication config from environment variables
+	authConfig := getAuthConfigFromEnv()
 	if authConfig.Enabled {
 		log.Printf("Authentication enabled for user: %s", authConfig.Username)
 	} else {
 		log.Println("Authentication disabled - UI and API are publicly accessible")
 	}
 
-	apiServer := api.New(db, scan, configPath, cfg.Scanner.IntervalSeconds, authConfig)
+	// Get server host and port from environment variables
+	serverHost := os.Getenv("SERVER_HOST")
+	if serverHost == "" {
+		serverHost = "0.0.0.0"
+	}
+	serverPort := os.Getenv("SERVER_PORT")
+	if serverPort == "" {
+		serverPort = "8080"
+	}
+
+	apiServer := api.New(db, scan, settings.Scanner.IntervalSeconds, authConfig)
 	apiServer.SetScanIntervalCallback(setScanInterval) // Allow API to update scan interval dynamically
-	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
+	apiServer.SetReloadSettingsCallback(reloadSettings) // Allow API to trigger hot-reload
+	addr := fmt.Sprintf("%s:%s", serverHost, serverPort)
+
+	// Store API server reference for hot-reload
+	services.apiServer = apiServer
 
 	server := &http.Server{
 		Addr:         addr,
@@ -128,23 +239,38 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go runPeriodicScans(ctx, db, scan, cfg.Scanner.IntervalSeconds)
+	go runPeriodicScans(ctx, db, scan, settings.Scanner.IntervalSeconds)
 
 	// Start telemetry scheduler if any endpoint is enabled
+	endpoints, err := db.GetTelemetryEndpoints()
+	if err != nil {
+		log.Printf("Warning: Failed to load telemetry endpoints: %v", err)
+	}
 	enabledCount := 0
-	for _, ep := range cfg.Telemetry.Endpoints {
+	for _, ep := range endpoints {
 		if ep.Enabled {
 			enabledCount++
 		}
 	}
 	if enabledCount > 0 {
-		telemetryScheduler, err := telemetry.NewScheduler(db, scan, cfg.Telemetry, cfg.Scanner.IntervalSeconds)
+		telemetryConfig := models.TelemetryConfig{
+			IntervalHours: settings.Telemetry.IntervalHours,
+			Endpoints:     endpoints,
+		}
+		telemetryScheduler, err := telemetry.NewScheduler(db, scan, telemetryConfig, settings.Scanner.IntervalSeconds)
 		if err != nil {
 			log.Printf("Warning: Failed to initialize telemetry: %v", err)
 		} else {
 			telemetryCtx, telemetryCancel := context.WithCancel(ctx)
+
+			// Store references for hot-reload
+			services.telemetryScheduler = telemetryScheduler
+			services.telemetryCtx = telemetryCtx
+			services.telemetryCancel = telemetryCancel
+
 			apiServer.SetTelemetryScheduler(telemetryScheduler, telemetryCtx, telemetryCancel)
 			go telemetryScheduler.Start(telemetryCtx)
+			log.Printf("Telemetry scheduler started (%d enabled endpoints)", enabledCount)
 		}
 	}
 
@@ -160,11 +286,12 @@ func main() {
 	// Start hourly stats aggregation
 	go runHourlyStatsAggregation(ctx, db)
 
-	// Initialize notification system
-	maxNotificationsPerHour := getEnvInt("NOTIFICATION_RATE_LIMIT_MAX", 100)
-	batchIntervalSeconds := getEnvInt("NOTIFICATION_RATE_LIMIT_BATCH_INTERVAL", 600)
+	// Initialize notification system (settings from database, with env var overrides)
+	maxNotificationsPerHour := getEnvInt("NOTIFICATION_RATE_LIMIT_MAX", settings.Notification.RateLimitMax)
+	batchIntervalSeconds := getEnvInt("NOTIFICATION_RATE_LIMIT_BATCH_INTERVAL", settings.Notification.RateLimitBatchInterval)
 	notificationService := notifications.NewNotificationService(db, maxNotificationsPerHour, time.Duration(batchIntervalSeconds)*time.Second)
 	notificationServiceGlobal = notificationService // Set global reference for scanner
+	services.notificationService = notificationService // Store for hot-reload
 	log.Printf("Notification service initialized (rate limit: %d/hour, batch interval: %ds)", maxNotificationsPerHour, batchIntervalSeconds)
 
 	// Pass notification service to API server
@@ -178,9 +305,14 @@ func main() {
 	// Start hourly notification cleanup
 	go runHourlyNotificationCleanup(ctx, db)
 
-	// Initialize vulnerability scanner if enabled
-	if cfg.Vulnerability.Enabled {
-		vulnConfig := convertVulnerabilityConfig(cfg.Vulnerability)
+	// Initialize vulnerability scanner (check database settings only)
+	vulnConfig, err := db.LoadVulnerabilitySettings()
+	if err != nil {
+		log.Printf("Failed to load vulnerability settings from database: %v", err)
+		log.Println("Vulnerability scanning disabled")
+	} else if vulnConfig.GetEnabled() {
+		log.Printf("Loaded vulnerability settings from database (cache_dir: %s)", vulnConfig.GetCacheDir())
+
 		vulnScanner := vulnerability.NewScanner(vulnConfig, db)
 		vulnScheduler := vulnerability.NewScheduler(vulnScanner, vulnConfig)
 		vulnScheduler.Start()
@@ -229,46 +361,22 @@ func main() {
 	log.Println("Server stopped")
 }
 
-// convertAuthConfig converts models.AuthConfig to auth.Config
-func convertAuthConfig(cfg models.AuthConfig) auth.Config {
+// getAuthConfigFromEnv loads authentication config from environment variables
+func getAuthConfigFromEnv() auth.Config {
+	authEnabled := os.Getenv("AUTH_ENABLED")
+	authUsername := os.Getenv("AUTH_USERNAME")
+	authPassword := os.Getenv("AUTH_PASSWORD")
+
+	enabled := false
+	if authEnabled == "true" || authEnabled == "1" || authEnabled == "yes" {
+		enabled = true
+	}
+
 	return auth.Config{
-		Enabled:  cfg.Enabled,
-		Username: cfg.Username,
-		Password: cfg.Password,
+		Enabled:  enabled,
+		Username: authUsername,
+		Password: authPassword,
 	}
-}
-
-// initializeHosts adds hosts from config to database if they don't exist
-func initializeHosts(db *storage.DB, hostsConfig []models.HostConfig) error {
-	existingHosts, err := db.GetHosts()
-	if err != nil {
-		return err
-	}
-
-	// If hosts already exist in database, don't add from config
-	if len(existingHosts) > 0 {
-		return nil
-	}
-
-	// Add hosts from config
-	for _, hc := range hostsConfig {
-		host := models.Host{
-			Name:        hc.Name,
-			Address:     hc.Address,
-			Description: hc.Description,
-			HostType:    detectHostType(hc.Address),
-			Enabled:     true,
-		}
-
-		id, err := db.AddHost(host)
-		if err != nil {
-			log.Printf("Failed to add host %s: %v", hc.Name, err)
-			continue
-		}
-		log.Printf("Added host: %s (ID: %d, Type: %s)", hc.Name, id, host.HostType)
-	}
-
-	return nil
 }
 
 // detectHostType determines the host type from its address
@@ -546,25 +654,6 @@ func getEnvInt(key string, defaultValue int) int {
 	return defaultValue
 }
 
-// convertVulnerabilityConfig converts models.VulnerabilityConfig to vulnerability.Config
-func convertVulnerabilityConfig(cfg models.VulnerabilityConfig) *vulnerability.Config {
-	return &vulnerability.Config{
-		Enabled:                cfg.Enabled,
-		AutoScanNewImages:      cfg.AutoScanNewImages,
-		WorkerPoolSize:         cfg.WorkerPoolSize,
-		ScanTimeoutMinutes:     cfg.ScanTimeoutMinutes,
-		CacheTTLHours:          cfg.CacheTTLHours,
-		RescanIntervalHours:    cfg.RescanIntervalHours,
-		CacheDir:               cfg.CacheDir,
-		DBUpdateIntervalHours:  cfg.DBUpdateIntervalHours,
-		RetentionDays:          cfg.RetentionDays,
-		DetailedRetentionDays:  cfg.DetailedRetentionDays,
-		AlertOnCritical:        cfg.AlertOnCritical,
-		AlertOnHigh:            cfg.AlertOnHigh,
-		MaxQueueSize:           cfg.MaxQueueSize,
-	}
-}
-
 // runDailyTrivyDBUpdate updates the Trivy database daily
 func runDailyTrivyDBUpdate(ctx context.Context, scanner *vulnerability.Scanner, config *vulnerability.Config) {
 	// Calculate time until next 2 AM
@@ -623,7 +712,9 @@ func runDailyVulnerabilityCleanup(ctx context.Context, db *storage.DB, config *v
 	time.Sleep(initialDelay)
 
 	// Run first cleanup
-	if err := db.CleanupOldVulnerabilityData(config.RetentionDays, config.DetailedRetentionDays); err != nil {
+	retentionDays := config.GetRetentionDays()
+	detailedRetentionDays := config.GetDetailedRetentionDays()
+	if err := db.CleanupOldVulnerabilityData(retentionDays, detailedRetentionDays); err != nil {
 		log.Printf("Vulnerability cleanup failed: %v", err)
 	} else {
 		log.Println("Vulnerability cleanup completed successfully")
@@ -639,7 +730,10 @@ func runDailyVulnerabilityCleanup(ctx context.Context, db *storage.DB, config *v
 			return
 		case <-ticker.C:
 			log.Println("Running scheduled vulnerability cleanup...")
-			if err := db.CleanupOldVulnerabilityData(config.RetentionDays, config.DetailedRetentionDays); err != nil {
+			// Re-read retention values in case they were updated
+			retentionDays := config.GetRetentionDays()
+			detailedRetentionDays := config.GetDetailedRetentionDays()
+			if err := db.CleanupOldVulnerabilityData(retentionDays, detailedRetentionDays); err != nil {
 				log.Printf("Vulnerability cleanup failed: %v", err)
 			} else {
 				log.Println("Vulnerability cleanup completed successfully")

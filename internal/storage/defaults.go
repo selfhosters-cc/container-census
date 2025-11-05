@@ -80,3 +80,35 @@ func (db *DB) InitializeDefaultNotifications() error {
 func floatPtr(f float64) *float64 {
 	return &f
 }
+
+// InitializeDefaultTelemetryEndpoints creates the community collector endpoint if it doesn't exist
+func (db *DB) InitializeDefaultTelemetryEndpoints() error {
+	// Check if any telemetry endpoints exist
+	endpoints, err := db.GetTelemetryEndpoints()
+	if err != nil {
+		return err
+	}
+
+	// Check if community endpoint already exists
+	for _, ep := range endpoints {
+		if ep.Name == "community" {
+			return nil // Already exists
+		}
+	}
+
+	log.Println("Initializing default telemetry endpoint (community collector)...")
+
+	// Create community collector endpoint (disabled by default)
+	communityEndpoint := &models.TelemetryEndpoint{
+		Name:    "community",
+		URL:     "https://cc-telemetry.selfhosters.cc/api/ingest",
+		Enabled: false, // Disabled by default - user can enable via welcome tour or settings
+	}
+
+	if err := db.SaveTelemetryEndpoint(communityEndpoint); err != nil {
+		return err
+	}
+
+	log.Println("✓ Created default community telemetry endpoint (disabled)")
+	return nil
+}

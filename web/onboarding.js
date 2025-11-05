@@ -378,7 +378,7 @@ class OnboardingTour {
         // Handle tour completion
         this.tour.on('complete', () => {
             if (typeof switchTab === 'function') {
-                switchTab('containers', false);
+                switchTab('dashboard', false);
             }
             showToast('Welcome!', 'Setup complete. You can replay this tour anytime from the help menu.', 'success');
         });
@@ -464,18 +464,24 @@ class OnboardingTour {
     // Update telemetry settings
     async updateTelemetrySettings(enabled) {
         try {
-            const response = await fetch('/api/config/telemetry/endpoints', {
+            const response = await fetch('/api/telemetry/endpoints', {
                 method: 'GET',
                 headers: {
                     'Authorization': 'Basic ' + btoa(localStorage.getItem('auth') || ':')
                 }
             });
+
+            if (!response.ok) {
+                console.error('Failed to fetch telemetry endpoints:', response.status);
+                return;
+            }
+
             const endpoints = await response.json();
 
             // Find community endpoint
             const communityEndpoint = endpoints.find(e => e.name === 'community');
             if (communityEndpoint) {
-                await fetch(`/api/config/telemetry/endpoints/${communityEndpoint.name}`, {
+                const updateResponse = await fetch(`/api/telemetry/endpoints/${communityEndpoint.name}`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
@@ -486,12 +492,25 @@ class OnboardingTour {
                     })
                 });
 
+                if (!updateResponse.ok) {
+                    const error = await updateResponse.json();
+                    console.error('Failed to update telemetry endpoint:', error);
+                    showToast('Error', 'Failed to update telemetry settings', 'error');
+                    return;
+                }
+
                 if (enabled) {
                     showToast('Thank You!', 'Anonymous telemetry enabled', 'success');
                 }
+
+                console.log('Telemetry endpoint updated successfully:', enabled);
+            } else {
+                console.error('Community telemetry endpoint not found');
+                showToast('Error', 'Community endpoint not found', 'error');
             }
         } catch (err) {
             console.error('Failed to update telemetry settings:', err);
+            showToast('Error', 'Failed to update telemetry settings', 'error');
         }
     }
 

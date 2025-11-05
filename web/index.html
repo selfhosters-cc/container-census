@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Container Census</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
 </head>
@@ -74,7 +77,7 @@
         <!-- Sidebar -->
         <aside class="sidebar">
             <div class="sidebar-header">
-                <div class="sidebar-logo">
+                <div class="sidebar-logo" onclick="showTab('dashboard')" style="cursor: pointer;">
                     Container Census
                 </div>
             </div>
@@ -120,62 +123,67 @@
 
             <!-- Navigation -->
             <nav class="sidebar-nav">
-                <button class="nav-item active" data-tab="containers" data-shortcut="1">
+                <button class="nav-item active" data-tab="dashboard" data-shortcut="1">
+                    <span class="nav-icon">📊</span>
+                    <span class="nav-label">Dashboard</span>
+                    <span class="nav-shortcut">1</span>
+                </button>
+                <button class="nav-item" data-tab="containers" data-shortcut="2">
                     <span class="nav-icon">📦</span>
                     <span class="nav-label">Containers</span>
                     <span class="nav-badge" id="containersBadge"></span>
-                    <span class="nav-shortcut">1</span>
-                </button>
-                <button class="nav-item" data-tab="monitoring" data-shortcut="2">
-                    <span class="nav-icon">📊</span>
-                    <span class="nav-label">Monitoring</span>
-                    <span class="nav-badge" id="monitoringBadge"></span>
                     <span class="nav-shortcut">2</span>
                 </button>
-                <button class="nav-item" data-tab="images" data-shortcut="3">
+                <button class="nav-item" data-tab="monitoring" data-shortcut="3">
+                    <span class="nav-icon">📈</span>
+                    <span class="nav-label">Monitoring</span>
+                    <span class="nav-badge" id="monitoringBadge"></span>
+                    <span class="nav-shortcut">3</span>
+                </button>
+                <button class="nav-item" data-tab="images" data-shortcut="4">
                     <span class="nav-icon">🖼️</span>
                     <span class="nav-label">Images</span>
                     <span class="nav-badge" id="imagesBadge"></span>
-                    <span class="nav-shortcut">3</span>
+                    <span class="nav-shortcut">4</span>
                 </button>
-                <button class="nav-item" data-tab="security" data-shortcut="4">
+                <button class="nav-item" data-tab="security" data-shortcut="5">
                     <span class="nav-icon">🛡️</span>
                     <span class="nav-label">Security</span>
                     <span class="nav-badge" id="securityBadge"></span>
-                    <span class="nav-shortcut">4</span>
-                </button>
-                <button class="nav-item" data-tab="graph" data-shortcut="5">
-                    <span class="nav-icon">🕸️</span>
-                    <span class="nav-label">Graph</span>
                     <span class="nav-shortcut">5</span>
                 </button>
-                <button class="nav-item" data-tab="hosts" data-shortcut="6">
+                <button class="nav-item" data-tab="graph" data-shortcut="6">
+                    <span class="nav-icon">🕸️</span>
+                    <span class="nav-label">Graph</span>
+                    <span class="nav-shortcut">6</span>
+                </button>
+                <button class="nav-item" data-tab="hosts" data-shortcut="7">
                     <span class="nav-icon">🖥️</span>
                     <span class="nav-label">Hosts</span>
                     <span class="nav-badge" id="hostsBadge"></span>
-                    <span class="nav-shortcut">6</span>
-                </button>
-                <button class="nav-item" data-tab="history" data-shortcut="7">
-                    <span class="nav-icon">📜</span>
-                    <span class="nav-label">History</span>
                     <span class="nav-shortcut">7</span>
                 </button>
-                <button class="nav-item" data-tab="activity" data-shortcut="8">
+                <button class="nav-item" data-tab="history" data-shortcut="8">
+                    <span class="nav-icon">📜</span>
+                    <span class="nav-label">History</span>
+                    <span class="nav-shortcut">8</span>
+                </button>
+                <button class="nav-item" data-tab="activity" data-shortcut="9">
                     <span class="nav-icon">📋</span>
                     <span class="nav-label">Activity Log</span>
                     <span class="nav-badge" id="activityBadge"></span>
-                    <span class="nav-shortcut">8</span>
-                </button>
-                <button class="nav-item" data-tab="reports" data-shortcut="9">
-                    <span class="nav-icon">📈</span>
-                    <span class="nav-label">Reports</span>
                     <span class="nav-shortcut">9</span>
                 </button>
-                <button class="nav-item" data-tab="notifications" data-shortcut="0">
+                <button class="nav-item" data-tab="reports" data-shortcut="0">
+                    <span class="nav-icon">📊</span>
+                    <span class="nav-label">Reports</span>
+                    <span class="nav-shortcut">0</span>
+                </button>
+                <button class="nav-item" data-tab="notifications" data-shortcut="N">
                     <span class="nav-icon">🔔</span>
                     <span class="nav-label">Notifications</span>
                     <span class="nav-badge" id="notificationsSidebarBadge"></span>
-                    <span class="nav-shortcut">0</span>
+                    <span class="nav-shortcut">N</span>
                 </button>
             </nav>
 
@@ -206,7 +214,176 @@
             </select>
         </div>
 
-        <div id="containersTab" class="tab-content active">
+        <!-- Dashboard Tab (New Default Landing Page) -->
+        <div id="dashboardTab" class="tab-content active">
+            <div class="dashboard-hero">
+                <div class="dashboard-hero-content">
+                    <h1 class="dashboard-title">
+                        <span class="dashboard-emoji">🐳</span> Container Census Dashboard
+                    </h1>
+                    <p class="dashboard-subtitle">Monitor and manage your multi-host Docker infrastructure</p>
+                </div>
+                <div class="dashboard-hero-actions">
+                    <button id="dashboardScanBtn" class="btn btn-primary btn-lg">
+                        <span>🔄</span> Scan All Hosts
+                    </button>
+                </div>
+            </div>
+
+            <!-- System Health Overview -->
+            <div class="dashboard-section">
+                <h2 class="dashboard-section-title">System Health</h2>
+                <div class="dashboard-metrics-grid">
+                    <div class="dashboard-metric-card">
+                        <div class="metric-icon" style="background: linear-gradient(135deg, #667eea, #764ba2);">
+                            🖥️
+                        </div>
+                        <div class="metric-content">
+                            <div class="metric-value" id="dashTotalHosts">-</div>
+                            <div class="metric-label">Total Hosts</div>
+                            <div class="metric-change" id="dashHostsChange"></div>
+                        </div>
+                    </div>
+                    <div class="dashboard-metric-card">
+                        <div class="metric-icon" style="background: linear-gradient(135deg, #10b981, #34d399);">
+                            ✅
+                        </div>
+                        <div class="metric-content">
+                            <div class="metric-value" id="dashRunningContainers">-</div>
+                            <div class="metric-label">Running Containers</div>
+                            <div class="metric-change" id="dashRunningChange"></div>
+                        </div>
+                    </div>
+                    <div class="dashboard-metric-card">
+                        <div class="metric-icon" style="background: linear-gradient(135deg, #f59e0b, #fbbf24);">
+                            📦
+                        </div>
+                        <div class="metric-content">
+                            <div class="metric-value" id="dashTotalContainers">-</div>
+                            <div class="metric-label">Total Containers</div>
+                            <div class="metric-change" id="dashContainersChange"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Health Status Grid -->
+            <div class="dashboard-grid">
+                <div class="dashboard-card">
+                    <h3 class="dashboard-card-title">🖥️ Host Status</h3>
+                    <div id="dashHostStatus" class="dashboard-card-content">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+
+                <div class="dashboard-card">
+                    <h3 class="dashboard-card-title">📊 Resource Usage</h3>
+                    <div id="dashResourceStatus" class="dashboard-card-content">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Activity Timeline -->
+            <div class="dashboard-section">
+                <h2 class="dashboard-section-title">Recent Activity</h2>
+                <div class="dashboard-card">
+                    <div id="dashRecentActivity" class="dashboard-timeline">
+                        <div class="loading">Loading recent events...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Security Scanning -->
+            <div class="dashboard-section">
+                <h2 class="dashboard-section-title">🛡️ Security Scanning</h2>
+                <div class="dashboard-card dashboard-telemetry-card">
+                    <div class="telemetry-header">
+                        <div>
+                            <h3 class="dashboard-card-title-inline">Vulnerability Scanning</h3>
+                            <p class="telemetry-description">Scan container images for security vulnerabilities using Trivy</p>
+                        </div>
+                        <div class="telemetry-toggle">
+                            <label class="toggle-switch-modern">
+                                <input type="checkbox" id="dashSecurityEnabled">
+                                <span class="toggle-slider-modern"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="telemetry-content" id="dashSecurityContent">
+                        <div class="loading">Loading security status...</div>
+                    </div>
+                    <div class="telemetry-footer" id="dashSecurityFooter">
+                        <button onclick="switchTab('security', true)" class="btn btn-secondary">
+                            View Security Details
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Telemetry Settings -->
+            <div class="dashboard-section">
+                <h2 class="dashboard-section-title">📡 Telemetry & Analytics</h2>
+                <div class="dashboard-card dashboard-telemetry-card">
+                    <div class="telemetry-header">
+                        <div>
+                            <h3 class="dashboard-card-title-inline">Community Analytics</h3>
+                            <p class="telemetry-description">Help improve Container Census by sharing anonymous usage statistics</p>
+                        </div>
+                        <div class="telemetry-toggle">
+                            <label class="toggle-switch-modern">
+                                <input type="checkbox" id="dashTelemetryEnabled">
+                                <span class="toggle-slider-modern"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="telemetry-content" id="dashTelemetryContent">
+                        <div class="loading">Loading telemetry status...</div>
+                    </div>
+                    <div class="telemetry-footer">
+                        <a href="https://selfhosters.cc/stats" target="_blank" class="btn btn-secondary">
+                            View Community Dashboard
+                        </a>
+                        <button onclick="switchTab('settings', true)" class="btn btn-info">
+                            Configure Telemetry
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="dashboard-section">
+                <h2 class="dashboard-section-title">Quick Actions</h2>
+                <div class="dashboard-quick-actions">
+                    <button onclick="switchTab('hosts', true)" class="dashboard-action-card">
+                        <span class="action-icon">🖥️</span>
+                        <span class="action-label">Manage Hosts</span>
+                    </button>
+                    <button onclick="switchTab('containers', true)" class="dashboard-action-card">
+                        <span class="action-icon">📦</span>
+                        <span class="action-label">View Containers</span>
+                    </button>
+                    <button onclick="switchTab('security', true)" class="dashboard-action-card">
+                        <span class="action-icon">🛡️</span>
+                        <span class="action-label">Scan Vulnerabilities</span>
+                    </button>
+                    <button onclick="switchTab('graph', true)" class="dashboard-action-card">
+                        <span class="action-icon">🕸️</span>
+                        <span class="action-label">Network Graph</span>
+                    </button>
+                    <button onclick="switchTab('reports', true)" class="dashboard-action-card">
+                        <span class="action-icon">📈</span>
+                        <span class="action-label">Generate Reports</span>
+                    </button>
+                    <button onclick="switchTab('notifications', true)" class="dashboard-action-card">
+                        <span class="action-icon">🔔</span>
+                        <span class="action-label">Notifications</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div id="containersTab" class="tab-content">
             <div class="containers-section">
                 <h2>Containers</h2>
                 <div id="containersBody" class="containers-cards-container">
@@ -767,9 +944,6 @@
                         Configure telemetry endpoints to track anonymous container usage statistics.
                         You can enable the community collector to help improve Container Census, or add your own private collectors.
                     </p>
-                    <div class="alert alert-info" style="margin-bottom: 15px; padding: 12px; background: #e3f2fd; border: 1px solid #90caf9; border-radius: 4px; font-size: 14px;">
-                        <strong>ℹ️ Note:</strong> Ensure <code>./config</code> volume is mounted in docker-compose.yml for settings to persist across restarts.
-                    </div>
 
                     <div class="frequency-group" style="margin-bottom: 20px;">
                         <label for="telemetryFrequency" class="frequency-label">Submission Frequency (applies to all collectors):</label>
@@ -813,6 +987,92 @@
                             <button onclick="testCollector()" class="btn btn-secondary" style="margin-right: 10px;">Test Connection</button>
                             <button onclick="addCollector()" class="btn btn-primary">Add Collector</button>
                             <span id="collectorSaveStatus" class="save-status-inline"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-card">
+                    <h3>💾 Configuration Backup & Migration</h3>
+                    <p class="settings-description">
+                        Export your current settings to a YAML file for backup, or import settings from a YAML file to migrate configurations.
+                    </p>
+
+                    <div style="display: flex; gap: 15px; margin-top: 20px;">
+                        <div style="flex: 1;">
+                            <h4 style="font-size: 14px; margin-bottom: 8px;">📤 Export Settings</h4>
+                            <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 10px;">
+                                Download all current settings as a YAML file for backup or migration to another instance.
+                            </p>
+                            <button onclick="exportSettings()" class="btn btn-secondary">
+                                📥 Download Settings YAML
+                            </button>
+                        </div>
+
+                        <div style="flex: 1;">
+                            <h4 style="font-size: 14px; margin-bottom: 8px;">📥 Import Settings</h4>
+                            <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 10px;">
+                                Upload a YAML configuration file to import settings. This will override current settings.
+                            </p>
+                            <input type="file" id="importFileInput" accept=".yaml,.yml" style="display: none;" onchange="handleImportFile(event)">
+                            <button onclick="document.getElementById('importFileInput').click()" class="btn btn-primary">
+                                📤 Upload Settings YAML
+                            </button>
+                            <span id="importStatus" class="save-status-inline"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-card" style="border: 2px solid #dc3545;">
+                    <h3 style="color: #dc3545;">⚠️ Danger Zone</h3>
+                    <p class="settings-description">
+                        These actions are irreversible and will permanently delete data from the database.
+                        Use with caution!
+                    </p>
+
+                    <div class="danger-zone-actions" style="display: grid; gap: 15px; margin-top: 20px;">
+                        <div class="danger-action" style="padding: 15px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px;">
+                            <h4 style="margin: 0 0 8px 0; font-size: 14px;">🔄 Reset All Settings</h4>
+                            <p style="margin: 0 0 10px 0; font-size: 13px; color: #856404;">
+                                Deletes all system settings from the database and reverts to defaults.
+                                Settings will be automatically re-imported from config.yaml on next page load if the file exists.
+                            </p>
+                            <button onclick="resetAllSettings()" class="btn btn-warning">Reset Settings to Defaults</button>
+                        </div>
+
+                        <div class="danger-action" style="padding: 15px; background: #f8d7da; border: 1px solid #dc3545; border-radius: 4px;">
+                            <h4 style="margin: 0 0 8px 0; font-size: 14px;">🗑️ Clear Container History</h4>
+                            <p style="margin: 0 0 10px 0; font-size: 13px; color: #721c24;">
+                                Deletes all historical container scan data and statistics (keeps current snapshot).
+                                This will free up database space but you'll lose historical trends and charts.
+                            </p>
+                            <button onclick="clearContainerHistory()" class="btn btn-danger">Clear Container History</button>
+                        </div>
+
+                        <div class="danger-action" style="padding: 15px; background: #f8d7da; border: 1px solid #dc3545; border-radius: 4px;">
+                            <h4 style="margin: 0 0 8px 0; font-size: 14px;">🛡️ Clear Vulnerability Scans</h4>
+                            <p style="margin: 0 0 10px 0; font-size: 13px; color: #721c24;">
+                                Deletes all vulnerability scan results and detailed CVE data.
+                                Images will be automatically rescanned on next scheduled scan.
+                            </p>
+                            <button onclick="clearVulnerabilities()" class="btn btn-danger">Clear All Vulnerability Data</button>
+                        </div>
+
+                        <div class="danger-action" style="padding: 15px; background: #f8d7da; border: 1px solid #dc3545; border-radius: 4px;">
+                            <h4 style="margin: 0 0 8px 0; font-size: 14px;">📋 Clear Activity Log</h4>
+                            <p style="margin: 0 0 10px 0; font-size: 13px; color: #721c24;">
+                                Deletes all lifecycle events, container state changes, and activity history.
+                                New events will be logged as they occur after clearing.
+                            </p>
+                            <button onclick="clearActivityLog()" class="btn btn-danger">Clear Activity Log</button>
+                        </div>
+
+                        <div class="danger-action" style="padding: 15px; background: #f8d7da; border: 1px solid #dc3545; border-radius: 4px;">
+                            <h4 style="margin: 0 0 8px 0; font-size: 14px;">💀 Nuclear Option: Clear Everything</h4>
+                            <p style="margin: 0 0 10px 0; font-size: 13px; color: #721c24;">
+                                <strong>Deletes ALL data:</strong> settings, container history, vulnerabilities, activity log, hosts, and notifications.
+                                This is like starting fresh with a brand new installation.
+                            </p>
+                            <button onclick="nuclearReset()" class="btn btn-danger" style="background-color: #8b0000;">⚠️ RESET EVERYTHING ⚠️</button>
                         </div>
                     </div>
                 </div>
@@ -1319,6 +1579,6 @@
 
     <script src="notifications.js?v=5"></script>
     <script src="onboarding.js?v=1"></script>
-    <script src="app.js?v=11"></script>
+    <script src="app.js?v=16"></script>
 </body>
 </html>

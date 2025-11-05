@@ -330,6 +330,31 @@ func (db *DB) initSchema() error {
 		value TEXT NOT NULL,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
+
+	CREATE TABLE IF NOT EXISTS system_settings (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		category TEXT NOT NULL,
+		key TEXT NOT NULL,
+		value TEXT NOT NULL,
+		data_type TEXT NOT NULL,
+		description TEXT,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(category, key)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_system_settings_category ON system_settings(category);
+
+	CREATE TABLE IF NOT EXISTS telemetry_endpoints (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL UNIQUE,
+		url TEXT NOT NULL,
+		enabled BOOLEAN NOT NULL DEFAULT 1,
+		api_key TEXT,
+		last_success TIMESTAMP,
+		last_error TEXT,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
 	`
 
 	if _, err := db.conn.Exec(schema); err != nil {
@@ -2232,4 +2257,50 @@ func (db *DB) GetAllPreferences() (map[string]string, error) {
 	}
 
 	return prefs, nil
+}
+
+// ======= DANGER ZONE METHODS =======
+
+// ClearOldContainerHistory deletes container history older than specified hours (0 = delete all history)
+func (db *DB) ClearOldContainerHistory(hoursToKeep int) (int64, error) {
+	var result sql.Result
+	var err error
+	
+	if hoursToKeep == 0 {
+		// Delete all historical data (keep only the most recent scan per container)
+		result, err = db.conn.Exec(`
+			DELETE FROM containers
+			WHERE id NOT IN (
+				SELECT id FROM containers c1
+				WHERE scanned_at = (
+					SELECT MAX(scanned_at)
+					FROM containers c2
+					WHERE c2.container_id = c1.container_id
+					AND c2.host_id = c1.host_id
+				)
+			)
+		`)
+	} else {
+		// Delete data older than specified hours
+		result, err = db.conn.Exec(`
+			DELETE FROM containers
+			WHERE scanned_at < datetime('now', '-' || ? || ' hours')
+		`, hoursToKeep)
+	}
+	
+	if err != nil {
+		return 0, fmt.Errorf("failed to clear container history: %w", err)
+	}
+	
+	deleted, _ := result.RowsAffected()
+	return deleted, nil
+}
+
+// ClearAllLifecycleEvents deletes all lifecycle events and activity history
+func (db *DB) ClearAllLifecycleEvents() error {
+	_, err := db.conn.Exec(`DELETE FROM lifecycle_events`)
+	if err != nil {
+		return fmt.Errorf("failed to clear lifecycle events: %w", err)
+	}
+	return nil
 }

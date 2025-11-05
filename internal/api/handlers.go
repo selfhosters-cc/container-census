@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/container-census/container-census/internal/auth"
-	"github.com/container-census/container-census/internal/config"
 	"github.com/container-census/container-census/internal/models"
 	"github.com/container-census/container-census/internal/notifications"
 	"github.com/container-census/container-census/internal/scanner"
@@ -28,14 +27,14 @@ type Server struct {
 	db                    *storage.DB
 	scanner               *scanner.Scanner
 	router                *mux.Router
-	configPath            string
 	telemetryScheduler    *telemetry.Scheduler
 	telemetryContext      context.Context
 	telemetryCancel       context.CancelFunc
 	telemetryMutex        sync.Mutex
 	scanInterval          int
 	authConfig            auth.Config
-	setScanIntervalFunc   func(int) // Callback to update scan interval
+	setScanIntervalFunc   func(int)   // Callback to update scan interval
+	reloadSettingsFunc    func() error // Callback to reload all settings
 	notificationService   *notifications.NotificationService
 	vulnScanner           VulnerabilityScanner
 	vulnScheduler         VulnerabilityScheduler
@@ -48,12 +47,11 @@ type TelemetryScheduler interface {
 }
 
 // New creates a new API server
-func New(db *storage.DB, scanner *scanner.Scanner, configPath string, scanInterval int, authConfig auth.Config) *Server {
+func New(db *storage.DB, scanner *scanner.Scanner, scanInterval int, authConfig auth.Config) *Server {
 	s := &Server{
 		db:           db,
 		scanner:      scanner,
 		router:       mux.NewRouter(),
-		configPath:   configPath,
 		scanInterval: scanInterval,
 		authConfig:   authConfig,
 	}
@@ -65,6 +63,11 @@ func New(db *storage.DB, scanner *scanner.Scanner, configPath string, scanInterv
 // SetScanIntervalCallback sets the callback function to update scan interval dynamically
 func (s *Server) SetScanIntervalCallback(callback func(int)) {
 	s.setScanIntervalFunc = callback
+}
+
+// SetReloadSettingsCallback sets the callback function to reload all settings
+func (s *Server) SetReloadSettingsCallback(callback func() error) {
+	s.reloadSettingsFunc = callback
 }
 
 // SetTelemetryScheduler sets the telemetry scheduler for on-demand submissions
@@ -96,12 +99,21 @@ func (s *Server) RestartTelemetry() error {
 		s.telemetryCancel = nil
 	}
 
-	// Load new config
-	cfg, _ := config.LoadOrDefault(s.configPath)
+	// Load settings from database
+	settings, err := s.db.LoadSystemSettings()
+	if err != nil {
+		return fmt.Errorf("failed to load system settings: %w", err)
+	}
+
+	// Load endpoints from database
+	endpoints, err := s.db.GetTelemetryEndpoints()
+	if err != nil {
+		return fmt.Errorf("failed to load telemetry endpoints: %w", err)
+	}
 
 	// Count enabled endpoints
 	enabledCount := 0
-	for _, ep := range cfg.Telemetry.Endpoints {
+	for _, ep := range endpoints {
 		if ep.Enabled {
 			enabledCount++
 		}
@@ -113,8 +125,14 @@ func (s *Server) RestartTelemetry() error {
 		return nil
 	}
 
+	// Create telemetry config from database
+	telemetryConfig := models.TelemetryConfig{
+		IntervalHours: settings.Telemetry.IntervalHours,
+		Endpoints:     endpoints,
+	}
+
 	// Create new scheduler
-	newScheduler, err := telemetry.NewScheduler(s.db, s.scanner, cfg.Telemetry, s.scanInterval)
+	newScheduler, err := telemetry.NewScheduler(s.db, s.scanner, telemetryConfig, s.scanInterval)
 	if err != nil {
 		return err
 	}
@@ -130,7 +148,7 @@ func (s *Server) RestartTelemetry() error {
 	// Start it in a goroutine
 	go newScheduler.Start(ctx)
 
-	log.Printf("Telemetry scheduler restarted with %d enabled endpoint(s) - interval: %dh", enabledCount, cfg.Telemetry.IntervalHours)
+	log.Printf("Telemetry scheduler restarted with %d enabled endpoint(s) - interval: %dh", enabledCount, settings.Telemetry.IntervalHours)
 	return nil
 }
 
@@ -188,20 +206,15 @@ func (s *Server) setupRoutes() {
 	// Reports endpoints
 	api.HandleFunc("/reports/changes", s.handleGetChangesReport).Methods("GET")
 
-	// Config endpoints
-	api.HandleFunc("/config", s.handleGetConfig).Methods("GET")
-	api.HandleFunc("/config/scanner", s.handleUpdateScanner).Methods("POST")
-	api.HandleFunc("/config/telemetry", s.handleUpdateTelemetry).Methods("POST")
-	api.HandleFunc("/config/telemetry/endpoints", s.handleGetTelemetryEndpoints).Methods("GET")
-	api.HandleFunc("/config/telemetry/endpoints", s.handleAddTelemetryEndpoint).Methods("POST")
-	api.HandleFunc("/config/telemetry/endpoints/{name}", s.handleUpdateTelemetryEndpoint).Methods("PUT")
-	api.HandleFunc("/config/telemetry/endpoints/{name}", s.handleDeleteTelemetryEndpoint).Methods("DELETE")
-
 	// Telemetry endpoints
 	api.HandleFunc("/telemetry/submit", s.handleSubmitTelemetry).Methods("POST")
 	api.HandleFunc("/telemetry/status", s.handleGetTelemetryStatus).Methods("GET")
 	api.HandleFunc("/telemetry/schedule", s.handleGetTelemetrySchedule).Methods("GET")
 	api.HandleFunc("/telemetry/reset-circuit-breaker/{name}", s.handleResetCircuitBreaker).Methods("POST")
+	api.HandleFunc("/telemetry/endpoints", s.handleGetTelemetryEndpoints).Methods("GET")
+	api.HandleFunc("/telemetry/endpoints", s.handleAddTelemetryEndpoint).Methods("POST")
+	api.HandleFunc("/telemetry/endpoints/{name}", s.handleUpdateTelemetryEndpoint).Methods("PUT")
+	api.HandleFunc("/telemetry/endpoints/{name}", s.handleDeleteTelemetryEndpoint).Methods("DELETE")
 	api.HandleFunc("/telemetry/debug-enabled", s.handleGetDebugEnabled).Methods("GET")
 	api.HandleFunc("/telemetry/test-endpoint", s.handleTestTelemetryEndpoint).Methods("POST")
 
@@ -239,6 +252,21 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/vulnerabilities/update-db", s.handleUpdateTrivyDB).Methods("POST")
 	api.HandleFunc("/vulnerabilities/settings", s.handleGetVulnerabilitySettings).Methods("GET")
 	api.HandleFunc("/vulnerabilities/settings", s.handleUpdateVulnerabilitySettings).Methods("PUT")
+
+	// Settings endpoints (new database-first configuration)
+	api.HandleFunc("/settings", s.handleGetSettings).Methods("GET")
+	api.HandleFunc("/settings", s.handleUpdateSettings).Methods("PUT")
+	api.HandleFunc("/settings/export", s.handleExportSettings).Methods("GET")
+	api.HandleFunc("/settings/import", s.handleImportSettings).Methods("POST")
+	api.HandleFunc("/settings/migration-status", s.handleGetMigrationStatus).Methods("GET")
+	api.HandleFunc("/settings/migration-ack", s.handleAcknowledgeMigration).Methods("POST")
+
+	// Danger Zone endpoints (destructive operations)
+	api.HandleFunc("/settings/reset", s.handleResetSettings).Methods("POST")
+	api.HandleFunc("/settings/clear-history", s.handleClearContainerHistory).Methods("POST")
+	api.HandleFunc("/settings/clear-vulnerabilities", s.handleClearVulnerabilities).Methods("POST")
+	api.HandleFunc("/settings/clear-activity", s.handleClearActivityLog).Methods("POST")
+	api.HandleFunc("/settings/nuclear-reset", s.handleNuclearReset).Methods("POST")
 
 	// User preferences endpoints
 	api.HandleFunc("/preferences", s.handleGetPreferences).Methods("GET")
@@ -1022,80 +1050,6 @@ func (s *Server) handlePruneImages(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleReloadConfig reloads configuration and syncs hosts
-func (s *Server) handleReloadConfig(w http.ResponseWriter, r *http.Request) {
-	log.Println("Reloading configuration...")
-
-	// Load config
-	cfg, _ := config.LoadOrDefault(s.configPath)
-
-	// Sync hosts from config
-	added := 0
-	updated := 0
-	errors := []string{}
-
-	for _, hc := range cfg.Hosts {
-		// Check if host exists by name
-		hosts, err := s.db.GetHosts()
-		if err != nil {
-			log.Printf("Failed to get hosts: %v", err)
-			errors = append(errors, err.Error())
-			continue
-		}
-
-		found := false
-		for _, existing := range hosts {
-			if existing.Name == hc.Name {
-				// Host exists, update if changed
-				if existing.Address != hc.Address || existing.Description != hc.Description {
-					existing.Address = hc.Address
-					existing.Description = hc.Description
-					if err := s.db.UpdateHost(existing); err != nil {
-						log.Printf("Failed to update host %s: %v", hc.Name, err)
-						errors = append(errors, "Failed to update "+hc.Name+": "+err.Error())
-					} else {
-						log.Printf("Updated host: %s", hc.Name)
-						updated++
-					}
-				}
-				found = true
-				break
-			}
-		}
-
-		if !found {
-			// Add new host
-			host := models.Host{
-				Name:        hc.Name,
-				Address:     hc.Address,
-				Description: hc.Description,
-				Enabled:     true,
-			}
-
-			id, err := s.db.AddHost(host)
-			if err != nil {
-				log.Printf("Failed to add host %s: %v", hc.Name, err)
-				errors = append(errors, "Failed to add "+hc.Name+": "+err.Error())
-			} else {
-				log.Printf("Added host: %s (ID: %d)", hc.Name, id)
-				added++
-			}
-		}
-	}
-
-	result := map[string]interface{}{
-		"message": "Configuration reloaded",
-		"added":   added,
-		"updated": updated,
-	}
-
-	if len(errors) > 0 {
-		result["errors"] = errors
-	}
-
-	respondJSON(w, http.StatusOK, result)
-}
-
 // handleSubmitTelemetry triggers an immediate telemetry submission
 func (s *Server) handleSubmitTelemetry(w http.ResponseWriter, r *http.Request) {
 	s.telemetryMutex.Lock()
@@ -1103,12 +1057,16 @@ func (s *Server) handleSubmitTelemetry(w http.ResponseWriter, r *http.Request) {
 	s.telemetryMutex.Unlock()
 
 	if scheduler == nil {
-		// Check if there are any enabled endpoints configured
-		cfg, _ := config.LoadOrDefault(s.configPath)
+		// Check if there are any enabled endpoints configured (load from database)
+		endpoints, err := s.db.GetTelemetryEndpoints()
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "Failed to load telemetry endpoints: "+err.Error())
+			return
+		}
 
 		// Count enabled endpoints
 		enabledCount := 0
-		for _, ep := range cfg.Telemetry.Endpoints {
+		for _, ep := range endpoints {
 			if ep.Enabled {
 				enabledCount++
 			}
@@ -1153,131 +1111,18 @@ func (s *Server) handleSubmitTelemetry(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleGetConfig returns the current configuration
-func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
-	cfg, _ := config.LoadOrDefault(s.configPath)
-	respondJSON(w, http.StatusOK, cfg)
-}
-
-// handleUpdateScanner updates scanner settings
-func (s *Server) handleUpdateScanner(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		IntervalSeconds int `json:"interval_seconds"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
-		return
-	}
-
-	if req.IntervalSeconds < 30 {
-		respondError(w, http.StatusBadRequest, "Interval must be at least 30 seconds")
-		return
-	}
-
-	// Load current config
-	cfg, _ := config.LoadOrDefault(s.configPath)
-
-	// Update scan interval
-	cfg.Scanner.IntervalSeconds = req.IntervalSeconds
-
-	// Save configuration
-	if err := config.Save(s.configPath, cfg); err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to save configuration: "+err.Error())
-		return
-	}
-
-	log.Printf("Scanner interval updated to %d seconds", req.IntervalSeconds)
-
-	// Update the scanner's interval in memory
-	s.scanInterval = req.IntervalSeconds
-
-	// If callback is set, notify the background scanner to update its ticker
-	if s.setScanIntervalFunc != nil {
-		s.setScanIntervalFunc(req.IntervalSeconds)
-		log.Printf("Notified background scanner of interval change")
-	}
-
-	respondJSON(w, http.StatusOK, map[string]string{
-		"message": "Scanner interval updated successfully. Will take effect on next scan cycle.",
-	})
-}
-
-// handleUpdateTelemetry updates telemetry settings
-func (s *Server) handleUpdateTelemetry(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Enabled           bool `json:"enabled"`
-		IntervalHours     int  `json:"interval_hours"`
-		CommunityEndpoint bool `json:"community_endpoint"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
-		return
-	}
-
-	// Load current config
-	cfg, _ := config.LoadOrDefault(s.configPath)
-
-	// Update interval
-	if req.IntervalHours > 0 {
-		cfg.Telemetry.IntervalHours = req.IntervalHours
-	}
-
-	// Update or add community endpoint
-	communityURL := "https://cc-telemetry.selfhosters.cc/api/ingest"
-	foundCommunity := false
-
-	for i := range cfg.Telemetry.Endpoints {
-		if cfg.Telemetry.Endpoints[i].URL == communityURL {
-			cfg.Telemetry.Endpoints[i].Enabled = req.CommunityEndpoint
-			foundCommunity = true
-			break
-		}
-	}
-
-	if !foundCommunity && req.CommunityEndpoint {
-		// Add community endpoint
-		cfg.Telemetry.Endpoints = append(cfg.Telemetry.Endpoints, models.TelemetryEndpoint{
-			Name:    "community",
-			URL:     communityURL,
-			Enabled: true,
-		})
-	}
-
-	// Save configuration (write to config file)
-	if err := config.Save(s.configPath, cfg); err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to save configuration: "+err.Error())
-		return
-	}
-
-	// Log the update for server logs
-	log.Printf("Telemetry settings updated - interval: %dh, community: %v",
-		cfg.Telemetry.IntervalHours, req.CommunityEndpoint)
-
-	// Restart telemetry scheduler to apply changes immediately
-	if err := s.RestartTelemetry(); err != nil {
-		log.Printf("Warning: Failed to restart telemetry: %v", err)
-		respondJSON(w, http.StatusOK, map[string]string{
-			"message": "Settings saved but failed to restart telemetry: " + err.Error(),
-			"warning": "true",
-		})
-		return
-	}
-
-	respondJSON(w, http.StatusOK, map[string]string{
-		"message": "Telemetry settings updated and applied successfully",
-	})
-}
-
 // Telemetry Endpoint Management Handlers
 
 // handleGetTelemetryEndpoints returns all configured telemetry endpoints
 func (s *Server) handleGetTelemetryEndpoints(w http.ResponseWriter, r *http.Request) {
-	cfg, _ := config.LoadOrDefault(s.configPath)
+	// Load from database
+	endpoints, err := s.db.GetTelemetryEndpoints()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to load endpoints: "+err.Error())
+		return
+	}
 
 	// Return empty array instead of null if no endpoints
-	endpoints := cfg.Telemetry.Endpoints
 	if endpoints == nil {
 		endpoints = []models.TelemetryEndpoint{}
 	}
@@ -1303,23 +1148,23 @@ func (s *Server) handleAddTelemetryEndpoint(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Load current config
-	cfg, _ := config.LoadOrDefault(s.configPath)
-
 	// Check if endpoint with same name already exists
-	for _, ep := range cfg.Telemetry.Endpoints {
+	endpoints, err := s.db.GetTelemetryEndpoints()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to load endpoints: "+err.Error())
+		return
+	}
+
+	for _, ep := range endpoints {
 		if ep.Name == endpoint.Name {
 			respondError(w, http.StatusConflict, "Endpoint with this name already exists")
 			return
 		}
 	}
 
-	// Add the new endpoint
-	cfg.Telemetry.Endpoints = append(cfg.Telemetry.Endpoints, endpoint)
-
-	// Save configuration
-	if err := config.Save(s.configPath, cfg); err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to save configuration: "+err.Error())
+	// Save to database
+	if err := s.db.SaveTelemetryEndpoint(&endpoint); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to save endpoint: "+err.Error())
 		return
 	}
 
@@ -1346,28 +1191,33 @@ func (s *Server) handleUpdateTelemetryEndpoint(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Load current config
-	cfg, _ := config.LoadOrDefault(s.configPath)
+	// Load endpoints from database
+	endpoints, err := s.db.GetTelemetryEndpoints()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to load endpoints: "+err.Error())
+		return
+	}
 
-	// Find and update the endpoint
-	found := false
-	for i := range cfg.Telemetry.Endpoints {
-		if cfg.Telemetry.Endpoints[i].Name == name {
-			// ONLY update the enabled field - don't touch anything else
-			cfg.Telemetry.Endpoints[i].Enabled = updatedEndpoint.Enabled
-			found = true
+	// Find the endpoint
+	var existingEndpoint *models.TelemetryEndpoint
+	for i := range endpoints {
+		if endpoints[i].Name == name {
+			existingEndpoint = &endpoints[i]
 			break
 		}
 	}
 
-	if !found {
+	if existingEndpoint == nil {
 		respondError(w, http.StatusNotFound, "Telemetry endpoint not found")
 		return
 	}
 
-	// Save configuration
-	if err := config.Save(s.configPath, cfg); err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to save configuration: "+err.Error())
+	// Update the enabled field - preserve other fields from existing endpoint
+	existingEndpoint.Enabled = updatedEndpoint.Enabled
+
+	// Save to database
+	if err := s.db.SaveTelemetryEndpoint(existingEndpoint); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to save endpoint: "+err.Error())
 		return
 	}
 
@@ -1388,30 +1238,9 @@ func (s *Server) handleDeleteTelemetryEndpoint(w http.ResponseWriter, r *http.Re
 	vars := mux.Vars(r)
 	name := vars["name"]
 
-	// Load current config
-	cfg, _ := config.LoadOrDefault(s.configPath)
-
-	// Find and remove the endpoint
-	found := false
-	newEndpoints := []models.TelemetryEndpoint{}
-	for _, ep := range cfg.Telemetry.Endpoints {
-		if ep.Name == name {
-			found = true
-			continue // Skip this endpoint (delete it)
-		}
-		newEndpoints = append(newEndpoints, ep)
-	}
-
-	if !found {
-		respondError(w, http.StatusNotFound, "Telemetry endpoint not found")
-		return
-	}
-
-	cfg.Telemetry.Endpoints = newEndpoints
-
-	// Save configuration
-	if err := config.Save(s.configPath, cfg); err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to save configuration: "+err.Error())
+	// Delete from database
+	if err := s.db.DeleteTelemetryEndpoint(name); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to delete endpoint: "+err.Error())
 		return
 	}
 
@@ -1429,33 +1258,14 @@ func (s *Server) handleDeleteTelemetryEndpoint(w http.ResponseWriter, r *http.Re
 
 // handleGetTelemetryStatus returns the telemetry submission status for all endpoints
 func (s *Server) handleGetTelemetryStatus(w http.ResponseWriter, r *http.Request) {
-	// Load current config to get all endpoints
-	cfg, _ := config.LoadOrDefault(s.configPath)
-
-	// Get telemetry statuses from database
-	statuses, err := s.db.GetAllTelemetryStatuses()
+	// Load all endpoints from database (database-first approach)
+	endpoints, err := s.db.GetTelemetryEndpoints()
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to get telemetry status: "+err.Error())
+		respondError(w, http.StatusInternalServerError, "Failed to get telemetry endpoints: "+err.Error())
 		return
 	}
 
-	// Merge config endpoints with status data
-	result := make([]models.TelemetryEndpoint, 0, len(cfg.Telemetry.Endpoints))
-	for _, endpoint := range cfg.Telemetry.Endpoints {
-		// Copy endpoint from config
-		ep := endpoint
-
-		// Merge with status from database if available
-		if status, exists := statuses[endpoint.Name]; exists {
-			ep.LastSuccess = status.LastSuccess
-			ep.LastFailure = status.LastFailure
-			ep.LastFailureReason = status.LastFailureReason
-		}
-
-		result = append(result, ep)
-	}
-
-	respondJSON(w, http.StatusOK, result)
+	respondJSON(w, http.StatusOK, endpoints)
 }
 
 // handleResetCircuitBreaker clears the failure status for a telemetry endpoint (resets circuit breaker)
@@ -1463,12 +1273,16 @@ func (s *Server) handleResetCircuitBreaker(w http.ResponseWriter, r *http.Reques
 	vars := mux.Vars(r)
 	name := vars["name"]
 
-	// Load current config to verify the endpoint exists
-	cfg, _ := config.LoadOrDefault(s.configPath)
+	// Load endpoints from database to verify the endpoint exists
+	endpoints, err := s.db.GetTelemetryEndpoints()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to load endpoints: "+err.Error())
+		return
+	}
 
-	// Check if endpoint exists in config
+	// Check if endpoint exists in database
 	found := false
-	for _, ep := range cfg.Telemetry.Endpoints {
+	for _, ep := range endpoints {
 		if ep.Name == name {
 			found = true
 			break
@@ -1574,18 +1388,29 @@ func (s *Server) handleTestTelemetryEndpoint(w http.ResponseWriter, r *http.Requ
 // handleGetTelemetrySchedule returns information about the next scheduled telemetry submission
 func (s *Server) handleGetTelemetrySchedule(w http.ResponseWriter, r *http.Request) {
 	if s.telemetryScheduler == nil {
-		// No scheduler running - return basic info from config
-		cfg, _ := config.LoadOrDefault(s.configPath)
+		// No scheduler running - return basic info from database
+		endpoints, err := s.db.GetTelemetryEndpoints()
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "Failed to load telemetry endpoints: "+err.Error())
+			return
+		}
+
 		enabledCount := 0
-		for _, ep := range cfg.Telemetry.Endpoints {
+		for _, ep := range endpoints {
 			if ep.Enabled {
 				enabledCount++
 			}
 		}
 
+		settings, err := s.db.LoadSystemSettings()
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "Failed to load settings: "+err.Error())
+			return
+		}
+
 		respondJSON(w, http.StatusOK, map[string]interface{}{
 			"enabled_endpoints": enabledCount,
-			"interval_hours":    cfg.Telemetry.IntervalHours,
+			"interval_hours":    settings.Telemetry.IntervalHours,
 			"next_submission":   nil,
 			"message":           "Telemetry scheduler not running",
 		})

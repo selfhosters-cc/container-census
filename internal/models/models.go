@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Host represents a Docker host to scan
 type Host struct {
@@ -222,6 +225,59 @@ type TelemetryEndpoint struct {
 	LastSuccess       *time.Time `yaml:"-" json:"last_success,omitempty"`             // Last successful submission
 	LastFailure       *time.Time `yaml:"-" json:"last_failure,omitempty"`             // Last failed submission
 	LastFailureReason string     `yaml:"-" json:"last_failure_reason,omitempty"`      // Error message from last failure
+}
+
+// SystemSettings holds all database-stored configuration
+type SystemSettings struct {
+	Scanner      ScannerSettings      `json:"scanner"`
+	Telemetry    TelemetrySettings    `json:"telemetry"`
+	Notification NotificationSettings `json:"notification"`
+	UpdatedAt    time.Time            `json:"updated_at"`
+}
+
+// ScannerSettings contains runtime scanner configuration
+type ScannerSettings struct {
+	IntervalSeconds int `json:"interval_seconds" validate:"min=10,max=86400"`
+	TimeoutSeconds  int `json:"timeout_seconds" validate:"min=5,max=300"`
+}
+
+// TelemetrySettings contains runtime telemetry configuration
+type TelemetrySettings struct {
+	IntervalHours int `json:"interval_hours" validate:"min=1,max=720"`
+}
+
+// NotificationSettings contains runtime notification configuration
+type NotificationSettings struct {
+	RateLimitMax           int `json:"rate_limit_max" validate:"min=1,max=1000"`
+	RateLimitBatchInterval int `json:"rate_limit_batch_interval" validate:"min=60,max=3600"`
+	ThresholdDuration      int `json:"threshold_duration" validate:"min=30,max=600"`
+	CooldownPeriod         int `json:"cooldown_period" validate:"min=60,max=3600"`
+}
+
+// Validate validates system settings
+func (s *SystemSettings) Validate() error {
+	if s.Scanner.IntervalSeconds < 10 || s.Scanner.IntervalSeconds > 86400 {
+		return fmt.Errorf("scanner interval must be between 10 and 86400 seconds")
+	}
+	if s.Scanner.TimeoutSeconds < 5 || s.Scanner.TimeoutSeconds > 300 {
+		return fmt.Errorf("scanner timeout must be between 5 and 300 seconds")
+	}
+	if s.Telemetry.IntervalHours < 1 || s.Telemetry.IntervalHours > 720 {
+		return fmt.Errorf("telemetry interval must be between 1 and 720 hours")
+	}
+	if s.Notification.RateLimitMax < 1 || s.Notification.RateLimitMax > 1000 {
+		return fmt.Errorf("notification rate limit must be between 1 and 1000")
+	}
+	if s.Notification.RateLimitBatchInterval < 60 || s.Notification.RateLimitBatchInterval > 3600 {
+		return fmt.Errorf("notification batch interval must be between 60 and 3600 seconds")
+	}
+	if s.Notification.ThresholdDuration < 30 || s.Notification.ThresholdDuration > 600 {
+		return fmt.Errorf("notification threshold duration must be between 30 and 600 seconds")
+	}
+	if s.Notification.CooldownPeriod < 60 || s.Notification.CooldownPeriod > 3600 {
+		return fmt.Errorf("notification cooldown period must be between 60 and 3600 seconds")
+	}
+	return nil
 }
 
 // TelemetryReport contains anonymous usage statistics

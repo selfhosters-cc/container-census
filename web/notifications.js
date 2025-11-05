@@ -149,7 +149,8 @@ async function loadNotifications(limit = 100) {
             throw new Error('Failed to load notifications');
         }
 
-        notifications = await response.json();
+        const data = await response.json();
+        notifications = Array.isArray(data) ? data : [];
         console.log('Loaded notifications:', notifications.length, 'notifications');
         unreadCount = notifications.filter(n => !n.read).length;
         updateNotificationBadge();

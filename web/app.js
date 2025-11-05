@@ -6,7 +6,7 @@ let images = {};
 let graphData = null;
 let cy = null; // Cytoscape instance
 let autoRefreshInterval = null;
-let currentTab = 'containers';
+let currentTab = 'dashboard';
 let lifecycles = [];
 let lastRefreshTime = null;
 let lastRefreshInterval = null;
@@ -19,6 +19,19 @@ let vulnerabilitySummary = null; // Cache overall summary
 // Auth credentials (empty if auth is disabled)
 let authUsername = '';
 let authPassword = '';
+
+// Helper function for authenticated fetch requests
+async function fetchWithAuth(url, options = {}) {
+    const headers = {
+        ...options.headers,
+        'Authorization': 'Basic ' + btoa(authUsername + ':' + authPassword)
+    };
+
+    return fetch(url, {
+        ...options,
+        headers
+    });
+}
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -48,11 +61,19 @@ function initializeRouting() {
     const hash = window.location.hash.slice(1); // Remove #
     if (hash && hash.startsWith('/')) {
         const tab = hash.slice(1); // Remove leading /
-        const validTabs = ['containers', 'monitoring', 'images', 'security', 'graph', 'hosts', 'history', 'activity', 'reports', 'notifications', 'settings'];
+        const validTabs = ['dashboard', 'containers', 'monitoring', 'images', 'security', 'graph', 'hosts', 'history', 'activity', 'reports', 'notifications', 'settings'];
         if (validTabs.includes(tab)) {
             currentTab = tab;
             switchTab(tab, false); // Don't push to history on initial load
+        } else {
+            // Invalid hash, default to dashboard
+            currentTab = 'dashboard';
+            switchTab('dashboard', true);
         }
+    } else {
+        // No hash or invalid format, default to dashboard
+        currentTab = 'dashboard';
+        switchTab('dashboard', true);
     }
 
     // Listen for hash changes (back/forward buttons)
@@ -60,7 +81,7 @@ function initializeRouting() {
         const hash = window.location.hash.slice(1);
         if (hash && hash.startsWith('/')) {
             const tab = hash.slice(1);
-            const validTabs = ['containers', 'monitoring', 'images', 'security', 'graph', 'hosts', 'history', 'activity', 'reports', 'notifications', 'settings'];
+            const validTabs = ['dashboard', 'containers', 'monitoring', 'images', 'security', 'graph', 'hosts', 'history', 'activity', 'reports', 'notifications', 'settings'];
             if (validTabs.includes(tab)) {
                 currentTab = tab;
                 switchTab(tab, false); // Don't push to history on hash change
@@ -265,11 +286,17 @@ function setupKeyboardShortcuts() {
         // Tab switching with number keys
         if ((e.key >= '1' && e.key <= '9') || e.key === '0') {
             e.preventDefault();
-            const tabs = ['containers', 'monitoring', 'images', 'graph', 'hosts', 'history', 'activity', 'reports', 'notifications', 'settings'];
+            const tabs = ['dashboard', 'containers', 'monitoring', 'images', 'security', 'graph', 'hosts', 'history', 'activity', 'reports'];
             const tabIndex = e.key === '0' ? 9 : parseInt(e.key) - 1;
             if (tabs[tabIndex]) {
                 switchTab(tabs[tabIndex]);
             }
+        }
+
+        // 'N' for notifications
+        if (e.key === 'n' || e.key === 'N') {
+            e.preventDefault();
+            switchTab('notifications');
         }
 
         // '/' to focus search
@@ -301,6 +328,12 @@ function setupEventListeners() {
     document.getElementById('scanBtn').addEventListener('click', triggerScan);
     document.getElementById('submitTelemetryBtn').addEventListener('click', submitTelemetry);
     document.getElementById('autoRefresh').addEventListener('change', handleAutoRefreshToggle);
+
+    // Dashboard scan button
+    const dashboardScanBtn = document.getElementById('dashboardScanBtn');
+    if (dashboardScanBtn) {
+        dashboardScanBtn.addEventListener('click', triggerScan);
+    }
 
     const searchInput = document.getElementById('searchInput');
     const hostFilter = document.getElementById('hostFilter');
@@ -478,7 +511,9 @@ function switchTab(tab, updateHistory = true) {
     }
 
     // Auto-refresh data when switching to a tab
-    if (tab === 'containers') {
+    if (tab === 'dashboard') {
+        loadDashboard();
+    } else if (tab === 'containers') {
         loadContainers();
     } else if (tab === 'monitoring') {
         loadMonitoringData();
@@ -955,7 +990,8 @@ async function loadData() {
 async function loadHosts() {
     try {
         const response = await fetch('/api/hosts');
-        hosts = await response.json();
+        const data = await response.json();
+        hosts = Array.isArray(data) ? data : [];
     } catch (error) {
         console.error('Error loading hosts:', error);
         hosts = [];
@@ -965,10 +1001,11 @@ async function loadHosts() {
 async function loadContainers() {
     try {
         const response = await fetch('/api/containers');
-        const allContainers = await response.json() || [];
+        const data = await response.json();
+        const allContainers = Array.isArray(data) ? data : [];
 
         // Filter to only show containers from enabled hosts
-        const enabledHostIds = new Set(hosts.filter(h => h.enabled).map(h => h.id));
+        const enabledHostIds = new Set((hosts || []).filter(h => h.enabled).map(h => h.id));
         containers = allContainers.filter(c => enabledHostIds.has(c.host_id));
 
         // Only render/filter if we're on the containers tab
@@ -1011,13 +1048,15 @@ async function loadActivityLog() {
     try {
         const activityType = document.getElementById('activityTypeFilter')?.value || 'all';
         const response = await fetch(`/api/activity-log?limit=50&type=${activityType}`);
-        activities = await response.json() || [];
+        const data = await response.json();
+        activities = Array.isArray(data) ? data : [];
         renderActivityLog(activities);
         updateStats();
         updateNavigationBadges();
         markRefresh();
     } catch (error) {
         console.error('Error loading activity log:', error);
+        activities = [];
         document.getElementById('activityLogBody').innerHTML =
             '<tr><td colspan="6" class="error">Failed to load activity log</td></tr>';
     }
@@ -1705,14 +1744,18 @@ async function deleteHost(hostId, hostName) {
 }
 
 function updateStats() {
-    document.getElementById('totalHosts').textContent = hosts.length;
-    document.getElementById('totalContainers').textContent = containers.length;
+    const safeHosts = hosts || [];
+    const safeContainers = containers || [];
+    const safeActivities = activities || [];
 
-    const running = containers.filter(c => c.state === 'running').length;
+    document.getElementById('totalHosts').textContent = safeHosts.length;
+    document.getElementById('totalContainers').textContent = safeContainers.length;
+
+    const running = safeContainers.filter(c => c.state === 'running').length;
     document.getElementById('runningContainers').textContent = running;
 
     // Find most recent scan activity
-    const scanActivities = activities.filter(a => a.type === 'scan');
+    const scanActivities = safeActivities.filter(a => a.type === 'scan');
     if (scanActivities.length > 0) {
         const lastScan = new Date(scanActivities[0].timestamp);
         document.getElementById('lastScan').textContent = formatTimeAgo(lastScan);
@@ -2274,16 +2317,15 @@ async function handleAddAgent(e) {
 // Settings Management
 async function loadTelemetrySettings() {
     try {
-        // Get current config to load frequency
-        const response = await fetch('/api/config');
-        const config = await response.json();
+        // Load from new database-first settings API
+        const response = await fetch('/api/settings');
+        const settings = await response.json();
 
-        // API returns IntervalHours (capital I) not interval_hours
-        const intervalHours = config.Telemetry?.IntervalHours || 168;
+        const intervalHours = settings.telemetry?.interval_hours || 168;
         const dropdown = document.getElementById('telemetryFrequency');
         if (dropdown) {
             dropdown.value = intervalHours.toString();
-            console.log('Loaded telemetry frequency:', intervalHours, 'Set dropdown to:', dropdown.value);
+            console.log('Loaded telemetry frequency from database:', intervalHours, 'hours');
         }
     } catch (error) {
         console.error('Failed to load telemetry settings:', error);
@@ -2292,14 +2334,15 @@ async function loadTelemetrySettings() {
 
 async function loadScannerSettings() {
     try {
-        const response = await fetch('/api/config');
-        const config = await response.json();
+        // Load from new database-first settings API
+        const response = await fetch('/api/settings');
+        const settings = await response.json();
 
-        const intervalSeconds = config.scanner?.interval_seconds || 300;
+        const intervalSeconds = settings.scanner?.interval_seconds || 300;
         const dropdown = document.getElementById('scanInterval');
         if (dropdown) {
             dropdown.value = intervalSeconds.toString();
-            console.log('Loaded scanner interval:', intervalSeconds, 'seconds');
+            console.log('Loaded scanner interval from database:', intervalSeconds, 'seconds');
         }
     } catch (error) {
         console.error('Failed to load scanner settings:', error);
@@ -2314,18 +2357,37 @@ async function saveScanInterval() {
     status.className = 'save-status-inline saving';
 
     try {
-        const response = await fetch('/api/config/scanner', {
-            method: 'POST',
+        // Load current settings first
+        const currentResponse = await fetch('/api/settings');
+        const currentSettings = await currentResponse.json();
+
+        // Update only the scanner interval, preserve other settings
+        const updatedSettings = {
+            scanner: {
+                interval_seconds: intervalSeconds,
+                timeout_seconds: currentSettings.scanner?.timeout_seconds || 30
+            },
+            telemetry: {
+                interval_hours: currentSettings.telemetry?.interval_hours || 168
+            },
+            notification: currentSettings.notification || {
+                rate_limit_max: 100,
+                rate_limit_batch_interval: 600,
+                threshold_duration: 120,
+                cooldown_period: 300
+            }
+        };
+
+        const response = await fetch('/api/settings', {
+            method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                interval_seconds: intervalSeconds
-            })
+            body: JSON.stringify(updatedSettings)
         });
 
         if (response.ok) {
-            status.textContent = '✓ Saved';
+            status.textContent = '✓ Saved & Reloaded';
             status.className = 'save-status-inline success';
-            showNotification('Scan interval updated successfully', 'success');
+            showNotification('Scan interval updated successfully (hot-reloaded)', 'success');
         } else {
             const error = await response.json();
             status.textContent = '✗ Failed';
@@ -2352,38 +2414,47 @@ async function saveTelemetryFrequency() {
     status.className = 'save-status-inline saving';
 
     try {
-        // First, get current config to preserve community endpoint state
-        const configResponse = await fetch('/api/config');
-        const config = await configResponse.json();
+        // Load current settings first
+        const currentResponse = await fetch('/api/settings');
+        const currentSettings = await currentResponse.json();
 
-        const communityEndpoint = config.telemetry?.endpoints?.find(e =>
-            e.url === 'https://cc-telemetry.selfhosters.cc/api/ingest'
-        );
-        const isCommunityEnabled = communityEndpoint ? communityEndpoint.enabled : false;
+        // Update only the telemetry interval, preserve other settings
+        const updatedSettings = {
+            scanner: {
+                interval_seconds: currentSettings.scanner?.interval_seconds || 300,
+                timeout_seconds: currentSettings.scanner?.timeout_seconds || 30
+            },
+            telemetry: {
+                interval_hours: intervalHours
+            },
+            notification: currentSettings.notification || {
+                rate_limit_max: 100,
+                rate_limit_batch_interval: 600,
+                threshold_duration: 120,
+                cooldown_period: 300
+            }
+        };
 
-        // Now save with preserved community state
-        const response = await fetch('/api/config/telemetry', {
-            method: 'POST',
+        const response = await fetch('/api/settings', {
+            method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                interval_hours: intervalHours,
-                community_endpoint: isCommunityEnabled  // Preserve current state
-            })
+            body: JSON.stringify(updatedSettings)
         });
 
         if (response.ok) {
-            status.textContent = '✓ Saved';
+            status.textContent = '✓ Saved & Reloaded';
             status.className = 'save-status-inline success';
-            showNotification('Submission frequency updated successfully', 'success');
+            showNotification('Telemetry frequency updated successfully (hot-reloaded)', 'success');
         } else {
             const error = await response.json();
             status.textContent = '✗ Failed';
             status.className = 'save-status-inline error';
+            showNotification('Failed to update telemetry frequency: ' + (error.error || 'Unknown error'), 'error');
         }
     } catch (error) {
         status.textContent = '✗ Error';
         status.className = 'save-status-inline error';
-        console.error('Failed to save frequency:', error);
+        console.error('Failed to save telemetry frequency:', error);
     }
 
     setTimeout(() => {
@@ -2673,7 +2744,7 @@ async function addCollector() {
     }
 
     try {
-        const response = await fetch('/api/config/telemetry/endpoints', {
+        const response = await fetch('/api/telemetry/endpoints', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(endpoint)
@@ -2714,7 +2785,7 @@ async function addCollector() {
 
 async function toggleCollector(name, enabled) {
     try {
-        const response = await fetch(`/api/config/telemetry/endpoints/${encodeURIComponent(name)}`, {
+        const response = await fetch(`/api/telemetry/endpoints/${encodeURIComponent(name)}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ enabled })
@@ -2738,7 +2809,7 @@ async function deleteCollector(name) {
     }
 
     try {
-        const response = await fetch(`/api/config/telemetry/endpoints/${encodeURIComponent(name)}`, {
+        const response = await fetch(`/api/telemetry/endpoints/${encodeURIComponent(name)}`, {
             method: 'DELETE'
         });
 
@@ -4668,18 +4739,7 @@ async function preloadVulnerabilityScans() {
 }
 
 // Fetch vulnerability summary (all images)
-async function loadVulnerabilitySummary() {
-    try {
-        const response = await fetch('/api/vulnerabilities/summary');
-        if (response.ok) {
-            vulnerabilitySummary = await response.json();
-            return vulnerabilitySummary;
-        }
-    } catch (error) {
-        console.error('Error fetching vulnerability summary:', error);
-    }
-    return null;
-}
+// Note: loadVulnerabilitySummary() is defined later in the file with security-enabled check
 
 // Generate vulnerability badge HTML
 function getVulnerabilityBadgeHTML(scan) {
@@ -5720,5 +5780,739 @@ function closeHelpMenu() {
     const helpDropdown = document.getElementById('helpDropdown');
     if (helpDropdown) {
         helpDropdown.classList.remove('show');
+    }
+}
+
+
+// ===== DASHBOARD FUNCTIONS =====
+
+async function loadDashboard() {
+    try {
+        // Load all required data in parallel with individual error handling
+        const results = await Promise.allSettled([
+            loadContainers(),
+            loadHosts(),
+            loadVulnerabilitySummary()
+        ]);
+
+        // Log any failures but don't stop rendering
+        results.forEach((result, index) => {
+            if (result.status === 'rejected') {
+                const names = ['loadContainers', 'loadHosts', 'loadVulnerabilitySummary'];
+                console.error(`${names[index]} failed:`, result.reason);
+            }
+        });
+
+        // Render all dashboard sections (await async ones to catch errors)
+        renderDashboardMetrics();
+        renderDashboardHostStatus();
+        renderDashboardResourceStatus();
+        await renderDashboardRecentActivity();
+        await renderDashboardSecurity();
+        await renderDashboardTelemetry();
+
+        markRefresh();
+    } catch (error) {
+        console.error('Error loading dashboard:', error);
+        showToast('Error', 'Failed to load dashboard data', 'error');
+    }
+}
+
+function renderDashboardMetrics() {
+    const safeHosts = hosts || [];
+    const safeContainers = containers || [];
+
+    // Total hosts
+    const totalHosts = safeHosts.length;
+    document.getElementById('dashTotalHosts').textContent = totalHosts;
+
+    // Running containers
+    const runningContainers = safeContainers.filter(c => c.state === 'running').length;
+    document.getElementById('dashRunningContainers').textContent = runningContainers;
+
+    // Total containers
+    const totalContainers = safeContainers.length;
+    document.getElementById('dashTotalContainers').textContent = totalContainers;
+}
+
+function renderDashboardHostStatus() {
+    const container = document.getElementById('dashHostStatus');
+    const safeHosts = hosts || [];
+
+    if (safeHosts.length === 0) {
+        container.innerHTML = '<p class="text-secondary">No hosts configured. <a href="#" onclick="switchTab(\'hosts\', true)">Add a host</a> to get started.</p>';
+        return;
+    }
+
+    // Separate local host from agents
+    const localHost = safeHosts.find(h => h.host_type === 'unix');
+    const agents = safeHosts.filter(h => h.host_type === 'agent');
+
+    // Agent status counts
+    const onlineAgents = agents.filter(h => h.agent_status === 'online').length;
+    const offlineAgents = agents.filter(h => h.agent_status === 'offline' || h.agent_status === 'auth_failed').length;
+    const unknownAgents = agents.filter(h => h.agent_status === 'unknown').length;
+
+    let html = '<div style="display: flex; flex-direction: column; gap: 1rem;">';
+
+    // Local host status
+    if (localHost) {
+        const isOnline = localHost.enabled !== false; // Local host is online if enabled
+        html += `
+            <div>
+                <div style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 0.5rem;">Local Host</div>
+                <div class="status-indicator ${isOnline ? 'online' : 'offline'}">
+                    <span style="width: 8px; height: 8px; background: currentColor; border-radius: 50%; display: inline-block;"></span>
+                    <span>${isOnline ? 'Online' : 'Offline'}</span>
+                </div>
+            </div>
+        `;
+    }
+
+    // Agents status
+    if (agents.length > 0 || localHost) {
+        html += `<div style="border-top: 1px solid var(--border); padding-top: 0.5rem;">`;
+    }
+
+    html += `<div style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 0.5rem;">Agents</div>`;
+
+    if (agents.length === 0) {
+        html += `<div class="text-secondary" style="font-size: 0.875rem;">0 agents configured</div>`;
+    } else {
+        // Show online agents
+        if (onlineAgents > 0) {
+            html += `
+                <div class="status-indicator online">
+                    <span style="width: 8px; height: 8px; background: currentColor; border-radius: 50%; display: inline-block;"></span>
+                    <span>${onlineAgents} Online</span>
+                </div>
+            `;
+        }
+
+        // Show offline agents
+        if (offlineAgents > 0) {
+            html += `
+                <div class="status-indicator offline">
+                    <span style="width: 8px; height: 8px; background: currentColor; border-radius: 50%; display: inline-block;"></span>
+                    <span>${offlineAgents} Offline</span>
+                </div>
+            `;
+        }
+
+        // Show unknown agents
+        if (unknownAgents > 0) {
+            html += `
+                <div class="status-indicator warning">
+                    <span style="width: 8px; height: 8px; background: currentColor; border-radius: 50%; display: inline-block;"></span>
+                    <span>${unknownAgents} Unknown</span>
+                </div>
+            `;
+        }
+
+        // If all agents are online, show compact version
+        if (offlineAgents === 0 && unknownAgents === 0 && onlineAgents === agents.length) {
+            // Already showing the online count above
+        }
+    }
+
+    if (agents.length > 0 || localHost) {
+        html += `</div>`;
+    }
+
+    html += `
+            <div style="margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--border);">
+                <button onclick="switchTab('hosts', true)" class="btn btn-sm btn-secondary" style="width: 100%;">
+                    Manage Hosts
+                </button>
+            </div>
+        </div>
+    `;
+
+    container.innerHTML = html;
+}
+
+async function renderDashboardSecurity() {
+    const container = document.getElementById('dashSecurityContent');
+    const toggle = document.getElementById('dashSecurityEnabled');
+
+    try {
+        // Load vulnerability settings to check if enabled
+        const settingsResponse = await fetchWithAuth('/api/vulnerabilities/settings');
+        if (!settingsResponse.ok) {
+            console.error('Failed to load vulnerability settings:', settingsResponse.status);
+            container.innerHTML = '<p class="text-secondary">Security scanning unavailable</p>';
+            return;
+        }
+        const settings = await settingsResponse.json();
+
+        const isEnabled = settings.enabled;
+        toggle.checked = isEnabled;
+
+        // Setup toggle event listener
+        toggle.onchange = async (e) => {
+            const newState = e.target.checked;
+            await toggleSecurityScanning(newState);
+        };
+
+        if (!isEnabled) {
+            container.innerHTML = `
+                <div style="padding: 1rem; background: rgba(245, 158, 11, 0.1); border-radius: var(--radius); border: 1px solid var(--warning);">
+                    <p style="color: var(--warning); font-weight: 600; margin-bottom: 0.5rem;">Security Scanning Disabled</p>
+                    <p style="font-size: 0.875rem; color: var(--text-secondary);">Enable security scanning to detect vulnerabilities in your container images using Trivy.</p>
+                </div>
+            `;
+            return;
+        }
+
+        // If enabled, show vulnerability summary
+        if (!vulnerabilitySummary) {
+            container.innerHTML = '<p class="text-secondary">Loading security data...</p>';
+            return;
+        }
+
+        const { critical = 0, high = 0, medium = 0, low = 0 } = vulnerabilitySummary;
+        const total = critical + high + medium + low;
+
+        if (total === 0) {
+            container.innerHTML = `
+                <div style="text-align: center; padding: 1rem;">
+                    <div style="font-size: 3rem; margin-bottom: 0.5rem;">✅</div>
+                    <p style="color: var(--success); font-weight: 600;">No vulnerabilities detected</p>
+                    <p class="text-secondary" style="font-size: 0.875rem; margin-top: 0.5rem;">All scanned images are clean</p>
+                </div>
+            `;
+            return;
+        }
+
+        container.innerHTML = `
+            <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                ${critical > 0 ? `
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="color: var(--danger); font-weight: 600;">Critical</span>
+                    <span style="background: rgba(239, 68, 68, 0.1); color: var(--danger); padding: 0.25rem 0.75rem; border-radius: var(--radius); font-weight: 600;">${critical}</span>
+                </div>
+                ` : ''}
+                ${high > 0 ? `
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="color: var(--warning); font-weight: 600;">High</span>
+                    <span style="background: rgba(245, 158, 11, 0.1); color: var(--warning); padding: 0.25rem 0.75rem; border-radius: var(--radius); font-weight: 600;">${high}</span>
+                </div>
+                ` : ''}
+                ${medium > 0 ? `
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="color: var(--info); font-weight: 600;">Medium</span>
+                    <span style="background: rgba(59, 130, 246, 0.1); color: var(--info); padding: 0.25rem 0.75rem; border-radius: var(--radius); font-weight: 600;">${medium}</span>
+                </div>
+                ` : ''}
+                <div style="margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--border);">
+                    <p style="font-size: 0.875rem; color: var(--text-secondary);">
+                        <strong>${total}</strong> total vulnerabilities found across scanned images
+                    </p>
+                </div>
+            </div>
+        `;
+    } catch (error) {
+        console.error('Error loading security status:', error);
+        container.innerHTML = `<p class="text-secondary" style="padding: 1rem; text-align: center;">Security status unavailable</p>`;
+    }
+}
+
+async function toggleSecurityScanning(newState) {
+    const container = document.getElementById('dashSecurityContent');
+    const toggle = document.getElementById('dashSecurityEnabled');
+
+    try {
+        if (newState) {
+            // Show loading message
+            container.innerHTML = `
+                <div style="padding: 1rem; background: rgba(59, 130, 246, 0.1); border-radius: var(--radius); border: 1px solid var(--info);">
+                    <p style="color: var(--info); font-weight: 600; margin-bottom: 0.5rem;">🔄 Enabling Security Scanning...</p>
+                    <p style="font-size: 0.875rem; color: var(--text-secondary);">Downloading Trivy vulnerability database. This may take a few minutes...</p>
+                </div>
+            `;
+
+            // First, update the Trivy database
+            const updateResponse = await fetchWithAuth('/api/vulnerabilities/update-db', {
+                method: 'POST'
+            });
+
+            if (!updateResponse.ok) {
+                throw new Error('Failed to update Trivy database');
+            }
+
+            showToast('Success', 'Trivy database updated successfully', 'success');
+
+            // Then enable security scanning
+            const settingsResponse = await fetchWithAuth('/api/vulnerabilities/settings');
+            const settings = await settingsResponse.json();
+            settings.enabled = true;
+
+            const updateSettingsResponse = await fetchWithAuth('/api/vulnerabilities/settings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(settings)
+            });
+
+            if (!updateSettingsResponse.ok) {
+                throw new Error('Failed to enable security scanning');
+            }
+
+            showToast('Success', 'Security scanning enabled', 'success');
+
+            // Reload vulnerability summary and refresh dashboard
+            await loadVulnerabilitySummary();
+            await renderDashboardSecurity();
+
+        } else {
+            // Disable security scanning
+            const settingsResponse = await fetchWithAuth('/api/vulnerabilities/settings');
+            const settings = await settingsResponse.json();
+            settings.enabled = false;
+
+            const updateSettingsResponse = await fetchWithAuth('/api/vulnerabilities/settings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(settings)
+            });
+
+            if (!updateSettingsResponse.ok) {
+                throw new Error('Failed to disable security scanning');
+            }
+
+            showToast('Success', 'Security scanning disabled', 'success');
+            await renderDashboardSecurity();
+        }
+
+    } catch (error) {
+        console.error('Error toggling security scanning:', error);
+        showToast('Error', 'Failed to toggle security scanning: ' + error.message, 'error');
+
+        // Revert toggle state
+        toggle.checked = !newState;
+
+        // Show error message
+        container.innerHTML = `
+            <div style="padding: 1rem; background: rgba(239, 68, 68, 0.1); border-radius: var(--radius); border: 1px solid var(--danger);">
+                <p style="color: var(--danger); font-weight: 600; margin-bottom: 0.5rem;">❌ Error</p>
+                <p style="font-size: 0.875rem; color: var(--text-secondary);">${escapeHtml(error.message)}</p>
+            </div>
+        `;
+    }
+}
+
+function renderDashboardResourceStatus() {
+    const container = document.getElementById('dashResourceStatus');
+
+    const runningContainers = containers.filter(c => c.state === 'running');
+    const containersWithStats = runningContainers.filter(c => c.memory_limit > 0);
+
+    if (containersWithStats.length === 0) {
+        container.innerHTML = '<p class="text-secondary">No resource stats available. Enable stats collection in host settings.</p>';
+        return;
+    }
+
+    // Find top consumers
+    const topCPU = [...containersWithStats].sort((a, b) => b.cpu_percent - a.cpu_percent).slice(0, 3);
+
+    container.innerHTML = `
+        <div style="display: flex; flex-direction: column; gap: 1rem;">
+            <div>
+                <h4 style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-secondary);">Top CPU Usage</h4>
+                ${topCPU.map(c => `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0;">
+                        <span style="font-size: 0.875rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px;">${escapeHtml(c.name)}</span>
+                        <span style="font-weight: 600; color: ${c.cpu_percent > 80 ? 'var(--danger)' : c.cpu_percent > 50 ? 'var(--warning)' : 'var(--success)'};">${c.cpu_percent.toFixed(1)}%</span>
+                    </div>
+                `).join('')}
+            </div>
+            <div style="padding-top: 0.5rem; border-top: 1px solid var(--border);">
+                <button onclick="switchTab('monitoring', true)" class="btn btn-sm btn-secondary" style="width: 100%;">
+                    View All
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+async function renderDashboardRecentActivity() {
+    const container = document.getElementById('dashRecentActivity');
+
+    try {
+        // Fetch recent activity
+        const response = await fetchWithAuth('/api/activity-log?limit=10');
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        const activities = Array.isArray(data) ? data : [];
+
+        if (activities.length === 0) {
+            container.innerHTML = '<p class="text-secondary" style="padding: 1rem; text-align: center;">No recent activity</p>';
+            return;
+        }
+
+        container.innerHTML = activities.map(activity => {
+            const icon = activity.activity_type === 'scan' ? '🔄' : '📡';
+            const statusColor = activity.status === 'success' ? 'var(--success)' : 'var(--danger)';
+            const timestamp = new Date(activity.timestamp).toLocaleString();
+
+            return `
+                <div style="display: flex; align-items: flex-start; gap: 1rem; padding: 0.75rem 0; border-bottom: 1px solid var(--border-light);">
+                    <div style="font-size: 1.5rem;">${icon}</div>
+                    <div style="flex: 1;">
+                        <div style="font-weight: 600; color: var(--text-primary);">${escapeHtml(activity.activity_type === 'scan' ? 'Scan' : 'Telemetry')}: ${escapeHtml(activity.target || 'All Hosts')}</div>
+                        <div style="font-size: 0.8125rem; color: var(--text-secondary); margin-top: 0.25rem;">${timestamp}</div>
+                    </div>
+                    <div style="font-size: 0.875rem; font-weight: 600; color: ${statusColor};">${activity.status}</div>
+                </div>
+            `;
+        }).join('');
+    } catch (error) {
+        console.error('Error loading activity:', error);
+        container.innerHTML = `<p class="text-secondary" style="padding: 1rem; text-align: center;">Activity log unavailable</p>`;
+    }
+}
+
+async function renderDashboardTelemetry() {
+    const container = document.getElementById('dashTelemetryContent');
+    const toggle = document.getElementById('dashTelemetryEnabled');
+
+    try {
+        // Load telemetry endpoints
+        const response = await fetchWithAuth('/api/telemetry/endpoints');
+        if (!response.ok) {
+            console.error('Failed to load telemetry endpoints:', response.status);
+            container.innerHTML = '<p class="text-secondary">Telemetry status unavailable</p>';
+            return;
+        }
+        const endpoints = await response.json();
+
+        // Check if community endpoint is enabled
+        const communityEndpoint = endpoints.find(e => e.name === 'community');
+        const isEnabled = communityEndpoint && communityEndpoint.enabled;
+
+        toggle.checked = isEnabled;
+
+        if (!isEnabled) {
+            container.innerHTML = `
+                <div style="padding: 1rem; background: rgba(245, 158, 11, 0.1); border-radius: var(--radius); border: 1px solid var(--warning);">
+                    <p style="color: var(--warning); font-weight: 600; margin-bottom: 0.5rem;">Telemetry Disabled</p>
+                    <p style="font-size: 0.875rem; color: var(--text-secondary);">Enable telemetry to contribute anonymous usage statistics and help improve Container Census.</p>
+                </div>
+            `;
+        } else {
+            // Load telemetry schedule
+            const schedResponse = await fetchWithAuth('/api/telemetry/schedule');
+            const schedule = await schedResponse.json();
+
+            container.innerHTML = `
+                <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="color: var(--text-secondary);">Status</span>
+                        <span class="status-indicator online">Active</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="color: var(--text-secondary);">Next Submission</span>
+                        <span style="font-weight: 600;">${schedule.next_submission ? new Date(schedule.next_submission).toLocaleString() : 'Unknown'}</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="color: var(--text-secondary);">Frequency</span>
+                        <span style="font-weight: 600;">${schedule.interval_hours ? schedule.interval_hours + 'h' : 'Unknown'}</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Add toggle event listener
+        toggle.addEventListener('change', async (e) => {
+            const newState = e.target.checked;
+            // This would require implementing the toggle functionality
+            showToast('Info', 'Please use Settings tab to configure telemetry', 'info');
+            e.target.checked = !newState; // Revert for now
+        });
+
+    } catch (error) {
+        console.error('Error loading telemetry status:', error);
+        container.innerHTML = '<p class="text-secondary">Failed to load telemetry status</p>';
+    }
+}
+
+async function loadVulnerabilitySummary() {
+    try {
+        // First check if security scanning is enabled
+        const settingsResponse = await fetchWithAuth('/api/vulnerabilities/settings');
+        const settings = await settingsResponse.json();
+
+        if (!settings.enabled) {
+            // Security scanning is disabled
+            vulnerabilitySummary = null;
+
+            // Update sidebar stats to show N/A or hide
+            const criticalVulnsEl = document.getElementById('criticalVulns');
+            if (criticalVulnsEl) {
+                criticalVulnsEl.textContent = '-';
+                criticalVulnsEl.style.fontWeight = '600';
+            }
+            return;
+        }
+
+        // Load summary if enabled
+        const response = await fetchWithAuth('/api/vulnerabilities/summary');
+        const data = await response.json();
+
+        // Extract summary from response (might be nested in 'summary' field)
+        vulnerabilitySummary = data.summary || data;
+
+        // Update sidebar stats
+        const criticalVulnsEl = document.getElementById('criticalVulns');
+        if (criticalVulnsEl) {
+            const criticalCount = vulnerabilitySummary.critical || 0;
+            criticalVulnsEl.textContent = criticalCount;
+            criticalVulnsEl.style.fontWeight = criticalCount > 0 ? '700' : '600';
+        }
+    } catch (error) {
+        console.error('Error loading vulnerability summary:', error);
+        vulnerabilitySummary = { critical: 0, high: 0, medium: 0, low: 0 };
+    }
+}
+
+// ======= IMPORT/EXPORT FUNCTIONS =======
+
+async function exportSettings() {
+    try {
+        const response = await fetchWithAuth('/api/settings/export');
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        // Get the YAML content
+        const yamlContent = await response.text();
+
+        // Create a blob and download it
+        const blob = new Blob([yamlContent], { type: 'application/x-yaml' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'container-census-config.yaml';
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+
+        showToast('Success', 'Settings exported successfully', 'success');
+    } catch (error) {
+        console.error('Error exporting settings:', error);
+        showToast('Error', 'Failed to export settings: ' + error.message, 'error');
+    }
+}
+
+async function handleImportFile(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const statusEl = document.getElementById('importStatus');
+    statusEl.textContent = '⏳ Importing...';
+    statusEl.className = 'save-status-inline';
+
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const response = await fetchWithAuth('/api/settings/import', {
+            method: 'POST',
+            body: formData
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            statusEl.textContent = '✓ Import successful';
+            statusEl.className = 'save-status-inline success';
+            showToast('Success', 'Settings imported successfully. Reloading...', 'success');
+
+            // Reload the page after 2 seconds to apply new settings
+            setTimeout(() => {
+                window.location.reload();
+            }, 2000);
+        } else {
+            statusEl.textContent = '✗ Import failed';
+            statusEl.className = 'save-status-inline error';
+            showToast('Error', 'Failed to import settings: ' + (result.error || 'Unknown error'), 'error');
+        }
+    } catch (error) {
+        console.error('Error importing settings:', error);
+        statusEl.textContent = '✗ Error';
+        statusEl.className = 'save-status-inline error';
+        showToast('Error', 'Error importing settings: ' + error.message, 'error');
+    }
+
+    // Clear the file input
+    event.target.value = '';
+
+    // Clear status after 5 seconds
+    setTimeout(() => {
+        statusEl.textContent = '';
+        statusEl.className = 'save-status-inline';
+    }, 5000);
+}
+
+// ======= DANGER ZONE FUNCTIONS =======
+
+async function resetAllSettings() {
+    if (!confirm('⚠️ Are you sure you want to reset ALL settings to defaults?\n\nThis will:\n- Delete all system settings\n- Delete all telemetry endpoints\n- Trigger auto-import from config.yaml if available\n\nThis action cannot be undone.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/settings/reset', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            showNotification(result.message, 'success');
+            // Reload the page after 2 seconds to trigger auto-import
+            setTimeout(() => {
+                window.location.reload();
+            }, 2000);
+        } else {
+            showNotification('Failed to reset settings: ' + (result.error || result.message), 'error');
+        }
+    } catch (error) {
+        console.error('Error resetting settings:', error);
+        showNotification('Error resetting settings: ' + error.message, 'error');
+    }
+}
+
+async function clearContainerHistory() {
+    if (!confirm('⚠️ Are you sure you want to clear container history?\n\nThis will:\n- Delete all historical container scan data\n- Keep only the most recent snapshot\n- Clear historical charts and trends\n\nThis action cannot be undone.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/settings/clear-history', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            showNotification(result.message, 'success');
+        } else {
+            showNotification('Failed to clear history: ' + (result.error || result.message), 'error');
+        }
+    } catch (error) {
+        console.error('Error clearing history:', error);
+        showNotification('Error clearing history: ' + error.message, 'error');
+    }
+}
+
+async function clearVulnerabilities() {
+    if (!confirm('⚠️ Are you sure you want to clear all vulnerability data?\n\nThis will:\n- Delete all vulnerability scan results\n- Delete all CVE data\n- Images will be rescanned on next scheduled scan\n\nThis action cannot be undone.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/settings/clear-vulnerabilities', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            showNotification(result.message, 'success');
+            // Reload vulnerability tab if currently viewing it
+            const currentTab = document.querySelector('.tab-content.active')?.id;
+            if (currentTab === 'vulnerabilityTab') {
+                loadVulnerabilitySummary();
+            }
+        } else {
+            showNotification('Failed to clear vulnerabilities: ' + (result.error || result.message), 'error');
+        }
+    } catch (error) {
+        console.error('Error clearing vulnerabilities:', error);
+        showNotification('Error clearing vulnerabilities: ' + error.message, 'error');
+    }
+}
+
+async function clearActivityLog() {
+    if (!confirm('⚠️ Are you sure you want to clear the activity log?\n\nThis will:\n- Delete all lifecycle events\n- Delete all container state change history\n- Clear the activity tab\n\nNew events will be logged as they occur. This action cannot be undone.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/settings/clear-activity', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            showNotification(result.message, 'success');
+            // Reload activity tab if currently viewing it
+            const currentTab = document.querySelector('.tab-content.active')?.id;
+            if (currentTab === 'activity') {
+                loadActivityLog();
+            }
+        } else {
+            showNotification('Failed to clear activity log: ' + (result.error || result.message), 'error');
+        }
+    } catch (error) {
+        console.error('Error clearing activity log:', error);
+        showNotification('Error clearing activity log: ' + error.message, 'error');
+    }
+}
+
+async function nuclearReset() {
+    // First confirmation
+    if (!confirm('💀 NUCLEAR OPTION: DELETE EVERYTHING 💀\n\nThis will permanently delete:\n- ALL settings\n- ALL container history\n- ALL vulnerability scans\n- ALL activity logs\n- ALL hosts\n- ALL telemetry endpoints\n- ALL notifications\n\nYour database will be completely reset to a fresh installation state.\n\nAre you ABSOLUTELY SURE?')) {
+        return;
+    }
+
+    // Second confirmation to prevent accidents
+    const confirmation = prompt('Type "DELETE EVERYTHING" (in all caps) to confirm nuclear reset:');
+    if (confirmation !== 'DELETE EVERYTHING') {
+        showNotification('Nuclear reset cancelled', 'info');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/settings/nuclear-reset', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            showNotification('💀 Nuclear reset complete. Reloading in 3 seconds...', 'success');
+            // Reload the page after 3 seconds
+            setTimeout(() => {
+                window.location.reload();
+            }, 3000);
+        } else {
+            showNotification('Failed to perform nuclear reset: ' + (result.error || result.message), 'error');
+        }
+    } catch (error) {
+        console.error('Error performing nuclear reset:', error);
+        showNotification('Error performing nuclear reset: ' + error.message, 'error');
     }
 }
