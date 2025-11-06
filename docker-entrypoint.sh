@@ -14,6 +14,26 @@ if [ "$(id -u)" = "0" ]; then
     # This is idempotent - safe to run even if already correct
     chown -R census:census /app/data
 
+    # Detect Docker socket GID and add census user to that group
+    # This handles cases where the host's Docker GID differs from build-time DOCKER_GID
+    if [ -S /var/run/docker.sock ]; then
+        SOCK_GID=$(stat -c '%g' /var/run/docker.sock 2>/dev/null || true)
+        if [ -n "$SOCK_GID" ] && [ "$SOCK_GID" != "0" ]; then
+            echo "Detected Docker socket GID: $SOCK_GID"
+            # Check if group exists, create if not
+            if ! getent group "$SOCK_GID" > /dev/null 2>&1; then
+                echo "Creating group for GID $SOCK_GID..."
+                addgroup -g "$SOCK_GID" "docker_host" 2>/dev/null || true
+            fi
+            # Add census user to the group
+            SOCK_GROUP=$(getent group "$SOCK_GID" | cut -d: -f1)
+            if [ -n "$SOCK_GROUP" ]; then
+                echo "Adding census user to group $SOCK_GROUP (GID $SOCK_GID)..."
+                adduser census "$SOCK_GROUP" 2>/dev/null || true
+            fi
+        fi
+    fi
+
     # Create default config.yaml if it doesn't exist
     if [ ! -f /app/config/config.yaml ]; then
         echo "Creating default config.yaml..."
