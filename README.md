@@ -24,6 +24,12 @@ Community stats on container usage can be found here: [Selfhosters Stats](https:
 ##### View History of Container
 ![History view](screenshots/server-08.png)
 
+##### Security Overview
+![Security view](screenshots/server-security.png)
+
+##### Vulnerabilities Overview
+![Vulnerability view](screenshots/server-vulnerabilities.png)
+
 ##### Manage / Prune Images
 ![Image view](screenshots/server-04.png)
 
