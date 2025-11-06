@@ -158,7 +158,8 @@ func (s *Server) setupRoutes() {
 	authMiddleware := auth.BasicAuthMiddleware(s.authConfig)
 
 	// Health endpoint without authentication (for monitoring)
-	s.router.HandleFunc("/api/health", s.handleHealth).Methods("GET")
+	// Supports both GET and HEAD methods (HEAD is used by Docker healthcheck)
+	s.router.HandleFunc("/api/health", s.handleHealth).Methods("GET", "HEAD")
 
 	// Protected API routes
 	api := s.router.PathPrefix("/api").Subrouter()
