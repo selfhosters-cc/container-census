@@ -461,14 +461,15 @@ func (s *Server) saveTelemetry(report models.TelemetryReport) error {
 		log.Printf("Inserted new telemetry report for installation %s", report.InstallationID)
 	}
 
-	// Insert fresh image stats with normalized names and sizes
+	// Insert fresh image stats with ORIGINAL names (keep registry prefix for registry detection)
+	// Normalization is applied during queries for grouping, not storage
 	for _, imageStat := range report.ImageStats {
 		insertImageQuery := `
 			INSERT INTO image_stats (installation_id, timestamp, image, count, size_bytes)
 			VALUES ($1, $2, $3, $4, $5)
 		`
-		normalizedImage := normalizeImageName(imageStat.Image)
-		_, err := tx.Exec(insertImageQuery, report.InstallationID, report.Timestamp, normalizedImage, imageStat.Count, imageStat.SizeBytes)
+		// Store original image name with registry prefix intact
+		_, err := tx.Exec(insertImageQuery, report.InstallationID, report.Timestamp, imageStat.Image, imageStat.Count, imageStat.SizeBytes)
 		if err != nil {
 			log.Printf("Warning: Failed to insert image stat: %v", err)
 		}

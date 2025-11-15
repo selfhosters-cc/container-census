@@ -47,6 +47,9 @@ type Container struct {
 	Volumes        []VolumeMount `json:"volumes,omitempty"`         // Volume mounts
 	Links          []string      `json:"links,omitempty"`           // Container links (legacy)
 	ComposeProject string        `json:"compose_project,omitempty"` // Docker Compose project name
+	// Image update tracking
+	UpdateAvailable   bool      `json:"update_available"`
+	LastUpdateCheck   time.Time `json:"last_update_check,omitempty"`
 }
 
 // PortMapping represents a container port mapping
@@ -609,4 +612,42 @@ type RestartSummary struct {
 	RestartCount  int    `json:"restart_count"`
 	CurrentState  string `json:"current_state"`
 	Image         string `json:"image"`
+}
+
+// ImageUpdateInfo contains information about an image update check
+type ImageUpdateInfo struct {
+	Available     bool      `json:"available"`
+	LocalDigest   string    `json:"local_digest"`
+	RemoteDigest  string    `json:"remote_digest"`
+	RemoteCreated time.Time `json:"remote_created,omitempty"`
+	ImageName     string    `json:"image_name"`
+	Tag           string    `json:"tag"`
+	Error         string    `json:"error,omitempty"`
+}
+
+// ContainerRecreateResult contains the result of a container recreation
+type ContainerRecreateResult struct {
+	Success       bool                   `json:"success"`
+	Error         string                 `json:"error,omitempty"`
+	OldContainerID string                `json:"old_container_id"`
+	NewContainerID string                `json:"new_container_id"`
+	OldImageID    string                 `json:"old_image_id"`
+	NewImageID    string                 `json:"new_image_id"`
+	KeptOldImage  bool                   `json:"kept_old_image"`
+	Config        map[string]interface{} `json:"config,omitempty"` // Container config for dry-run preview
+}
+
+// ImageUpdateSettings contains runtime image update configuration
+type ImageUpdateSettings struct {
+	AutoCheckEnabled     bool `json:"auto_check_enabled"`
+	CheckIntervalHours   int  `json:"check_interval_hours" validate:"min=1,max=168"`
+	OnlyCheckLatestTags  bool `json:"only_check_latest_tags"`
+}
+
+// Validate validates image update settings
+func (s *ImageUpdateSettings) Validate() error {
+	if s.CheckIntervalHours < 1 || s.CheckIntervalHours > 168 {
+		return fmt.Errorf("check interval must be between 1 and 168 hours")
+	}
+	return nil
 }

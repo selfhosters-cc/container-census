@@ -18,6 +18,7 @@ import (
 	"github.com/container-census/container-census/internal/migration"
 	"github.com/container-census/container-census/internal/models"
 	"github.com/container-census/container-census/internal/notifications"
+	"github.com/container-census/container-census/internal/registry"
 	"github.com/container-census/container-census/internal/scanner"
 	"github.com/container-census/container-census/internal/storage"
 	"github.com/container-census/container-census/internal/telemetry"
@@ -332,6 +333,9 @@ func main() {
 	} else {
 		log.Println("Vulnerability scanning disabled")
 	}
+
+	// Start image update checker
+	go runImageUpdateChecker(ctx, db, scan)
 
 	// Start HTTP server
 	go func() {
@@ -738,6 +742,132 @@ func runDailyVulnerabilityCleanup(ctx context.Context, db *storage.DB, config *v
 			} else {
 				log.Println("Vulnerability cleanup completed successfully")
 			}
+		}
+	}
+}
+
+func runImageUpdateChecker(ctx context.Context, db *storage.DB, scan *scanner.Scanner) {
+	// Check settings every 5 minutes to pick up changes without restart
+	settingsTicker := time.NewTicker(5 * time.Minute)
+	defer settingsTicker.Stop()
+
+	var checkTicker *time.Ticker
+
+	// Initial settings load
+	settings, err := db.GetImageUpdateSettings()
+	if err != nil {
+		log.Printf("Failed to load image update settings: %v", err)
+		return
+	}
+
+	// Initialize ticker if auto-check is enabled
+	if settings.AutoCheckEnabled && settings.CheckIntervalHours > 0 {
+		checkTicker = time.NewTicker(time.Duration(settings.CheckIntervalHours) * time.Hour)
+		log.Printf("Image update checker started with interval: %d hours", settings.CheckIntervalHours)
+	}
+
+	registryClient := registry.NewClient()
+
+	for {
+		select {
+		case <-ctx.Done():
+			if checkTicker != nil {
+				checkTicker.Stop()
+			}
+			return
+
+		case <-settingsTicker.C:
+			// Reload settings every 5 minutes to pick up changes
+			newSettings, err := db.GetImageUpdateSettings()
+			if err != nil {
+				log.Printf("Failed to reload image update settings: %v", err)
+				continue
+			}
+
+			// Check if we need to recreate the ticker
+			if newSettings.AutoCheckEnabled != settings.AutoCheckEnabled ||
+				newSettings.CheckIntervalHours != settings.CheckIntervalHours {
+
+				if checkTicker != nil {
+					checkTicker.Stop()
+					checkTicker = nil
+				}
+
+				if newSettings.AutoCheckEnabled && newSettings.CheckIntervalHours > 0 {
+					checkTicker = time.NewTicker(time.Duration(newSettings.CheckIntervalHours) * time.Hour)
+					log.Printf("Image update checker interval changed to: %d hours", newSettings.CheckIntervalHours)
+				} else {
+					log.Println("Image update checker disabled")
+				}
+			}
+
+			settings = newSettings
+
+		case <-func() <-chan time.Time {
+			if checkTicker != nil {
+				return checkTicker.C
+			}
+			// Return a channel that never fires if checkTicker is nil
+			return make(<-chan time.Time)
+		}():
+			if !settings.AutoCheckEnabled {
+				continue
+			}
+
+			log.Println("Running scheduled image update check...")
+
+			// Get all containers
+			containers, err := db.GetLatestContainers()
+			if err != nil {
+				log.Printf("Failed to get containers for update check: %v", err)
+				continue
+			}
+
+			// Filter to only running containers with :latest tag if configured
+			var toCheck []models.Container
+			for _, c := range containers {
+				if c.State != "running" {
+					continue
+				}
+
+				if settings.OnlyCheckLatestTags {
+					// Parse image name to check tag
+					parts := strings.Split(c.Image, ":")
+					tag := "latest"
+					if len(parts) > 1 {
+						tag = parts[len(parts)-1]
+					}
+					if tag != "latest" {
+						continue
+					}
+				}
+
+				toCheck = append(toCheck, c)
+			}
+
+			log.Printf("Checking %d containers for updates...", len(toCheck))
+
+			// Check each container
+			updateCount := 0
+			for _, container := range toCheck {
+				updateInfo, err := registryClient.CheckImageUpdate(ctx, container.Image, container.ImageID)
+				if err != nil {
+					log.Printf("Failed to check update for %s: %v", container.Name, err)
+					continue
+				}
+
+				if err := db.SaveContainerUpdateStatus(container.ID, container.HostID, updateInfo.Available); err != nil {
+					log.Printf("Failed to save update status for %s: %v", container.Name, err)
+					continue
+				}
+
+				if updateInfo.Available {
+					updateCount++
+					log.Printf("Update available for %s: %s -> %s", container.Name, updateInfo.LocalDigest[:12], updateInfo.RemoteDigest[:12])
+				}
+			}
+
+			log.Printf("Image update check completed: %d updates found", updateCount)
 		}
 	}
 }

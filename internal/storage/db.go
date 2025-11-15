@@ -355,6 +355,12 @@ func (db *DB) initSchema() error {
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
+
+	CREATE TABLE IF NOT EXISTS image_update_settings (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
 	`
 
 	if _, err := db.conn.Exec(schema); err != nil {
@@ -466,6 +472,31 @@ func (db *DB) runMigrations() error {
 		}
 	}
 
+	// Check if update_available column exists in containers table (for image update tracking)
+	var updateAvailableExists int
+	err = db.conn.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('containers') WHERE name='update_available'
+	`).Scan(&updateAvailableExists)
+	if err != nil {
+		return err
+	}
+
+	if updateAvailableExists == 0 {
+		updateMigrations := []string{
+			`ALTER TABLE containers ADD COLUMN update_available BOOLEAN NOT NULL DEFAULT 0`,
+			`ALTER TABLE containers ADD COLUMN last_update_check TIMESTAMP`,
+		}
+
+		for _, migration := range updateMigrations {
+			if _, err := db.conn.Exec(migration); err != nil {
+				// Ignore "duplicate column" errors
+				if !isSQLiteUpdateColumnExistsError(err) {
+					return err
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -495,6 +526,13 @@ func isSQLiteStatsColumnExistsError(err error) bool {
 		err.Error() == "duplicate column name: memory_limit" ||
 		err.Error() == "duplicate column name: memory_percent" ||
 		err.Error() == "duplicate column name: collect_stats")
+}
+
+// isSQLiteUpdateColumnExistsError checks if error is about duplicate update column
+func isSQLiteUpdateColumnExistsError(err error) bool {
+	return err != nil && (
+		err.Error() == "duplicate column name: update_available" ||
+		err.Error() == "duplicate column name: last_update_check")
 }
 
 // Host operations
@@ -621,8 +659,8 @@ func (db *DB) SaveContainers(containers []models.Container) error {
 
 	stmt, err := tx.Prepare(`
 		INSERT INTO containers
-		(id, name, image, image_id, state, status, ports, labels, created, host_id, host_name, scanned_at, networks, volumes, links, compose_project, cpu_percent, memory_usage, memory_limit, memory_percent)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, name, image, image_id, state, status, ports, labels, created, host_id, host_name, scanned_at, networks, volumes, links, compose_project, cpu_percent, memory_usage, memory_limit, memory_percent, update_available, last_update_check)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return err
@@ -670,12 +708,19 @@ func (db *DB) SaveContainers(containers []models.Container) error {
 				c.Name, c.ID, c.HostID, c.ScannedAt, c.CPUPercent, c.MemoryUsage/1024/1024)
 		}
 
+		// Handle nullable update tracking fields
+		var lastUpdateCheck sql.NullTime
+		if !c.LastUpdateCheck.IsZero() {
+			lastUpdateCheck = sql.NullTime{Time: c.LastUpdateCheck, Valid: true}
+		}
+
 		_, err = stmt.Exec(
 			c.ID, c.Name, c.Image, c.ImageID, c.State, c.Status,
 			string(portsJSON), string(labelsJSON), c.Created,
 			c.HostID, c.HostName, c.ScannedAt,
 			string(networksJSON), string(volumesJSON), string(linksJSON), c.ComposeProject,
 			cpuPercent, memoryUsage, memoryLimit, memoryPercent,
+			c.UpdateAvailable, lastUpdateCheck,
 		)
 		if err != nil {
 			return err
@@ -691,7 +736,8 @@ func (db *DB) GetLatestContainers() ([]models.Container, error) {
 		SELECT c.id, c.name, c.image, c.image_id, c.state, c.status,
 		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at,
 		       c.networks, c.volumes, c.links, c.compose_project,
-		       c.cpu_percent, c.memory_usage, c.memory_limit, c.memory_percent
+		       c.cpu_percent, c.memory_usage, c.memory_limit, c.memory_percent,
+		       c.update_available, c.last_update_check
 		FROM containers c
 		INNER JOIN (
 			SELECT host_id, MAX(scanned_at) as max_scan
@@ -767,6 +813,7 @@ func (db *DB) scanContainers(rows *sql.Rows) ([]models.Container, error) {
 		var composeProject sql.NullString
 		var cpuPercent, memoryPercent sql.NullFloat64
 		var memoryUsage, memoryLimit sql.NullInt64
+		var lastUpdateCheck sql.NullTime
 
 		err := rows.Scan(
 			&c.ID, &c.Name, &c.Image, &c.ImageID, &c.State, &c.Status,
@@ -774,6 +821,7 @@ func (db *DB) scanContainers(rows *sql.Rows) ([]models.Container, error) {
 			&c.HostID, &c.HostName, &c.ScannedAt,
 			&networksJSON, &volumesJSON, &linksJSON, &composeProject,
 			&cpuPercent, &memoryUsage, &memoryLimit, &memoryPercent,
+			&c.UpdateAvailable, &lastUpdateCheck,
 		)
 		if err != nil {
 			return nil, err
@@ -821,6 +869,11 @@ func (db *DB) scanContainers(rows *sql.Rows) ([]models.Container, error) {
 		}
 		if memoryPercent.Valid {
 			c.MemoryPercent = memoryPercent.Float64
+		}
+
+		// Populate update tracking fields
+		if lastUpdateCheck.Valid {
+			c.LastUpdateCheck = lastUpdateCheck.Time
 		}
 
 		containers = append(containers, c)
@@ -2303,4 +2356,130 @@ func (db *DB) ClearAllLifecycleEvents() error {
 		return fmt.Errorf("failed to clear lifecycle events: %w", err)
 	}
 	return nil
+}
+
+// Image update settings operations
+
+// GetImageUpdateSettings retrieves image update settings
+func (db *DB) GetImageUpdateSettings() (*models.ImageUpdateSettings, error) {
+	settings := &models.ImageUpdateSettings{
+		AutoCheckEnabled:    false,
+		CheckIntervalHours:  24,
+		OnlyCheckLatestTags: true,
+	}
+
+	rows, err := db.conn.Query(`SELECT key, value FROM image_update_settings`)
+	if err != nil {
+		return settings, nil // Return defaults on error
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			continue
+		}
+
+		switch key {
+		case "auto_check_enabled":
+			settings.AutoCheckEnabled = value == "true" || value == "1"
+		case "check_interval_hours":
+			fmt.Sscanf(value, "%d", &settings.CheckIntervalHours)
+		case "only_check_latest_tags":
+			settings.OnlyCheckLatestTags = value == "true" || value == "1"
+		}
+	}
+
+	return settings, nil
+}
+
+// SaveImageUpdateSettings saves image update settings
+func (db *DB) SaveImageUpdateSettings(settings *models.ImageUpdateSettings) error {
+	if err := settings.Validate(); err != nil {
+		return err
+	}
+
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Upsert each setting
+	stmt, err := tx.Prepare(`
+		INSERT INTO image_update_settings (key, value, updated_at)
+		VALUES (?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	// Save auto_check_enabled
+	autoCheckStr := "false"
+	if settings.AutoCheckEnabled {
+		autoCheckStr = "true"
+	}
+	if _, err := stmt.Exec("auto_check_enabled", autoCheckStr); err != nil {
+		return err
+	}
+
+	// Save check_interval_hours
+	if _, err := stmt.Exec("check_interval_hours", fmt.Sprintf("%d", settings.CheckIntervalHours)); err != nil {
+		return err
+	}
+
+	// Save only_check_latest_tags
+	onlyLatestStr := "false"
+	if settings.OnlyCheckLatestTags {
+		onlyLatestStr = "true"
+	}
+	if _, err := stmt.Exec("only_check_latest_tags", onlyLatestStr); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// SaveContainerUpdateStatus updates the update_available status for a container
+func (db *DB) SaveContainerUpdateStatus(containerID string, hostID int64, available bool) error {
+	// Update the most recent record for this container
+	_, err := db.conn.Exec(`
+		UPDATE containers
+		SET update_available = ?, last_update_check = CURRENT_TIMESTAMP
+		WHERE id = ? AND host_id = ?
+		AND scanned_at = (
+			SELECT MAX(scanned_at) FROM containers
+			WHERE id = ? AND host_id = ?
+		)
+	`, available, containerID, hostID, containerID, hostID)
+	return err
+}
+
+// GetContainersWithUpdates returns containers that have updates available
+func (db *DB) GetContainersWithUpdates() ([]models.Container, error) {
+	query := `
+		SELECT c.id, c.name, c.image, c.image_id, c.state, c.status,
+		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at,
+		       c.networks, c.volumes, c.links, c.compose_project,
+		       c.cpu_percent, c.memory_usage, c.memory_limit, c.memory_percent,
+		       c.update_available, c.last_update_check
+		FROM containers c
+		INNER JOIN (
+			SELECT host_id, MAX(scanned_at) as max_scan
+			FROM containers
+			GROUP BY host_id
+		) latest ON c.host_id = latest.host_id AND c.scanned_at = latest.max_scan
+		WHERE c.update_available = 1
+		ORDER BY c.host_name, c.name
+	`
+
+	rows, err := db.conn.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return db.scanContainers(rows)
 }

@@ -528,6 +528,7 @@ function switchTab(tab, updateHistory = true) {
         loadCollectors();
         loadScannerSettings();
         loadTelemetrySettings();
+        loadImageUpdateSettings();
     }
 
     // Add pulse animation to nav item briefly
@@ -1263,13 +1264,24 @@ async function removeContainer(hostId, containerId, containerName) {
     );
 }
 
-async function viewLogs(hostId, containerId, containerName) {
-    document.getElementById('logContainerName').textContent = containerName;
+// Track current log view state for refresh
+let currentLogView = {
+    hostId: null,
+    containerName: null
+};
+
+async function viewLogs(hostId, containerName, displayName) {
+    // Store current view for refresh
+    currentLogView.hostId = hostId;
+    currentLogView.containerName = containerName;
+
+    document.getElementById('logContainerName').textContent = displayName || containerName;
     document.getElementById('logContent').textContent = 'Loading logs...';
     document.getElementById('logModal').classList.add('show');
 
     try {
-        const response = await fetch(`/api/containers/${hostId}/${containerId}/logs?tail=500`);
+        // Use container name instead of ID for reliability after updates
+        const response = await fetch(`/api/containers/${hostId}/${encodeURIComponent(containerName)}/logs?tail=500`);
 
         if (response.ok) {
             const data = await response.json();
@@ -1280,7 +1292,36 @@ async function viewLogs(hostId, containerId, containerName) {
         }
     } catch (error) {
         console.error('Error loading logs:', error);
-        document.getElementById('logContent').textContent = 'Failed to load logs';
+        document.getElementById('logContent').textContent = 'Failed to load logs: ' + error.message;
+    }
+}
+
+// Refresh logs for currently viewed container
+async function refreshLogs() {
+    if (!currentLogView.hostId || !currentLogView.containerName) {
+        showNotification('No logs currently loaded', 'warning');
+        return;
+    }
+
+    const displayName = document.getElementById('logContainerName').textContent;
+    document.getElementById('logContent').textContent = 'Refreshing logs...';
+
+    try {
+        const response = await fetch(`/api/containers/${currentLogView.hostId}/${encodeURIComponent(currentLogView.containerName)}/logs?tail=500`);
+
+        if (response.ok) {
+            const data = await response.json();
+            document.getElementById('logContent').textContent = data.logs || 'No logs available';
+            showNotification('Logs refreshed', 'success');
+        } else {
+            const error = await response.json();
+            document.getElementById('logContent').textContent = `Error: ${error.error}`;
+            showNotification('Failed to refresh logs', 'error');
+        }
+    } catch (error) {
+        console.error('Error refreshing logs:', error);
+        document.getElementById('logContent').textContent = 'Failed to refresh logs: ' + error.message;
+        showNotification('Failed to refresh logs', 'error');
     }
 }
 
@@ -1427,6 +1468,17 @@ function renderContainers(containersToRender) {
                 <div class="container-detail-row">
                     <span class="detail-label">🖼️ Image</span>
                     <code class="detail-value image-value" title="${escapeHtml(cont.image)}">${escapeHtml(cont.image)}</code>
+                    ${cont.update_available ? '<span class="update-badge">⬆️ Update Available</span>' : ''}
+                    ${(cont.image.endsWith(':latest') || !cont.image.includes(':')) && isRunning ? `
+                        <button class="btn btn-xs btn-primary" onclick="checkContainerUpdate(${cont.host_id}, '${escapeAttr(cont.name)}', '${escapeAttr(cont.name)}')" title="Check for updates">
+                            🔍 Check
+                        </button>
+                    ` : ''}
+                    ${cont.update_available ? `
+                        <button class="btn btn-xs btn-success" onclick="updateContainer(${cont.host_id}, '${escapeAttr(cont.name)}', '${escapeAttr(cont.name)}', '${escapeAttr(cont.image)}')" title="Update image">
+                            ⬆️ Update
+                        </button>
+                    ` : ''}
                 </div>
 
                 ${statusText !== '-' ? `
@@ -1480,7 +1532,7 @@ function renderContainers(containersToRender) {
                             🗑 Remove
                         </button>
                     ` : ''}
-                    <button class="btn btn-sm btn-primary" onclick="viewLogs(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">
+                    <button class="btn btn-sm btn-primary" onclick="viewLogs(${cont.host_id}, '${escapeAttr(cont.name)}', '${escapeAttr(cont.name)}')">
                         📋 Logs
                     </button>
                 </div>
@@ -2073,7 +2125,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 function showConfirmDialog(title, message, onConfirm, type = 'warning') {
     document.getElementById('confirmTitle').textContent = title;
-    document.getElementById('confirmMessage').textContent = message;
+    document.getElementById('confirmMessage').innerHTML = message;
     document.getElementById('confirmModal').classList.add('show');
 
     const okBtn = document.getElementById('confirmOkBtn');
@@ -6564,5 +6616,267 @@ async function nuclearReset() {
     } catch (error) {
         console.error('Error performing nuclear reset:', error);
         showNotification('Error performing nuclear reset: ' + error.message, 'error');
+    }
+}
+
+// ===== Image Update Functions =====
+
+// Check if a single container has an image update available
+async function checkContainerUpdate(hostId, containerId, containerName) {
+    try {
+        const response = await fetch(`/api/containers/${hostId}/${containerId}/check-update`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            if (result.available) {
+                showNotification(`Update available for ${containerName}`, 'success');
+            } else if (result.message) {
+                showNotification(result.message, 'info');
+            } else {
+                showNotification(`${containerName} is up to date`, 'info');
+            }
+
+            // Reload containers to update UI badges
+            await loadData();
+        } else {
+            showNotification('Failed to check for update: ' + (result.error || 'Unknown error'), 'error');
+        }
+    } catch (error) {
+        console.error('Error checking for update:', error);
+        showNotification('Error checking for update: ' + error.message, 'error');
+    }
+}
+
+// Check all :latest containers for updates
+async function checkAllUpdates() {
+    // Get all containers with :latest tag
+    const latestContainers = containers.filter(c =>
+        c.image.endsWith(':latest') || (!c.image.includes(':') && c.state === 'running')
+    );
+
+    if (latestContainers.length === 0) {
+        showNotification('No containers with :latest tag found', 'info');
+        return;
+    }
+
+    showNotification(`Checking ${latestContainers.length} container(s) for updates...`, 'info');
+
+    const containerList = latestContainers.map(c => ({
+        host_id: c.host_id,
+        container_id: c.id
+    }));
+
+    try {
+        const response = await fetch('/api/containers/bulk-check-updates', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ containers: containerList })
+        });
+
+        const results = await response.json();
+
+        if (response.ok) {
+            let availableCount = 0;
+            for (const key in results) {
+                if (results[key].available) {
+                    availableCount++;
+                }
+            }
+
+            if (availableCount > 0) {
+                showNotification(`${availableCount} update(s) available`, 'success');
+            } else {
+                showNotification('All containers are up to date', 'info');
+            }
+
+            // Reload containers to update UI badges
+            await loadData();
+        } else {
+            showNotification('Failed to check for updates', 'error');
+        }
+    } catch (error) {
+        console.error('Error checking for updates:', error);
+        showNotification('Error checking for updates: ' + error.message, 'error');
+    }
+}
+
+// Update a single container (pull new image and recreate)
+async function updateContainer(hostId, containerId, containerName, imageName) {
+    // Show confirmation dialog with dry-run preview
+    showConfirmDialog(
+        'Update Container',
+        `
+        <div style="text-align: left;">
+            <p><strong>Container:</strong> ${escapeHtml(containerName)}</p>
+            <p><strong>Image:</strong> ${escapeHtml(imageName)}</p>
+            <p style="margin-top: 15px;">This will:</p>
+            <ul style="margin: 10px 0;">
+                <li>Pull the latest <code>${escapeHtml(imageName)}</code> image</li>
+                <li>Stop and remove the current container</li>
+                <li>Create a new container with the same configuration</li>
+                <li>Start the new container</li>
+            </ul>
+            <p style="margin-top: 15px; padding: 10px; background-color: #fff3cd; border-radius: 4px;">
+                ⚠️ <strong>Note:</strong> The old image will be kept for rollback. Container configuration (env vars, volumes, ports, networks) will be preserved.
+            </p>
+            <p style="margin-top: 10px; color: #856404;">
+                Non-volume data will be lost. Ensure important data is in volumes!
+            </p>
+        </div>
+        `,
+        async () => {
+            // Show progress modal
+            showProgressModal('Updating Container', 'Pulling new image...');
+
+            try {
+                // First, do a dry-run to preview
+                updateProgressModal('Validating container configuration...');
+                const dryRunResponse = await fetch(`/api/containers/${hostId}/${containerId}/update?dry_run=true`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const dryRunResult = await dryRunResponse.json();
+
+                if (!dryRunResponse.ok) {
+                    hideProgressModal();
+                    showNotification('Dry-run failed: ' + (dryRunResult.error || 'Unknown error'), 'error');
+                    return;
+                }
+
+                // Now perform the actual update
+                updateProgressModal(`Pulling latest ${imageName} image...`);
+
+                const response = await fetch(`/api/containers/${hostId}/${containerId}/update`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const result = await response.json();
+
+                if (response.ok && result.success) {
+                    updateProgressModal('Container updated! Refreshing data...');
+
+                    // Immediate refresh to get new container data
+                    await loadData();
+
+                    hideProgressModal();
+                    showNotification(`Container ${containerName} updated successfully! New ID: ${result.new_container_id?.substring(0, 12)}`, 'success');
+                } else {
+                    hideProgressModal();
+                    showNotification('Failed to update container: ' + (result.error || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                hideProgressModal();
+                console.error('Error updating container:', error);
+                showNotification('Error updating container: ' + error.message, 'error');
+            }
+        },
+        'warning'
+    );
+}
+
+// Load image update settings
+async function loadImageUpdateSettings() {
+    try {
+        const response = await fetch('/api/image-updates/settings');
+        const settings = await response.json();
+
+        if (response.ok) {
+            // Populate settings form
+            document.getElementById('autoCheckEnabled').checked = settings.auto_check_enabled;
+            document.getElementById('checkIntervalHours').value = settings.check_interval_hours;
+            document.getElementById('onlyCheckLatestTags').checked = settings.only_check_latest_tags;
+        }
+    } catch (error) {
+        console.error('Error loading image update settings:', error);
+    }
+}
+
+// Save image update settings
+async function saveImageUpdateSettings() {
+    const settings = {
+        auto_check_enabled: document.getElementById('autoCheckEnabled').checked,
+        check_interval_hours: parseInt(document.getElementById('checkIntervalHours').value),
+        only_check_latest_tags: document.getElementById('onlyCheckLatestTags').checked
+    };
+
+    const statusEl = document.getElementById('imageUpdateSaveStatus');
+
+    try {
+        const response = await fetch('/api/image-updates/settings', {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(settings)
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            statusEl.textContent = '✓ Settings saved successfully';
+            statusEl.style.color = 'green';
+            setTimeout(() => { statusEl.textContent = ''; }, 3000);
+        } else {
+            statusEl.textContent = '✗ Failed to save: ' + (result.error || 'Unknown error');
+            statusEl.style.color = 'red';
+        }
+    } catch (error) {
+        console.error('Error saving settings:', error);
+        statusEl.textContent = '✗ Error: ' + error.message;
+        statusEl.style.color = 'red';
+    }
+}
+
+// Show progress modal
+function showProgressModal(title, message) {
+    const modal = document.getElementById('progressModal');
+    if (!modal) {
+        // Create modal if it doesn't exist
+        const modalHtml = `
+            <div id="progressModal" class="modal">
+                <div class="modal-content">
+                    <h2 id="progressTitle">Progress</h2>
+                    <p id="progressMessage">Please wait...</p>
+                    <div class="progress-bar">
+                        <div class="progress-bar-fill"></div>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+    }
+
+    document.getElementById('progressTitle').textContent = title;
+    document.getElementById('progressMessage').textContent = message;
+    document.getElementById('progressModal').classList.add('show');
+}
+
+// Update progress modal message
+function updateProgressModal(message) {
+    const messageEl = document.getElementById('progressMessage');
+    if (messageEl) {
+        messageEl.textContent = message;
+    }
+}
+
+// Hide progress modal
+function hideProgressModal() {
+    const modal = document.getElementById('progressModal');
+    if (modal) {
+        modal.classList.remove('show');
     }
 }

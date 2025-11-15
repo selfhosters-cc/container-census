@@ -251,3 +251,46 @@ func (s *Scanner) getAgentInfo(ctx context.Context, host models.Host) (*models.A
 
 	return &info, nil
 }
+
+// Agent-specific image update operations
+
+func (s *Scanner) pullAgentImage(ctx context.Context, host models.Host, imageName string) error {
+	body := map[string]string{"image": imageName}
+	resp, err := s.agentRequest(ctx, host, "POST", "/api/images/pull", body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("agent returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
+}
+
+func (s *Scanner) recreateAgentContainer(ctx context.Context, host models.Host, containerID string, dryRun bool) (*models.ContainerRecreateResult, error) {
+	path := fmt.Sprintf("/api/containers/%s/recreate", containerID)
+	if dryRun {
+		path += "?dry_run=true"
+	}
+
+	resp, err := s.agentRequest(ctx, host, "POST", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("agent returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result models.ContainerRecreateResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}

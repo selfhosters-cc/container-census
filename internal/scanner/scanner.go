@@ -567,3 +567,175 @@ func (s *Scanner) GetAgentInfo(ctx context.Context, host models.Host) (*models.A
 
 	return s.getAgentInfo(ctx, host)
 }
+
+// Image Update Operations
+
+// CheckImageUpdate checks if a newer version of a container's image is available
+func (s *Scanner) CheckImageUpdate(ctx context.Context, host models.Host, imageName, localDigest string) (*models.ImageUpdateInfo, error) {
+	// This is handled by the registry client, not Docker API
+	// The scanner just provides a convenient wrapper that could be extended
+	// to handle agent-specific logic if needed in the future
+	return nil, fmt.Errorf("use registry client directly for update checks")
+}
+
+// PullImage pulls an image on a specific host
+func (s *Scanner) PullImage(ctx context.Context, host models.Host, imageName string) error {
+	if isAgentHost(host.Address) {
+		return s.pullAgentImage(ctx, host, imageName)
+	}
+
+	dockerClient, err := s.createClient(host.Address)
+	if err != nil {
+		return fmt.Errorf("failed to create docker client: %w", err)
+	}
+	defer dockerClient.Close()
+
+	// Pull the image
+	reader, err := dockerClient.ImagePull(ctx, imageName, imagetypes.PullOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to pull image: %w", err)
+	}
+	defer reader.Close()
+
+	// Read the output to ensure the pull completes
+	// We don't stream progress here, just wait for completion
+	_, err = io.Copy(io.Discard, reader)
+	if err != nil {
+		return fmt.Errorf("failed to complete image pull: %w", err)
+	}
+
+	return nil
+}
+
+// RecreateContainer recreates a container with a new image while preserving configuration
+func (s *Scanner) RecreateContainer(ctx context.Context, host models.Host, containerID string, dryRun bool) (*models.ContainerRecreateResult, error) {
+	if isAgentHost(host.Address) {
+		return s.recreateAgentContainer(ctx, host, containerID, dryRun)
+	}
+
+	dockerClient, err := s.createClient(host.Address)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create docker client: %w", err)
+	}
+	defer dockerClient.Close()
+
+	// Inspect the container to get its configuration
+	containerJSON, err := dockerClient.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect container: %w", err)
+	}
+
+	oldImageID := containerJSON.Image
+	imageName := containerJSON.Config.Image
+
+	// Build the container config for preview/recreation
+	config := map[string]interface{}{
+		"name":          containerJSON.Name,
+		"image":         imageName,
+		"env":           containerJSON.Config.Env,
+		"cmd":           containerJSON.Config.Cmd,
+		"entrypoint":    containerJSON.Config.Entrypoint,
+		"working_dir":   containerJSON.Config.WorkingDir,
+		"user":          containerJSON.Config.User,
+		"exposed_ports": containerJSON.Config.ExposedPorts,
+		"labels":        containerJSON.Config.Labels,
+		"volumes":       containerJSON.Config.Volumes,
+		"host_config": map[string]interface{}{
+			"binds":           containerJSON.HostConfig.Binds,
+			"port_bindings":   containerJSON.HostConfig.PortBindings,
+			"restart_policy":  containerJSON.HostConfig.RestartPolicy,
+			"network_mode":    containerJSON.HostConfig.NetworkMode,
+			"privileged":      containerJSON.HostConfig.Privileged,
+			"cap_add":         containerJSON.HostConfig.CapAdd,
+			"cap_drop":        containerJSON.HostConfig.CapDrop,
+			"dns":             containerJSON.HostConfig.DNS,
+			"extra_hosts":     containerJSON.HostConfig.ExtraHosts,
+			"volume_driver":   containerJSON.HostConfig.VolumeDriver,
+			"volumes_from":    containerJSON.HostConfig.VolumesFrom,
+		},
+		"network_settings": map[string]interface{}{
+			"networks": containerJSON.NetworkSettings.Networks,
+		},
+	}
+
+	// If dry-run, return the config without executing
+	if dryRun {
+		return &models.ContainerRecreateResult{
+			Success:        true,
+			OldContainerID: containerID,
+			OldImageID:     oldImageID,
+			Config:         config,
+		}, nil
+	}
+
+	// Stop the container
+	timeout := 10
+	stopOptions := containertypes.StopOptions{
+		Timeout: &timeout,
+	}
+	if err := dockerClient.ContainerStop(ctx, containerID, stopOptions); err != nil {
+		return nil, fmt.Errorf("failed to stop container: %w", err)
+	}
+
+	// Remove the old container (but keep volumes)
+	if err := dockerClient.ContainerRemove(ctx, containerID, containertypes.RemoveOptions{
+		RemoveVolumes: false,
+		Force:         false,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to remove old container: %w", err)
+	}
+
+	// Create new container with the same configuration
+	containerName := strings.TrimPrefix(containerJSON.Name, "/")
+
+	createResp, err := dockerClient.ContainerCreate(
+		ctx,
+		containerJSON.Config,
+		containerJSON.HostConfig,
+		nil, // NetworkingConfig will be set via network connect
+		nil, // Platform
+		containerName,
+	)
+	if err != nil {
+		// Try to restart the old container if creation fails
+		// (but it's already removed, so this will likely fail too)
+		return nil, fmt.Errorf("failed to create new container: %w", err)
+	}
+
+	newContainerID := createResp.ID
+
+	// Connect to networks (excluding the default network which is handled by NetworkMode)
+	for networkName, networkConfig := range containerJSON.NetworkSettings.Networks {
+		// Skip the default bridge network as it's handled by NetworkMode
+		if networkName == "bridge" && containerJSON.HostConfig.NetworkMode == "bridge" {
+			continue
+		}
+
+		err = dockerClient.NetworkConnect(ctx, networkName, newContainerID, networkConfig)
+		if err != nil {
+			log.Printf("Warning: failed to connect to network %s: %v", networkName, err)
+		}
+	}
+
+	// Start the new container
+	if err := dockerClient.ContainerStart(ctx, newContainerID, containertypes.StartOptions{}); err != nil {
+		return nil, fmt.Errorf("failed to start new container: %w", err)
+	}
+
+	// Get the new image ID
+	newContainerJSON, err := dockerClient.ContainerInspect(ctx, newContainerID)
+	if err != nil {
+		log.Printf("Warning: failed to inspect new container: %v", err)
+	}
+	newImageID := newContainerJSON.Image
+
+	return &models.ContainerRecreateResult{
+		Success:        true,
+		OldContainerID: containerID,
+		NewContainerID: newContainerID,
+		OldImageID:     oldImageID,
+		NewImageID:     newImageID,
+		KeptOldImage:   true, // We don't remove the old image
+		Config:         config,
+	}, nil
+}

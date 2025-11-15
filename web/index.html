@@ -227,6 +227,9 @@
                     <button id="dashboardScanBtn" class="btn btn-primary btn-lg">
                         <span>🔄</span> Scan All Hosts
                     </button>
+                    <button onclick="checkAllUpdates()" class="btn btn-info btn-lg">
+                        <span>⬆️</span> Check Updates
+                    </button>
                 </div>
             </div>
 
@@ -994,6 +997,45 @@
                 </div>
 
                 <div class="settings-card">
+                    <h3>⬆️ Image Update Management</h3>
+                    <p class="settings-description">
+                        Configure automatic checking for container image updates. Container Census can monitor your :latest tagged containers and notify you when new images are available.
+                    </p>
+
+                    <div class="alert alert-info" style="margin-bottom: 20px; padding: 12px; background: #e3f2fd; border: 1px solid #90caf9; border-radius: 4px; font-size: 14px;">
+                        <strong>ℹ️ Note:</strong> Only containers using :latest tags are supported. Updates preserve all container configuration (volumes, environment variables, networks, ports).
+                    </div>
+
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 20px; padding: 12px; background: #f8f9fa; border-radius: 4px;">
+                        <label class="checkbox-label" style="margin: 0;">
+                            <input type="checkbox" id="autoCheckEnabled" class="checkbox-input">
+                            <span class="checkbox-text" style="font-weight: 500;">Enable Automatic Update Checking</span>
+                        </label>
+                    </div>
+
+                    <div class="frequency-group" style="margin-bottom: 20px;">
+                        <label for="checkIntervalHours" class="frequency-label">Check Interval:</label>
+                        <select id="checkIntervalHours" class="frequency-select">
+                            <option value="1">Every hour</option>
+                            <option value="6">Every 6 hours</option>
+                            <option value="12">Every 12 hours</option>
+                            <option value="24">Every 24 hours (recommended)</option>
+                            <option value="48">Every 48 hours</option>
+                            <option value="168">Weekly</option>
+                        </select>
+                        <button onclick="saveImageUpdateSettings()" class="btn btn-primary" style="margin-left: 10px;">Save Settings</button>
+                        <span id="imageUpdateSaveStatus" class="save-status-inline"></span>
+                    </div>
+
+                    <div style="display: flex; align-items: center; gap: 10px; padding: 12px; background: #f8f9fa; border-radius: 4px;">
+                        <label class="checkbox-label" style="margin: 0;">
+                            <input type="checkbox" id="onlyCheckLatestTags" class="checkbox-input" checked disabled>
+                            <span class="checkbox-text" style="font-size: 13px; color: var(--text-secondary);">Only check :latest tagged images (required)</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="settings-card">
                     <h3>💾 Configuration Backup & Migration</h3>
                     <p class="settings-description">
                         Export your current settings to a YAML file for backup, or import settings from a YAML file to migrate configurations.
@@ -1091,6 +1133,7 @@
                 <button class="close-btn" onclick="closeLogModal()">&times;</button>
             </div>
             <div class="log-search-bar">
+                <button class="btn btn-sm btn-primary" onclick="refreshLogs()" title="Refresh logs">🔄 Refresh</button>
                 <input type="text" id="logSearchInput" placeholder="Search logs..." class="log-search-input">
                 <button class="btn btn-sm" onclick="searchLogs('prev')" title="Previous match">↑</button>
                 <button class="btn btn-sm" onclick="searchLogs('next')" title="Next match">↓</button>
@@ -1557,6 +1600,7 @@
         </div>
     </div>
 
+    <!-- Image Update Settings Modal -->
     <!-- Changelog Modal -->
     <div id="changelogModal" class="modal">
         <div class="modal-content modal-large">

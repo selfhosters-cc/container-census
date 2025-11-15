@@ -5,6 +5,72 @@ All notable changes to Container Census will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Image Update Management**: Check for and apply updates to containers running :latest tagged images
+  - Manual update checks via "Check Updates" button in dashboard or per-container check
+  - Automatic background checking at configurable intervals (default: disabled)
+  - Visual update badges on container cards showing available updates
+  - One-click update workflow: pull new image + recreate container with preserved configuration
+  - Preserves all container settings during update (env vars, volumes, ports, networks, labels, restart policy)
+  - Dry-run mode to preview changes before applying
+  - Bulk update operations for multiple containers
+  - Docker Registry v2 API integration for anonymous digest comparison
+  - Supports both Docker Hub and private registries (public images only)
+  - Agent support for remote container updates
+  - Database-backed configuration (no config.yaml dependency)
+  - Settings modal with real-time configuration updates (no restart required)
+
+- **Image Update Configuration**:
+  - `auto_check_enabled`: Enable/disable automatic background checking
+  - `check_interval_hours`: Check frequency (default: 24 hours)
+  - `only_check_latest_tags`: Restrict to :latest tags only (default: true)
+
+- **Image Update API Endpoints**:
+  - `GET /api/image-updates/settings` - Get current update settings
+  - `PUT /api/image-updates/settings` - Update configuration (takes effect immediately)
+  - `POST /api/containers/{host_id}/{container_id}/check-update` - Check single container
+  - `POST /api/containers/{host_id}/{container_id}/update` - Update single container
+  - `POST /api/containers/bulk-check-updates` - Check all :latest containers
+  - `POST /api/containers/bulk-update` - Update multiple containers
+
+- **Agent Image Update Support**:
+  - `POST /api/images/pull` - Pull new image on remote host
+  - `POST /api/containers/{id}/recreate` - Recreate container with new image
+  - Full configuration preservation during remote updates
+
+- **Database Schema Updates**:
+  - `containers.update_available` - Boolean flag for available updates
+  - `containers.last_update_check` - Timestamp of last check
+  - `image_update_settings` table - Persistent configuration storage
+
+- **Frontend Features**:
+  - Blue "Update" badge with pulsing animation on containers with available updates
+  - "Check Update" and "Update Container" buttons on each container card
+  - "Check Updates" and "Update Settings" buttons in dashboard hero section
+  - Progress modals showing image pull and container recreation status
+  - Confirmation dialogs before applying updates
+  - Filter containers by update availability
+  - Onboarding tour step for image update feature
+
+- **Background Processing**:
+  - Dynamic settings reload every 5 minutes (no restart required)
+  - Automatic ticker interval adjustment when configuration changes
+  - Scheduled checks based on configured interval
+  - Only checks running containers with :latest tags
+  - Logs update detection and check completion
+
+### Technical Details
+
+- Registry client package (`internal/registry/`) handles Docker Hub authentication and manifest fetching
+- Scanner extensions (`internal/scanner/`) support image pulling and container recreation
+- Image digest normalization for accurate comparison (handles sha256: prefix, truncation)
+- Preserves Docker Compose compatibility (updates don't conflict with compose files since :latest tag remains valid)
+- Old images retained after update for rollback capability
+- Works with all connection types: unix://, agent://, tcp://, ssh://
+
 ## [1.5.0] - 2025-11-04
 
 ### Changed

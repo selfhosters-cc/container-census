@@ -15,6 +15,7 @@ import (
 	"github.com/container-census/container-census/internal/auth"
 	"github.com/container-census/container-census/internal/models"
 	"github.com/container-census/container-census/internal/notifications"
+	"github.com/container-census/container-census/internal/registry"
 	"github.com/container-census/container-census/internal/scanner"
 	"github.com/container-census/container-census/internal/storage"
 	"github.com/container-census/container-census/internal/telemetry"
@@ -26,6 +27,7 @@ import (
 type Server struct {
 	db                    *storage.DB
 	scanner               *scanner.Scanner
+	registryClient        *registry.Client
 	router                *mux.Router
 	telemetryScheduler    *telemetry.Scheduler
 	telemetryContext      context.Context
@@ -49,11 +51,12 @@ type TelemetryScheduler interface {
 // New creates a new API server
 func New(db *storage.DB, scanner *scanner.Scanner, scanInterval int, authConfig auth.Config) *Server {
 	s := &Server{
-		db:           db,
-		scanner:      scanner,
-		router:       mux.NewRouter(),
-		scanInterval: scanInterval,
-		authConfig:   authConfig,
+		db:             db,
+		scanner:        scanner,
+		registryClient: registry.NewClient(),
+		router:         mux.NewRouter(),
+		scanInterval:   scanInterval,
+		authConfig:     authConfig,
 	}
 
 	s.setupRoutes()
@@ -196,6 +199,14 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/images/host/{id}", s.handleGetImagesByHost).Methods("GET")
 	api.HandleFunc("/images/{host_id}/{image_id}", s.handleRemoveImage).Methods("DELETE")
 	api.HandleFunc("/images/host/{id}/prune", s.handlePruneImages).Methods("POST")
+
+	// Image update endpoints
+	api.HandleFunc("/image-updates/settings", s.handleGetImageUpdateSettings).Methods("GET")
+	api.HandleFunc("/image-updates/settings", s.handleUpdateImageUpdateSettings).Methods("PUT")
+	api.HandleFunc("/containers/{host_id}/{container_id}/check-update", s.handleCheckContainerUpdate).Methods("POST")
+	api.HandleFunc("/containers/{host_id}/{container_id}/update", s.handleUpdateContainer).Methods("POST")
+	api.HandleFunc("/containers/bulk-check-updates", s.handleBulkCheckUpdates).Methods("POST")
+	api.HandleFunc("/containers/bulk-update", s.handleBulkUpdate).Methods("POST")
 
 	// Scan endpoints
 	api.HandleFunc("/scan", s.handleTriggerScan).Methods("POST")
@@ -1633,4 +1644,329 @@ func (s *Server) handleGetChangelog(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	w.Write(content)
+}
+
+// Image update handlers
+
+// handleGetImageUpdateSettings gets image update settings
+func (s *Server) handleGetImageUpdateSettings(w http.ResponseWriter, r *http.Request) {
+	settings, err := s.db.GetImageUpdateSettings()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get settings: "+err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, settings)
+}
+
+// handleUpdateImageUpdateSettings updates image update settings
+func (s *Server) handleUpdateImageUpdateSettings(w http.ResponseWriter, r *http.Request) {
+	var settings models.ImageUpdateSettings
+	if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if err := s.db.SaveImageUpdateSettings(&settings); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, settings)
+}
+
+// handleCheckContainerUpdate checks if a container has an image update available
+func (s *Server) handleCheckContainerUpdate(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	hostIDStr := vars["host_id"]
+	containerID := vars["container_id"]
+
+	hostID, err := strconv.ParseInt(hostIDStr, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid host ID")
+		return
+	}
+
+	// Get host
+	_, err = s.db.GetHost(hostID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Host not found")
+		return
+	}
+
+	// Get latest containers for this host
+	containers, err := s.db.GetLatestContainers()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get containers")
+		return
+	}
+
+	// Find the container (match by ID or Name for compatibility)
+	var container *models.Container
+	for i := range containers {
+		if (containers[i].ID == containerID || containers[i].Name == containerID) && containers[i].HostID == hostID {
+			container = &containers[i]
+			break
+		}
+	}
+
+	if container == nil {
+		respondError(w, http.StatusNotFound, "Container not found")
+		return
+	}
+
+	// Check if image uses :latest tag
+	imageName := container.Image
+	if !strings.HasSuffix(imageName, ":latest") && !strings.Contains(imageName, ":") {
+		imageName = imageName + ":latest"
+	}
+
+	if !strings.HasSuffix(imageName, ":latest") {
+		respondJSON(w, http.StatusOK, map[string]interface{}{
+			"available": false,
+			"message":   "Only :latest tags are supported for update checking",
+			"image":     container.Image,
+			"tag":       strings.Split(container.Image, ":")[len(strings.Split(container.Image, ":"))-1],
+		})
+		return
+	}
+
+	// Check for updates
+	updateInfo, err := s.registryClient.CheckImageUpdate(r.Context(), imageName, container.ImageID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to check for updates: "+err.Error())
+		return
+	}
+
+	// Save the update status using the container's ID from database
+	if err := s.db.SaveContainerUpdateStatus(container.ID, hostID, updateInfo.Available); err != nil {
+		log.Printf("Failed to save update status: %v", err)
+	}
+
+	respondJSON(w, http.StatusOK, updateInfo)
+}
+
+// handleUpdateContainer pulls new image and recreates container
+func (s *Server) handleUpdateContainer(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	hostIDStr := vars["host_id"]
+	containerID := vars["container_id"]
+
+	hostID, err := strconv.ParseInt(hostIDStr, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid host ID")
+		return
+	}
+
+	// Check for dry_run parameter
+	dryRun := r.URL.Query().Get("dry_run") == "true"
+
+	// Get host
+	host, err := s.db.GetHost(hostID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Host not found")
+		return
+	}
+
+	// Get container info
+	containers, err := s.db.GetLatestContainers()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get containers")
+		return
+	}
+
+	var container *models.Container
+	for i := range containers {
+		// Match by ID or Name (frontend now sends name, but support both for compatibility)
+		if (containers[i].ID == containerID || containers[i].Name == containerID) && containers[i].HostID == hostID {
+			container = &containers[i]
+			break
+		}
+	}
+
+	if container == nil {
+		respondError(w, http.StatusNotFound, "Container not found")
+		return
+	}
+
+	if !dryRun {
+		// Pull the new image first
+		log.Printf("Pulling image %s on host %s", container.Image, host.Name)
+		if err := s.scanner.PullImage(r.Context(), *host, container.Image); err != nil {
+			respondError(w, http.StatusInternalServerError, "Failed to pull image: "+err.Error())
+			return
+		}
+	}
+
+	// Recreate the container using the container name (more reliable than short ID)
+	result, err := s.scanner.RecreateContainer(r.Context(), *host, container.Name, dryRun)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to recreate container: "+err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, result)
+}
+
+// handleBulkCheckUpdates checks multiple containers for updates
+func (s *Server) handleBulkCheckUpdates(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Containers []struct {
+			HostID      int64  `json:"host_id"`
+			ContainerID string `json:"container_id"`
+		} `json:"containers"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	results := make(map[string]interface{})
+
+	for _, c := range req.Containers {
+		// Get host
+		_, err := s.db.GetHost(c.HostID)
+		if err != nil {
+			results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = map[string]interface{}{
+				"error": "Host not found",
+			}
+			continue
+		}
+
+		// Get container info
+		containers, err := s.db.GetLatestContainers()
+		if err != nil {
+			results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = map[string]interface{}{
+				"error": "Failed to get containers",
+			}
+			continue
+		}
+
+		var container *models.Container
+		for i := range containers {
+			if containers[i].ID == c.ContainerID && containers[i].HostID == c.HostID {
+				container = &containers[i]
+				break
+			}
+		}
+
+		if container == nil {
+			results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = map[string]interface{}{
+				"error": "Container not found",
+			}
+			continue
+		}
+
+		// Check if image uses :latest tag
+		imageName := container.Image
+		if !strings.HasSuffix(imageName, ":latest") && !strings.Contains(imageName, ":") {
+			imageName = imageName + ":latest"
+		}
+
+		if !strings.HasSuffix(imageName, ":latest") {
+			results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = map[string]interface{}{
+				"available": false,
+				"message":   "Only :latest tags supported",
+			}
+			continue
+		}
+
+		// Check for updates
+		updateInfo, err := s.registryClient.CheckImageUpdate(r.Context(), imageName, container.ImageID)
+		if err != nil {
+			results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = map[string]interface{}{
+				"error": err.Error(),
+			}
+			continue
+		}
+
+		// Save the update status
+		if err := s.db.SaveContainerUpdateStatus(c.ContainerID, c.HostID, updateInfo.Available); err != nil {
+			log.Printf("Failed to save update status: %v", err)
+		}
+
+		results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = updateInfo
+	}
+
+	respondJSON(w, http.StatusOK, results)
+}
+
+// handleBulkUpdate updates multiple containers
+func (s *Server) handleBulkUpdate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Containers []struct {
+			HostID      int64  `json:"host_id"`
+			ContainerID string `json:"container_id"`
+		} `json:"containers"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	results := make(map[string]interface{})
+
+	for _, c := range req.Containers {
+		// Get host
+		host, err := s.db.GetHost(c.HostID)
+		if err != nil {
+			results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = map[string]interface{}{
+				"success": false,
+				"error":   "Host not found",
+			}
+			continue
+		}
+
+		// Get container info
+		containers, err := s.db.GetLatestContainers()
+		if err != nil {
+			results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = map[string]interface{}{
+				"success": false,
+				"error":   "Failed to get containers",
+			}
+			continue
+		}
+
+		var container *models.Container
+		for i := range containers {
+			if containers[i].ID == c.ContainerID && containers[i].HostID == c.HostID {
+				container = &containers[i]
+				break
+			}
+		}
+
+		if container == nil {
+			results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = map[string]interface{}{
+				"success": false,
+				"error":   "Container not found",
+			}
+			continue
+		}
+
+		// Pull the new image first
+		log.Printf("Pulling image %s on host %s", container.Image, host.Name)
+		if err := s.scanner.PullImage(r.Context(), *host, container.Image); err != nil {
+			results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = map[string]interface{}{
+				"success": false,
+				"error":   "Failed to pull image: " + err.Error(),
+			}
+			continue
+		}
+
+		// Recreate the container
+		result, err := s.scanner.RecreateContainer(r.Context(), *host, c.ContainerID, false)
+		if err != nil {
+			results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = map[string]interface{}{
+				"success": false,
+				"error":   "Failed to recreate container: " + err.Error(),
+			}
+			continue
+		}
+
+		results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = result
+	}
+
+	respondJSON(w, http.StatusOK, results)
 }

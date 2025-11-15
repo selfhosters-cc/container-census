@@ -51,6 +51,7 @@ class OnboardingTour {
                     <p>Container Census is a powerful multi-host Docker monitoring system.</p>
                     <p><strong>What's new in this version:</strong></p>
                     <ul>
+                        <li>Image update management for :latest containers</li>
                         <li>Vulnerability scanning with Trivy</li>
                         <li>CPU & memory monitoring with historical trends</li>
                         <li>Advanced notification system</li>
@@ -281,7 +282,60 @@ class OnboardingTour {
             }
         });
 
-        // Step 7: Activity Log
+        // Step 7: Image Updates
+        this.tour.addStep({
+            id: 'image-updates',
+            title: 'Image Update Management',
+            text: `
+                <div class="onboarding-content">
+                    <p>Keep your containers up-to-date with automated image update checking.</p>
+                    <p><strong>Features:</strong></p>
+                    <ul>
+                        <li>Check for newer versions of :latest tagged images</li>
+                        <li>Pull updated images and recreate containers</li>
+                        <li>Preserve all container configuration during updates</li>
+                        <li>Automatic background checking at configurable intervals</li>
+                    </ul>
+                    <p>Look for the blue "Update" badge on container cards, or use the "Check Updates" button in the dashboard.</p>
+                    <div id="update-enable-container" style="margin-top: 15px;">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" id="enableImageUpdates" checked>
+                            <span>Enable automatic update checking (every 24 hours)</span>
+                        </label>
+                    </div>
+                </div>
+            `,
+            attachTo: {
+                element: '[data-tab="containers"]',
+                on: 'bottom'
+            },
+            buttons: [
+                {
+                    text: 'Back',
+                    action: this.tour.back,
+                    classes: 'shepherd-button-secondary'
+                },
+                {
+                    text: 'Next',
+                    action: async () => {
+                        const enabled = document.getElementById('enableImageUpdates')?.checked;
+                        if (enabled !== undefined) {
+                            await this.updateImageUpdateSettings(enabled);
+                        }
+                        this.tour.next();
+                    }
+                }
+            ],
+            when: {
+                show: () => {
+                    if (typeof switchTab === 'function') {
+                        switchTab('containers', false);
+                    }
+                }
+            }
+        });
+
+        // Step 8: Activity Log
         this.tour.addStep({
             id: 'activity',
             title: 'Activity Log',
@@ -322,7 +376,7 @@ class OnboardingTour {
             }
         });
 
-        // Step 8: Telemetry Opt-in (final step)
+        // Step 9: Telemetry Opt-in (final step)
         this.tour.addStep({
             id: 'telemetry',
             title: 'Join the Selfhosting Community',
@@ -458,6 +512,32 @@ class OnboardingTour {
             }
         } catch (err) {
             console.error('Failed to update vulnerability settings:', err);
+        }
+    }
+
+    // Update image update settings
+    async updateImageUpdateSettings(enabled) {
+        try {
+            const settings = {
+                auto_check_enabled: enabled,
+                check_interval_hours: 24,
+                only_check_latest_tags: true
+            };
+
+            await fetch('/api/image-updates/settings', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Basic ' + btoa(localStorage.getItem('auth') || ':')
+                },
+                body: JSON.stringify(settings)
+            });
+
+            if (enabled) {
+                showToast('Updates', 'Automatic update checking enabled', 'success');
+            }
+        } catch (err) {
+            console.error('Failed to update image update settings:', err);
         }
     }
 

@@ -90,6 +90,10 @@ func (a *Agent) setupRoutes() {
 	api.HandleFunc("/images", a.handleListImages).Methods("GET")
 	api.HandleFunc("/images/{id}/remove", a.handleRemoveImage).Methods("DELETE")
 	api.HandleFunc("/images/prune", a.handlePruneImages).Methods("POST")
+	api.HandleFunc("/images/pull", a.handlePullImage).Methods("POST")
+
+	// Container update operations
+	api.HandleFunc("/containers/{id}/recreate", a.handleRecreateContainer).Methods("POST")
 
 	// Telemetry endpoint
 	api.HandleFunc("/telemetry", a.handleGetTelemetry).Methods("GET")
@@ -492,6 +496,181 @@ func (a *Agent) handlePruneImages(w http.ResponseWriter, r *http.Request) {
 		"message":         "Images pruned",
 		"space_reclaimed": report.SpaceReclaimed,
 	})
+}
+
+// Pull image handler
+func (a *Agent) handlePullImage(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var req struct {
+		Image string `json:"image"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if req.Image == "" {
+		respondError(w, http.StatusBadRequest, "Image name is required")
+		return
+	}
+
+	// Pull the image
+	reader, err := a.dockerClient.ImagePull(ctx, req.Image, image.PullOptions{})
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to pull image: "+err.Error())
+		return
+	}
+	defer reader.Close()
+
+	// Read the output to ensure the pull completes
+	_, err = io.Copy(io.Discard, reader)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to complete image pull: "+err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"message": "Image pulled successfully",
+		"image":   req.Image,
+	})
+}
+
+// Recreate container handler
+func (a *Agent) handleRecreateContainer(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	vars := mux.Vars(r)
+	containerID := vars["id"]
+
+	dryRun := r.URL.Query().Get("dry_run") == "true"
+
+	// Inspect the container to get its configuration
+	containerJSON, err := a.dockerClient.ContainerInspect(ctx, containerID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to inspect container: "+err.Error())
+		return
+	}
+
+	oldImageID := containerJSON.Image
+	imageName := containerJSON.Config.Image
+
+	// Build the container config for preview/recreation
+	config := map[string]interface{}{
+		"name":          containerJSON.Name,
+		"image":         imageName,
+		"env":           containerJSON.Config.Env,
+		"cmd":           containerJSON.Config.Cmd,
+		"entrypoint":    containerJSON.Config.Entrypoint,
+		"working_dir":   containerJSON.Config.WorkingDir,
+		"user":          containerJSON.Config.User,
+		"exposed_ports": containerJSON.Config.ExposedPorts,
+		"labels":        containerJSON.Config.Labels,
+		"volumes":       containerJSON.Config.Volumes,
+		"host_config": map[string]interface{}{
+			"binds":          containerJSON.HostConfig.Binds,
+			"port_bindings":  containerJSON.HostConfig.PortBindings,
+			"restart_policy": containerJSON.HostConfig.RestartPolicy,
+			"network_mode":   containerJSON.HostConfig.NetworkMode,
+			"privileged":     containerJSON.HostConfig.Privileged,
+			"cap_add":        containerJSON.HostConfig.CapAdd,
+			"cap_drop":       containerJSON.HostConfig.CapDrop,
+			"dns":            containerJSON.HostConfig.DNS,
+			"extra_hosts":    containerJSON.HostConfig.ExtraHosts,
+			"volume_driver":  containerJSON.HostConfig.VolumeDriver,
+			"volumes_from":   containerJSON.HostConfig.VolumesFrom,
+		},
+		"network_settings": map[string]interface{}{
+			"networks": containerJSON.NetworkSettings.Networks,
+		},
+	}
+
+	// If dry-run, return the config without executing
+	if dryRun {
+		result := models.ContainerRecreateResult{
+			Success:        true,
+			OldContainerID: containerID,
+			OldImageID:     oldImageID,
+			Config:         config,
+		}
+		respondJSON(w, http.StatusOK, result)
+		return
+	}
+
+	// Stop the container
+	timeout := 10
+	stopOptions := container.StopOptions{
+		Timeout: &timeout,
+	}
+	if err := a.dockerClient.ContainerStop(ctx, containerID, stopOptions); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to stop container: "+err.Error())
+		return
+	}
+
+	// Remove the old container (but keep volumes)
+	if err := a.dockerClient.ContainerRemove(ctx, containerID, container.RemoveOptions{
+		RemoveVolumes: false,
+		Force:         false,
+	}); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to remove old container: "+err.Error())
+		return
+	}
+
+	// Create new container with the same configuration
+	containerName := strings.TrimPrefix(containerJSON.Name, "/")
+
+	createResp, err := a.dockerClient.ContainerCreate(
+		ctx,
+		containerJSON.Config,
+		containerJSON.HostConfig,
+		nil, // NetworkingConfig will be set via network connect
+		nil, // Platform
+		containerName,
+	)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to create new container: "+err.Error())
+		return
+	}
+
+	newContainerID := createResp.ID
+
+	// Connect to networks (excluding the default network which is handled by NetworkMode)
+	for networkName, networkConfig := range containerJSON.NetworkSettings.Networks {
+		// Skip the default bridge network as it's handled by NetworkMode
+		if networkName == "bridge" && containerJSON.HostConfig.NetworkMode == "bridge" {
+			continue
+		}
+
+		err = a.dockerClient.NetworkConnect(ctx, networkName, newContainerID, networkConfig)
+		if err != nil {
+			log.Printf("Warning: failed to connect to network %s: %v", networkName, err)
+		}
+	}
+
+	// Start the new container
+	if err := a.dockerClient.ContainerStart(ctx, newContainerID, container.StartOptions{}); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to start new container: "+err.Error())
+		return
+	}
+
+	// Get the new image ID
+	newContainerJSON, err := a.dockerClient.ContainerInspect(ctx, newContainerID)
+	if err != nil {
+		log.Printf("Warning: failed to inspect new container: %v", err)
+	}
+	newImageID := newContainerJSON.Image
+
+	result := models.ContainerRecreateResult{
+		Success:        true,
+		OldContainerID: containerID,
+		NewContainerID: newContainerID,
+		OldImageID:     oldImageID,
+		NewImageID:     newImageID,
+		KeptOldImage:   true, // We don't remove the old image
+		Config:         config,
+	}
+
+	respondJSON(w, http.StatusOK, result)
 }
 
 // Telemetry endpoint - returns agent stats for server aggregation
