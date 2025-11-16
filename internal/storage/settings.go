@@ -26,6 +26,9 @@ func GetDefaultSettings() *models.SystemSettings {
 			ThresholdDuration:      120, // 2 minutes
 			CooldownPeriod:         300, // 5 minutes
 		},
+		UI: models.UISettings{
+			CardDesign: "material", // Default to Design 2 (Spacious Material)
+		},
 		UpdatedAt: time.Now(),
 	}
 }
@@ -53,6 +56,7 @@ func (db *DB) LoadSystemSettings() (*models.SystemSettings, error) {
 		Scanner:      models.ScannerSettings{},
 		Telemetry:    models.TelemetrySettings{},
 		Notification: models.NotificationSettings{},
+		UI:           models.UISettings{},
 	}
 
 	// Load scanner settings
@@ -80,6 +84,11 @@ func (db *DB) LoadSystemSettings() (*models.SystemSettings, error) {
 	}
 	if err := db.loadCategorySetting("notification", "cooldown_period", &settings.Notification.CooldownPeriod); err != nil {
 		settings.Notification.CooldownPeriod = 300 // Default
+	}
+
+	// Load UI settings
+	if err := db.loadCategorySetting("ui", "card_design", &settings.UI.CardDesign); err != nil {
+		settings.UI.CardDesign = "material" // Default to Design 2
 	}
 
 	// Get most recent update time
@@ -151,6 +160,11 @@ func (db *DB) SaveSystemSettings(settings *models.SystemSettings) error {
 		return err
 	}
 	if err := db.saveSetting(tx, "notification", "cooldown_period", settings.Notification.CooldownPeriod, "int", "Cooldown between alerts for same container in seconds", now); err != nil {
+		return err
+	}
+
+	// Save UI settings
+	if err := db.saveSetting(tx, "ui", "card_design", settings.UI.CardDesign, "string", "Container card design theme (compact, material, dashboard)", now); err != nil {
 		return err
 	}
 

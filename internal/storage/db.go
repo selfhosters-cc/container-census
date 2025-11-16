@@ -78,6 +78,7 @@ func (db *DB) initSchema() error {
 		name TEXT NOT NULL,
 		image TEXT NOT NULL,
 		image_id TEXT NOT NULL,
+		image_tags TEXT,
 		state TEXT NOT NULL,
 		status TEXT NOT NULL,
 		ports TEXT,
@@ -497,6 +498,21 @@ func (db *DB) runMigrations() error {
 		}
 	}
 
+	// Check if image_tags column exists
+	var imageTagsExists int
+	err = db.conn.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('containers') WHERE name = 'image_tags'`).Scan(&imageTagsExists)
+	if err != nil {
+		return err
+	}
+
+	if imageTagsExists == 0 {
+		if _, err := db.conn.Exec(`ALTER TABLE containers ADD COLUMN image_tags TEXT`); err != nil {
+			if !isSQLiteColumnExistsError(err) {
+				return err
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -659,8 +675,8 @@ func (db *DB) SaveContainers(containers []models.Container) error {
 
 	stmt, err := tx.Prepare(`
 		INSERT INTO containers
-		(id, name, image, image_id, state, status, ports, labels, created, host_id, host_name, scanned_at, networks, volumes, links, compose_project, cpu_percent, memory_usage, memory_limit, memory_percent, update_available, last_update_check)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, name, image, image_id, image_tags, state, status, ports, labels, created, host_id, host_name, scanned_at, networks, volumes, links, compose_project, cpu_percent, memory_usage, memory_limit, memory_percent, update_available, last_update_check)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return err
@@ -674,6 +690,11 @@ func (db *DB) SaveContainers(containers []models.Container) error {
 		}
 
 		labelsJSON, err := json.Marshal(c.Labels)
+		if err != nil {
+			return err
+		}
+
+		imageTagsJSON, err := json.Marshal(c.ImageTags)
 		if err != nil {
 			return err
 		}
@@ -715,7 +736,7 @@ func (db *DB) SaveContainers(containers []models.Container) error {
 		}
 
 		_, err = stmt.Exec(
-			c.ID, c.Name, c.Image, c.ImageID, c.State, c.Status,
+			c.ID, c.Name, c.Image, c.ImageID, string(imageTagsJSON), c.State, c.Status,
 			string(portsJSON), string(labelsJSON), c.Created,
 			c.HostID, c.HostName, c.ScannedAt,
 			string(networksJSON), string(volumesJSON), string(linksJSON), c.ComposeProject,
@@ -733,7 +754,7 @@ func (db *DB) SaveContainers(containers []models.Container) error {
 // GetLatestContainers returns the most recent containers for all hosts
 func (db *DB) GetLatestContainers() ([]models.Container, error) {
 	query := `
-		SELECT c.id, c.name, c.image, c.image_id, c.state, c.status,
+		SELECT c.id, c.name, c.image, c.image_id, c.image_tags, c.state, c.status,
 		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at,
 		       c.networks, c.volumes, c.links, c.compose_project,
 		       c.cpu_percent, c.memory_usage, c.memory_limit, c.memory_percent,
@@ -759,10 +780,11 @@ func (db *DB) GetLatestContainers() ([]models.Container, error) {
 // GetContainersByHost returns latest containers for a specific host
 func (db *DB) GetContainersByHost(hostID int64) ([]models.Container, error) {
 	query := `
-		SELECT c.id, c.name, c.image, c.image_id, c.state, c.status,
+		SELECT c.id, c.name, c.image, c.image_id, c.image_tags, c.state, c.status,
 		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at,
 		       c.networks, c.volumes, c.links, c.compose_project,
-		       c.cpu_percent, c.memory_usage, c.memory_limit, c.memory_percent
+		       c.cpu_percent, c.memory_usage, c.memory_limit, c.memory_percent,
+		       c.update_available, c.last_update_check
 		FROM containers c
 		INNER JOIN (
 			SELECT MAX(scanned_at) as max_scan
@@ -785,10 +807,11 @@ func (db *DB) GetContainersByHost(hostID int64) ([]models.Container, error) {
 // GetContainersHistory returns containers within a time range
 func (db *DB) GetContainersHistory(start, end time.Time) ([]models.Container, error) {
 	query := `
-		SELECT id, name, image, image_id, state, status,
+		SELECT id, name, image, image_id, image_tags, state, status,
 		       ports, labels, created, host_id, host_name, scanned_at,
 		       networks, volumes, links, compose_project,
-		       cpu_percent, memory_usage, memory_limit, memory_percent
+		       cpu_percent, memory_usage, memory_limit, memory_percent,
+		       update_available, last_update_check
 		FROM containers
 		WHERE scanned_at BETWEEN ? AND ?
 		ORDER BY scanned_at DESC, host_name, name
@@ -810,13 +833,14 @@ func (db *DB) scanContainers(rows *sql.Rows) ([]models.Container, error) {
 	for rows.Next() {
 		var c models.Container
 		var portsJSON, labelsJSON, networksJSON, volumesJSON, linksJSON string
+		var imageTagsJSON sql.NullString
 		var composeProject sql.NullString
 		var cpuPercent, memoryPercent sql.NullFloat64
 		var memoryUsage, memoryLimit sql.NullInt64
 		var lastUpdateCheck sql.NullTime
 
 		err := rows.Scan(
-			&c.ID, &c.Name, &c.Image, &c.ImageID, &c.State, &c.Status,
+			&c.ID, &c.Name, &c.Image, &c.ImageID, &imageTagsJSON, &c.State, &c.Status,
 			&portsJSON, &labelsJSON, &c.Created,
 			&c.HostID, &c.HostName, &c.ScannedAt,
 			&networksJSON, &volumesJSON, &linksJSON, &composeProject,
@@ -833,6 +857,12 @@ func (db *DB) scanContainers(rows *sql.Rows) ([]models.Container, error) {
 
 		if err := json.Unmarshal([]byte(labelsJSON), &c.Labels); err != nil {
 			return nil, err
+		}
+
+		if imageTagsJSON.Valid && imageTagsJSON.String != "" && imageTagsJSON.String != "null" {
+			if err := json.Unmarshal([]byte(imageTagsJSON.String), &c.ImageTags); err != nil {
+				return nil, err
+			}
 		}
 
 		if networksJSON != "" && networksJSON != "null" {
@@ -2460,7 +2490,7 @@ func (db *DB) SaveContainerUpdateStatus(containerID string, hostID int64, availa
 // GetContainersWithUpdates returns containers that have updates available
 func (db *DB) GetContainersWithUpdates() ([]models.Container, error) {
 	query := `
-		SELECT c.id, c.name, c.image, c.image_id, c.state, c.status,
+		SELECT c.id, c.name, c.image, c.image_id, c.image_tags, c.state, c.status,
 		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at,
 		       c.networks, c.volumes, c.links, c.compose_project,
 		       c.cpu_percent, c.memory_usage, c.memory_limit, c.memory_percent,

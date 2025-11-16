@@ -15,6 +15,7 @@ let isSidebarOpen = false;
 let vulnerabilityCache = {}; // Cache vulnerability data by imageID
 let vulnerabilityScansMap = {}; // Pre-loaded map of all scans to avoid 404s
 let vulnerabilitySummary = null; // Cache overall summary
+let cardDesignTheme = 'material'; // Default card design theme (compact, material, dashboard)
 
 // Auth credentials (empty if auth is disabled)
 let authUsername = '';
@@ -922,6 +923,7 @@ async function loadTelemetrySchedule() {
     }
 }
 
+// Load UI settings from system settings
 // Auto-refresh
 function startAutoRefresh() {
     const checkbox = document.getElementById('autoRefresh');
@@ -961,6 +963,7 @@ function handleAutoRefreshToggle(e) {
 // Data Loading
 async function loadData() {
     try {
+        await loadUISettings();
         await Promise.all([
             loadHosts(),
             loadContainers(),
@@ -997,6 +1000,17 @@ async function loadContainers() {
         const response = await fetch('/api/containers');
         const data = await response.json();
         const allContainers = Array.isArray(data) ? data : [];
+
+        // Debug: Log first container's image tags
+        if (allContainers.length > 0) {
+            const first = allContainers[0];
+            console.log('DEBUG - First container:', {
+                name: first.name,
+                image: first.image,
+                image_id: first.image_id,
+                image_tags: first.image_tags
+            });
+        }
 
         // Filter to only show containers from enabled hosts
         const enabledHostIds = new Set((hosts || []).filter(h => h.enabled).map(h => h.id));
@@ -1396,79 +1410,177 @@ async function pruneImages(hostId, hostName) {
     );
 }
 
-// Rendering
-function renderContainers(containersToRender) {
-    const container = document.getElementById('containersBody');
-
-    if (containersToRender.length === 0) {
-        container.innerHTML = '<div class="loading">No containers found</div>';
-        return;
+// Theme-specific card renderers
+function renderCompactCard(cont) {
+    // Debug: Log image tags for first container only
+    if (window.debugImageTags !== true) {
+        console.log('Container:', cont.name, 'Image:', cont.image, 'Tags:', cont.image_tags);
+        window.debugImageTags = true;
     }
 
-    container.innerHTML = containersToRender.map(cont => {
-        const isRunning = cont.state === 'running';
-        const isStopped = cont.state === 'exited';
-        const isPaused = cont.state === 'paused';
-        const hasStats = cont.cpu_percent > 0 || cont.memory_usage > 0;
+    const isRunning = cont.state === 'running';
+    const isStopped = cont.state === 'exited';
+    const isPaused = cont.state === 'paused';
+    const hasStats = cont.cpu_percent > 0 || cont.memory_usage > 0;
 
-        // Format CPU
-        let cpuDisplay = '-';
-        if (cont.cpu_percent > 0) {
-            cpuDisplay = cont.cpu_percent.toFixed(1) + '%';
-        }
+    const cpuDisplay = cont.cpu_percent > 0 ? cont.cpu_percent.toFixed(1) + '%' : '-';
+    const memoryMB = cont.memory_usage > 0 ? (cont.memory_usage / 1024 / 1024).toFixed(0) : '-';
+    const limitMB = cont.memory_limit > 0 ? (cont.memory_limit / 1024 / 1024).toFixed(0) : '?';
+    const memoryDisplay = cont.memory_usage > 0 ? `${memoryMB}MB / ${limitMB}MB` : '-';
+    const memoryPercent = cont.memory_percent > 0 ? cont.memory_percent.toFixed(1) : '0';
+    const cpuPercent = cont.cpu_percent > 0 ? cont.cpu_percent.toFixed(1) : '0';
 
-        // Format Memory
-        let memoryDisplay = '-';
-        let memoryPercent = '';
-        if (cont.memory_usage > 0) {
-            const memoryMB = (cont.memory_usage / 1024 / 1024).toFixed(0);
-            const limitMB = cont.memory_limit > 0 ? (cont.memory_limit / 1024 / 1024).toFixed(0) : '?';
-            memoryDisplay = `${memoryMB} / ${limitMB} MB`;
-            if (cont.memory_percent > 0) {
-                memoryPercent = ` (${cont.memory_percent.toFixed(1)}%)`;
-            }
-        }
+    const stateIcon = isRunning ? '✅' : isStopped ? '⏹️' : isPaused ? '⏸️' : '❓';
+    const createdTime = formatDate(cont.created);
+    const statusText = cont.status || '-';
 
-        // State icon
-        const stateIcon = isRunning ? '✅' : isStopped ? '⏸️' : isPaused ? '⏸️' : '❓';
-        const createdTime = formatDate(cont.created);
-        const statusText = cont.status || '-';
-
-        return `
-        <div class="container-card-modern ${cont.state}">
-            <div class="container-card-header-modern">
-                <div class="container-card-left">
-                    <div class="container-status-indicator ${cont.state}">
-                        ${stateIcon}
+    return `
+        <div class="container-card-modern theme-compact ${cont.state}">
+            <div class="metro-status-bar"></div>
+            <div class="metro-content">
+                <div class="metro-header">
+                    <div class="metro-title-section">
+                        <div class="metro-icon">${stateIcon}</div>
+                        <div class="metro-title-info">
+                            <h3 class="metro-name">${escapeHtml(cont.name)}</h3>
+                            <div class="metro-chips">
+                                <span class="chip chip-host">📍 ${escapeHtml(cont.host_name)}</span>
+                                <span class="chip chip-state ${cont.state}">${cont.state}</span>
+                                <span class="chip chip-image" title="${escapeHtml(cont.image)}">🏷️ ${escapeHtml(extractImageTag(cont.image, cont.image_tags))}</span>
+                                <span class="chip chip-time">⏱️ ${createdTime}</span>
+                            </div>
+                        </div>
                     </div>
-                    <div class="container-card-info">
-                        <div class="container-card-name">${escapeHtml(cont.name)}</div>
-                        <div class="container-card-meta">
-                            <span class="meta-item">📍 ${escapeHtml(cont.host_name)}</span>
-                            <span class="meta-item">⏱️ ${createdTime}</span>
-                            <span class="state-badge state-${cont.state}">${cont.state}</span>
+                    <div class="metro-actions">
+                        ${hasStats && isRunning ? `
+                            <button class="btn-icon" onclick="openStatsModal(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')" title="View Stats">📊</button>
+                        ` : ''}
+                        ${hasStats && isRunning ? `
+                            <button class="btn-icon" onclick="viewContainerTimeline(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')" title="Timeline">📈</button>
+                        ` : ''}
+                    </div>
+                </div>
+
+                <div class="metro-details">
+                    <div class="detail-inline">
+                        <span class="detail-label">🖼️ Image:</span>
+                        <code class="detail-value">${escapeHtml(cont.image)}</code>
+                        ${cont.update_available ? '<span class="badge-update">⬆️ Update Available</span>' : ''}
+                    </div>
+                    ${(cont.image.endsWith(':latest') || !cont.image.includes(':')) && isRunning ? `
+                        <button class="btn btn-xs btn-primary" onclick="checkContainerUpdate(${cont.host_id}, '${escapeAttr(cont.name)}', '${escapeAttr(cont.name)}')" title="Check for updates">
+                            🔍 Check
+                        </button>
+                    ` : ''}
+                    ${cont.update_available ? `
+                        <button class="btn btn-xs btn-success" onclick="updateContainer(${cont.host_id}, '${escapeAttr(cont.name)}', '${escapeAttr(cont.name)}', '${escapeAttr(cont.image)}')" title="Update image">
+                            ⬆️ Update
+                        </button>
+                    ` : ''}
+                    ${cont.ports && cont.ports.length > 0 && cont.ports.some(p => p.public_port > 0) ? `
+                    <div class="detail-inline">
+                        <span class="detail-label">🔌 Ports:</span>
+                        <span class="detail-value">${formatPorts(cont.ports)}</span>
+                    </div>
+                    ` : ''}
+                    ${statusText !== '-' ? `
+                    <div class="detail-inline">
+                        <span class="detail-label">📝 Status:</span>
+                        <span class="detail-value">${escapeHtml(statusText)}</span>
+                    </div>
+                    ` : ''}
+                </div>
+
+                ${hasStats ? `
+                <div class="metro-metrics">
+                    <div class="metric-inline">
+                        <span class="metric-icon">💻</span>
+                        <span class="metric-label">CPU</span>
+                        <span class="metric-value">${cpuDisplay}</span>
+                        <div class="metric-bar">
+                            <div class="metric-bar-fill" style="width: ${cpuPercent}%"></div>
+                        </div>
+                    </div>
+                    <div class="metric-inline">
+                        <span class="metric-icon">💾</span>
+                        <span class="metric-label">Memory</span>
+                        <span class="metric-value">${memoryDisplay}</span>
+                        <div class="metric-bar">
+                            <div class="metric-bar-fill" style="width: ${memoryPercent}%"></div>
                         </div>
                     </div>
                 </div>
-                <div class="container-card-actions">
+                ` : ''}
+
+                <div class="metro-footer">
+                    <button class="btn-metro btn-sm" onclick="viewLogs(${cont.host_id}, '${escapeAttr(cont.name)}', '${escapeAttr(cont.name)}')">📋 Logs</button>
+                    ${isRunning ? `
+                        <button class="btn-metro btn-sm warning" onclick="restartContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">🔄 Restart</button>
+                        <button class="btn-metro btn-sm warning" onclick="stopContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">⏹ Stop</button>
+                    ` : ''}
+                    ${isStopped ? `
+                        <button class="btn-metro btn-sm success" onclick="startContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">▶ Start</button>
+                        <button class="btn-metro btn-sm danger" onclick="removeContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">🗑 Remove</button>
+                    ` : ''}
+                    ${isPaused ? `
+                        <button class="btn-metro btn-sm success" onclick="startContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">▶ Resume</button>
+                        <button class="btn-metro btn-sm warning" onclick="stopContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">⏹ Stop</button>
+                    ` : ''}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderMaterialCard(cont) {
+    const isRunning = cont.state === 'running';
+    const isStopped = cont.state === 'exited';
+    const isPaused = cont.state === 'paused';
+    const hasStats = cont.cpu_percent > 0 || cont.memory_usage > 0;
+
+    const cpuDisplay = cont.cpu_percent > 0 ? cont.cpu_percent.toFixed(1) : '0';
+    const memoryMB = cont.memory_usage > 0 ? (cont.memory_usage / 1024 / 1024).toFixed(0) : '0';
+    const limitMB = cont.memory_limit > 0 ? (cont.memory_limit / 1024 / 1024).toFixed(0) : '?';
+    const memoryGB = cont.memory_limit > 0 ? (cont.memory_limit / 1024 / 1024 / 1024).toFixed(1) : '?';
+    const memoryPercent = cont.memory_percent > 0 ? cont.memory_percent.toFixed(1) : '0';
+
+    const stateIcon = isRunning ? '✅' : isStopped ? '⏹️' : isPaused ? '⏸️' : '❓';
+    const createdTime = formatDate(cont.created);
+    const statusText = cont.status || '-';
+
+    return `
+        <div class="container-card-modern theme-material ${cont.state}">
+            <div class="material-header ${cont.state}">
+                <div class="material-header-content">
+                    <div class="material-status-icon">${stateIcon}</div>
+                    <div class="material-title-section">
+                        <h3 class="material-name">${escapeHtml(cont.name)}</h3>
+                        <div class="material-meta">
+                            <span class="material-meta-item">📍 ${escapeHtml(cont.host_name)}</span>
+                            <span class="material-meta-separator">•</span>
+                            <span class="material-meta-item" title="${escapeHtml(cont.image)}">🏷️ ${escapeHtml(extractImageTag(cont.image, cont.image_tags))}</span>
+                            <span class="material-meta-separator">•</span>
+                            <span class="material-meta-item">⏱️ ${createdTime}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="material-header-actions">
                     ${hasStats && isRunning ? `
-                        <button class="btn btn-sm btn-stats" onclick="openStatsModal(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')" title="View Stats">
-                            📊 Stats
-                        </button>
+                        <button class="material-fab" onclick="openStatsModal(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')" title="View Stats">📊</button>
                     ` : ''}
                     ${hasStats && isRunning ? `
-                        <button class="btn btn-sm btn-timeline" onclick="viewContainerTimeline(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')" title="View Timeline">
-                            📅 Timeline
-                        </button>
+                        <button class="material-fab" onclick="viewContainerTimeline(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')" title="Timeline">📈</button>
                     ` : ''}
                 </div>
             </div>
 
-            <div class="container-card-content">
-                <div class="container-detail-row">
-                    <span class="detail-label">🖼️ Image</span>
-                    <code class="detail-value image-value" title="${escapeHtml(cont.image)}">${escapeHtml(cont.image)}</code>
-                    ${cont.update_available ? '<span class="update-badge">⬆️ Update Available</span>' : ''}
+            <div class="material-body">
+                <div class="material-section">
+                    <div class="material-label">Image</div>
+                    <div class="material-value">
+                        <code>${escapeHtml(cont.image)}</code>
+                        ${cont.update_available ? '<span class="material-chip update">⬆️ Update Available</span>' : ''}
+                    </div>
                     ${(cont.image.endsWith(':latest') || !cont.image.includes(':')) && isRunning ? `
                         <button class="btn btn-xs btn-primary" onclick="checkContainerUpdate(${cont.host_id}, '${escapeAttr(cont.name)}', '${escapeAttr(cont.name)}')" title="Check for updates">
                             🔍 Check
@@ -1481,64 +1593,195 @@ function renderContainers(containersToRender) {
                     ` : ''}
                 </div>
 
-                ${statusText !== '-' ? `
-                <div class="container-detail-row">
-                    <span class="detail-label">📝 Status</span>
-                    <span class="detail-value">${escapeHtml(statusText)}</span>
-                </div>
-                ` : ''}
-
                 ${cont.ports && cont.ports.length > 0 && cont.ports.some(p => p.public_port > 0) ? `
-                <div class="container-detail-row">
-                    <span class="detail-label">🔌 Ports</span>
-                    <span class="detail-value">${formatPorts(cont.ports)}</span>
+                <div class="material-section">
+                    <div class="material-label">Ports</div>
+                    <div class="material-value">
+                        ${cont.ports.filter(p => p.public_port > 0).map(p =>
+                            `<span class="port-badge">${p.public_port}:${p.private_port}</span>`
+                        ).join('')}
+                    </div>
                 </div>
                 ` : ''}
 
-                <div class="container-metrics-grid">
-                    ${hasStats ? `
-                    <div class="metric-box">
-                        <div class="metric-icon">💻</div>
-                        <div class="metric-content">
-                            <div class="metric-label">CPU Usage</div>
-                            <div class="metric-value">${cpuDisplay}</div>
+                ${statusText !== '-' ? `
+                <div class="material-section">
+                    <div class="material-label">Exit Status</div>
+                    <div class="material-value">
+                        <span class="${isStopped ? 'status-success' : ''}">${escapeHtml(statusText)}</span>
+                    </div>
+                </div>
+                ` : ''}
+
+                ${hasStats ? `
+                <div class="material-metrics-grid">
+                    <div class="material-metric-card cpu">
+                        <div class="metric-header-row">
+                            <span class="metric-icon-large">💻</span>
+                        </div>
+                        <div class="metric-label-text">CPU Usage</div>
+                        <div class="metric-value-large">${cpuDisplay}<span class="metric-unit">%</span></div>
+                        <div class="metric-progress">
+                            <div class="metric-progress-fill" style="width: ${cpuDisplay}%"></div>
                         </div>
                     </div>
 
-                    <div class="metric-box">
-                        <div class="metric-icon">💾</div>
-                        <div class="metric-content">
-                            <div class="metric-label">Memory Usage</div>
-                            <div class="metric-value">${memoryDisplay}${memoryPercent}</div>
+                    <div class="material-metric-card memory">
+                        <div class="metric-header-row">
+                            <span class="metric-icon-large">💾</span>
+                        </div>
+                        <div class="metric-label-text">Memory Usage</div>
+                        <div class="metric-value-large">${memoryMB}<span class="metric-unit">MB</span></div>
+                        <div class="metric-secondary">of ${memoryGB}GB (${memoryPercent}%)</div>
+                        <div class="metric-progress">
+                            <div class="metric-progress-fill" style="width: ${memoryPercent}%"></div>
                         </div>
                     </div>
-                    ` : '<div class="metric-box"><div class="metric-content"><div class="metric-label">No resource metrics available</div></div></div>'}
                 </div>
+                ` : ''}
+            </div>
 
-                <div class="container-actions-row">
-                    ${isRunning ? `
-                        <button class="btn btn-sm btn-warning" onclick="stopContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">
-                            ⏹ Stop
-                        </button>
-                        <button class="btn btn-sm btn-warning" onclick="restartContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">
-                            🔄 Restart
-                        </button>
-                    ` : ''}
-                    ${isStopped ? `
-                        <button class="btn btn-sm btn-success" onclick="startContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">
-                            ▶ Start
-                        </button>
-                        <button class="btn btn-sm btn-danger" onclick="removeContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">
-                            🗑 Remove
-                        </button>
-                    ` : ''}
-                    <button class="btn btn-sm btn-primary" onclick="viewLogs(${cont.host_id}, '${escapeAttr(cont.name)}', '${escapeAttr(cont.name)}')">
-                        📋 Logs
-                    </button>
-                </div>
+            <div class="material-footer">
+                <button class="material-btn outlined" onclick="viewLogs(${cont.host_id}, '${escapeAttr(cont.name)}', '${escapeAttr(cont.name)}')">📋 View Logs</button>
+                ${isRunning ? `
+                    <button class="material-btn outlined warning" onclick="restartContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">🔄 Restart</button>
+                    <button class="material-btn outlined warning" onclick="stopContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">⏹ Stop</button>
+                ` : ''}
+                ${isStopped ? `
+                    <button class="material-btn filled success" onclick="startContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">▶ Start</button>
+                    <button class="material-btn text danger" onclick="removeContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">🗑 Remove</button>
+                ` : ''}
+                ${isPaused ? `
+                    <button class="material-btn filled success" onclick="startContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">▶ Resume</button>
+                    <button class="material-btn outlined warning" onclick="stopContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">⏹ Stop</button>
+                ` : ''}
             </div>
         </div>
-        `;
+    `;
+}
+
+function renderDashboardCard(cont) {
+    const isRunning = cont.state === 'running';
+    const isStopped = cont.state === 'exited';
+    const isPaused = cont.state === 'paused';
+    const hasStats = cont.cpu_percent > 0 || cont.memory_usage > 0;
+
+    const cpuDisplay = cont.cpu_percent > 0 ? cont.cpu_percent.toFixed(1) + '%' : '-';
+    const memoryMB = cont.memory_usage > 0 ? (cont.memory_usage / 1024 / 1024).toFixed(0) : '-';
+    const limitMB = cont.memory_limit > 0 ? (cont.memory_limit / 1024 / 1024).toFixed(0) : '?';
+
+    const createdTime = formatDate(cont.created);
+    const statusText = cont.status || '-';
+
+    return `
+        <div class="container-card-modern theme-dashboard ${cont.state}">
+            <div class="dashboard-header">
+                <div class="dashboard-title-row">
+                    <div class="dashboard-status-dot"></div>
+                    <h3 class="dashboard-name">${escapeHtml(cont.name)}</h3>
+                    <span class="dashboard-tag">${escapeHtml(cont.host_name)}</span>
+                    <span class="dashboard-tag" title="${escapeHtml(cont.image)}">🏷️ ${escapeHtml(extractImageTag(cont.image, cont.image_tags))}</span>
+                    <span class="dashboard-tag time">${createdTime}</span>
+                    ${cont.update_available ? '<span class="dashboard-tag alert">⬆️ Update</span>' : ''}
+                </div>
+                <div class="dashboard-actions-menu">
+                    ${hasStats && isRunning ? `
+                        <button class="dashboard-icon-btn" onclick="openStatsModal(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')" title="View Stats">📊</button>
+                    ` : ''}
+                    ${hasStats && isRunning ? `
+                        <button class="dashboard-icon-btn" onclick="viewContainerTimeline(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')" title="Timeline">📈</button>
+                    ` : ''}
+                </div>
+            </div>
+
+            <div class="dashboard-body">
+                <div class="dashboard-info-row">
+                    <div class="info-item">
+                        <span class="info-icon">🖼️</span>
+                        <code class="info-code">${escapeHtml(cont.image)}</code>
+                    </div>
+                    ${(cont.image.endsWith(':latest') || !cont.image.includes(':')) && isRunning ? `
+                        <button class="btn btn-xs btn-primary" onclick="checkContainerUpdate(${cont.host_id}, '${escapeAttr(cont.name)}', '${escapeAttr(cont.name)}')" title="Check for updates">
+                            🔍 Check
+                        </button>
+                    ` : ''}
+                    ${cont.update_available ? `
+                        <button class="btn btn-xs btn-success" onclick="updateContainer(${cont.host_id}, '${escapeAttr(cont.name)}', '${escapeAttr(cont.name)}', '${escapeAttr(cont.image)}')" title="Update image">
+                            ⬆️ Update
+                        </button>
+                    ` : ''}
+                    ${cont.ports && cont.ports.length > 0 && cont.ports.some(p => p.public_port > 0) ? `
+                    <div class="info-item">
+                        <span class="info-icon">🔌</span>
+                        <span class="info-text">${formatPorts(cont.ports)}</span>
+                    </div>
+                    ` : ''}
+                    ${statusText !== '-' && isStopped ? `
+                    <div class="info-item">
+                        <span class="info-icon">📝</span>
+                        <span class="info-text">${escapeHtml(statusText)}</span>
+                    </div>
+                    ` : ''}
+                </div>
+
+                ${hasStats ? `
+                <div class="dashboard-metrics-row">
+                    <div class="dashboard-metric">
+                        <div class="metric-top">
+                            <span class="metric-label-small">💻 CPU</span>
+                            <span class="metric-value-small">${cpuDisplay}</span>
+                        </div>
+                    </div>
+
+                    <div class="dashboard-metric">
+                        <div class="metric-top">
+                            <span class="metric-label-small">💾 Memory</span>
+                            <span class="metric-value-small">${memoryMB}MB</span>
+                        </div>
+                    </div>
+                </div>
+                ` : ''}
+            </div>
+
+            <div class="dashboard-footer">
+                <button class="dashboard-btn" onclick="viewLogs(${cont.host_id}, '${escapeAttr(cont.name)}', '${escapeAttr(cont.name)}')">📋 Logs</button>
+                ${isRunning ? `
+                    <button class="dashboard-btn" onclick="restartContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">🔄 Restart</button>
+                    <button class="dashboard-btn" onclick="stopContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">⏹ Stop</button>
+                ` : ''}
+                ${isStopped ? `
+                    <button class="dashboard-btn primary" onclick="startContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">▶ Start</button>
+                    <button class="dashboard-btn danger" onclick="removeContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">🗑 Remove</button>
+                ` : ''}
+                ${isPaused ? `
+                    <button class="dashboard-btn primary" onclick="startContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">▶ Resume</button>
+                    <button class="dashboard-btn" onclick="stopContainer(${cont.host_id}, '${escapeAttr(cont.id)}', '${escapeAttr(cont.name)}')">⏹ Stop</button>
+                ` : ''}
+            </div>
+        </div>
+    `;
+}
+
+// Rendering
+function renderContainers(containersToRender) {
+    const container = document.getElementById('containersBody');
+
+    if (containersToRender.length === 0) {
+        container.innerHTML = '<div class="loading">No containers found</div>';
+        return;
+    }
+
+    container.innerHTML = containersToRender.map(cont => {
+        // Choose renderer based on theme
+        if (cardDesignTheme === 'compact') {
+            return renderCompactCard(cont);
+        } else if (cardDesignTheme === 'material') {
+            return renderMaterialCard(cont);
+        } else if (cardDesignTheme === 'dashboard') {
+            return renderDashboardCard(cont);
+        } else {
+            return renderMaterialCard(cont); // fallback
+        }
     }).join('');
 }
 
@@ -2232,6 +2475,41 @@ function escapeAttr(text) {
     return text.replace(/'/g, "\\'").replace(/"/g, '&quot;');
 }
 
+function extractImageTag(imageName, allTags) {
+    // If we have all tags for this image, show them (excluding the one already displayed)
+    // This helps when an image is tagged as both 'latest' and a version number
+    if (allTags && allTags.length > 0) {
+        // Extract just the tags from full image names (remove registry/repo parts)
+        const tags = allTags.map(fullTag => {
+            const parts = fullTag.split(':');
+            return parts[parts.length - 1];
+        }).filter(tag => tag && tag !== '<none>');
+
+        // Remove duplicates
+        const uniqueTags = [...new Set(tags)];
+
+        // If we have multiple tags, prioritize showing version number over 'latest'
+        if (uniqueTags.length > 1) {
+            // Filter out 'latest' if we have other tags
+            const nonLatestTags = uniqueTags.filter(t => t !== 'latest');
+            if (nonLatestTags.length > 0) {
+                // Show non-latest tags first, then indicate it's also 'latest'
+                return nonLatestTags.join(', ') + (uniqueTags.includes('latest') ? ' (latest)' : '');
+            }
+            return uniqueTags.join(', ');
+        } else if (uniqueTags.length === 1) {
+            return uniqueTags[0];
+        }
+    }
+
+    // Fallback to extracting tag from the image name
+    if (!imageName || !imageName.includes(':')) {
+        return 'latest';
+    }
+    const parts = imageName.split(':');
+    return parts[parts.length - 1]; // Get last part after colon
+}
+
 // Add Agent Host Modal Functions
 
 function openAddAgentModal() {
@@ -2403,7 +2681,7 @@ async function saveScanInterval() {
 
     try {
         // Load current settings first
-        const currentResponse = await fetch('/api/settings');
+        const currentResponse = await fetchWithAuth('/api/settings');
         const currentSettings = await currentResponse.json();
 
         // Update only the scanner interval, preserve other settings
@@ -2420,10 +2698,13 @@ async function saveScanInterval() {
                 rate_limit_batch_interval: 600,
                 threshold_duration: 120,
                 cooldown_period: 300
+            },
+            ui: currentSettings.ui || {
+                card_design: 'material'
             }
         };
 
-        const response = await fetch('/api/settings', {
+        const response = await fetchWithAuth('/api/settings', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(updatedSettings)
@@ -2460,7 +2741,7 @@ async function saveTelemetryFrequency() {
 
     try {
         // Load current settings first
-        const currentResponse = await fetch('/api/settings');
+        const currentResponse = await fetchWithAuth('/api/settings');
         const currentSettings = await currentResponse.json();
 
         // Update only the telemetry interval, preserve other settings
@@ -2477,10 +2758,13 @@ async function saveTelemetryFrequency() {
                 rate_limit_batch_interval: 600,
                 threshold_duration: 120,
                 cooldown_period: 300
+            },
+            ui: currentSettings.ui || {
+                card_design: 'material'
             }
         };
 
-        const response = await fetch('/api/settings', {
+        const response = await fetchWithAuth('/api/settings', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(updatedSettings)
@@ -2508,11 +2792,106 @@ async function saveTelemetryFrequency() {
     }, 3000);
 }
 
+async function saveCardDesign() {
+    const status = document.getElementById('cardDesignSaveStatus');
+    const cardDesign = document.getElementById('cardDesignTheme').value;
+
+    console.log('Saving card design:', cardDesign);
+    status.textContent = 'Saving...';
+    status.className = 'save-status-inline saving';
+
+    try {
+        // Load current settings first
+        const currentResponse = await fetchWithAuth('/api/settings');
+        const currentSettings = await currentResponse.json();
+        console.log('Current settings:', currentSettings);
+
+        // Update only the card design, preserve other settings
+        const updatedSettings = {
+            scanner: {
+                interval_seconds: currentSettings.scanner?.interval_seconds || 300,
+                timeout_seconds: currentSettings.scanner?.timeout_seconds || 30
+            },
+            telemetry: {
+                interval_hours: currentSettings.telemetry?.interval_hours || 168
+            },
+            notification: currentSettings.notification || {
+                rate_limit_max: 100,
+                rate_limit_batch_interval: 600,
+                threshold_duration: 120,
+                cooldown_period: 300
+            },
+            ui: {
+                card_design: cardDesign
+            }
+        };
+
+        console.log('Sending updated settings:', updatedSettings);
+        const response = await fetchWithAuth('/api/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updatedSettings)
+        });
+
+        console.log('Response status:', response.status, response.statusText);
+        if (response.ok) {
+            console.log('Settings saved successfully');
+            status.textContent = '✓ Saved';
+            status.className = 'save-status-inline success';
+            showNotification('Card design updated successfully', 'success');
+
+            // Update the global theme variable and re-render containers
+            cardDesignTheme = cardDesign;
+            if (currentTab === 'containers') {
+                filterContainers(); // This will re-render with the new theme
+            }
+        } else {
+            const error = await response.json();
+            status.textContent = '✗ Failed';
+            status.className = 'save-status-inline error';
+            showNotification('Failed to update card design: ' + (error.error || 'Unknown error'), 'error');
+        }
+    } catch (error) {
+        status.textContent = '✗ Error';
+        status.className = 'save-status-inline error';
+        console.error('Failed to save card design:', error);
+    }
+
+    setTimeout(() => {
+        status.textContent = '';
+        status.className = 'save-status-inline';
+    }, 3000);
+}
+
+async function loadUISettings() {
+    try {
+        const response = await fetchWithAuth('/api/settings');
+        const settings = await response.json();
+
+        // Update global variable (with fallback to default)
+        if (settings.ui && settings.ui.card_design) {
+            cardDesignTheme = settings.ui.card_design;
+        } else {
+            cardDesignTheme = 'material'; // default if not set
+        }
+
+        // Update dropdown if on settings page
+        const dropdown = document.getElementById('cardDesignTheme');
+        if (dropdown) {
+            dropdown.value = cardDesignTheme;
+        }
+    } catch (error) {
+        console.log('Error loading UI settings:', error);
+        cardDesignTheme = 'material'; // fallback to default
+    }
+}
+
 // Initialize settings when switching to settings tab
 document.addEventListener('DOMContentLoaded', () => {
     // Load settings immediately on page load
     loadScannerSettings();
     loadTelemetrySettings();
+    loadUISettings();
 
     // Load settings when settings tab is clicked
     const settingsTab = document.querySelector('[data-tab="settings"]');
@@ -2521,6 +2900,7 @@ document.addEventListener('DOMContentLoaded', () => {
             setTimeout(() => {
                 loadScannerSettings();
                 loadTelemetrySettings();
+                loadUISettings();
                 loadCollectors();
             }, 100);
         });

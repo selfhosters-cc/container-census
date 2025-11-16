@@ -1743,6 +1743,17 @@ func (s *Server) handleCheckContainerUpdate(w http.ResponseWriter, r *http.Reque
 		log.Printf("Failed to save update status: %v", err)
 	}
 
+	// Trigger notification detection by processing events for this host
+	// The notification service will detect the UpdateAvailable flag in the next scan
+	if updateInfo.Available && s.notificationService != nil {
+		go func() {
+			ctx := context.Background()
+			if err := s.notificationService.ProcessEvents(ctx, hostID); err != nil {
+				log.Printf("Failed to process notifications for update event: %v", err)
+			}
+		}()
+	}
+
 	respondJSON(w, http.StatusOK, updateInfo)
 }
 
@@ -1884,6 +1895,16 @@ func (s *Server) handleBulkCheckUpdates(w http.ResponseWriter, r *http.Request) 
 		// Save the update status
 		if err := s.db.SaveContainerUpdateStatus(c.ContainerID, c.HostID, updateInfo.Available); err != nil {
 			log.Printf("Failed to save update status: %v", err)
+		}
+
+		// Trigger notification detection by processing events for this host (async)
+		if updateInfo.Available && s.notificationService != nil {
+			go func(hostID int64) {
+				ctx := context.Background()
+				if err := s.notificationService.ProcessEvents(ctx, hostID); err != nil {
+					log.Printf("Failed to process notifications for update event: %v", err)
+				}
+			}(c.HostID)
 		}
 
 		results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = updateInfo

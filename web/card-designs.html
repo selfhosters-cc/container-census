@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Container Card Design Alternatives - Container Census</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="card-designs.css">
+</head>
+<body>
+    <div class="design-showcase">
+        <header class="showcase-header">
+            <h1>Container Card Design Alternatives</h1>
+            <p>Explore three modern design approaches for Container Census cards</p>
+        </header>
+
+        <!-- DESIGN 1: COMPACT METRO -->
+        <section class="design-section">
+            <div class="design-header">
+                <h2>Design 1: Compact Metro</h2>
+                <p class="design-description">
+                    <strong>Philosophy:</strong> Information density with visual clarity. Inspired by Microsoft Fluent Design.<br>
+                    <strong>Best for:</strong> Users managing many containers who need to see lots of info at once.
+                </p>
+            </div>
+
+            <div class="cards-container">
+                <!-- Running Container -->
+                <div class="card-metro running">
+                    <div class="metro-status-bar"></div>
+                    <div class="metro-content">
+                        <div class="metro-header">
+                            <div class="metro-title-section">
+                                <div class="metro-icon">✅</div>
+                                <div class="metro-title-info">
+                                    <h3 class="metro-name">web-nginx-prod</h3>
+                                    <div class="metro-chips">
+                                        <span class="chip chip-host">📍 production-01</span>
+                                        <span class="chip chip-state running">Running</span>
+                                        <span class="chip chip-time">⏱️ 3d 12h ago</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="metro-actions">
+                                <button class="btn-icon" title="View Stats">📊</button>
+                                <button class="btn-icon" title="Timeline">📈</button>
+                                <button class="btn-icon" title="More">⋮</button>
+                            </div>
+                        </div>
+
+                        <div class="metro-details">
+                            <div class="detail-inline">
+                                <span class="detail-label">🖼️ Image:</span>
+                                <code class="detail-value">nginx:1.24-alpine</code>
+                            </div>
+                            <div class="detail-inline">
+                                <span class="detail-label">🔌 Ports:</span>
+                                <span class="detail-value">80:8080, 443:8443</span>
+                            </div>
+                        </div>
+
+                        <div class="metro-metrics">
+                            <div class="metric-inline">
+                                <span class="metric-icon">💻</span>
+                                <span class="metric-label">CPU</span>
+                                <span class="metric-value">12.4%</span>
+                                <div class="metric-bar">
+                                    <div class="metric-bar-fill" style="width: 12.4%"></div>
+                                </div>
+                            </div>
+                            <div class="metric-inline">
+                                <span class="metric-icon">💾</span>
+                                <span class="metric-label">Memory</span>
+                                <span class="metric-value">234MB / 2GB</span>
+                                <div class="metric-bar">
+                                    <div class="metric-bar-fill" style="width: 11.7%"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="metro-footer">
+                            <button class="btn-metro btn-sm">📋 Logs</button>
+                            <button class="btn-metro btn-sm warning">🔄 Restart</button>
+                            <button class="btn-metro btn-sm warning">⏹ Stop</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Stopped Container -->
+                <div class="card-metro exited">
+                    <div class="metro-status-bar"></div>
+                    <div class="metro-content">
+                        <div class="metro-header">
+                            <div class="metro-title-section">
+                                <div class="metro-icon">⏹️</div>
+                                <div class="metro-title-info">
+                                    <h3 class="metro-name">database-backup-job</h3>
+                                    <div class="metro-chips">
+                                        <span class="chip chip-host">📍 backup-server</span>
+                                        <span class="chip chip-state exited">Exited</span>
+                                        <span class="chip chip-time">⏱️ 6h ago</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="metro-actions">
+                                <button class="btn-icon" title="More">⋮</button>
+                            </div>
+                        </div>
+
+                        <div class="metro-details">
+                            <div class="detail-inline">
+                                <span class="detail-label">🖼️ Image:</span>
+                                <code class="detail-value">postgres:15-alpine</code>
+                            </div>
+                            <div class="detail-inline">
+                                <span class="detail-label">📝 Status:</span>
+                                <span class="detail-value">Exited (0) - Completed successfully</span>
+                            </div>
+                        </div>
+
+                        <div class="metro-footer">
+                            <button class="btn-metro btn-sm">📋 Logs</button>
+                            <button class="btn-metro btn-sm success">▶ Start</button>
+                            <button class="btn-metro btn-sm danger">🗑 Remove</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Paused Container -->
+                <div class="card-metro paused">
+                    <div class="metro-status-bar"></div>
+                    <div class="metro-content">
+                        <div class="metro-header">
+                            <div class="metro-title-section">
+                                <div class="metro-icon">⏸️</div>
+                                <div class="metro-title-info">
+                                    <h3 class="metro-name">app-maintenance-mode</h3>
+                                    <div class="metro-chips">
+                                        <span class="chip chip-host">📍 app-server-02</span>
+                                        <span class="chip chip-state paused">Paused</span>
+                                        <span class="chip chip-time">⏱️ 1h ago</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="metro-actions">
+                                <button class="btn-icon" title="More">⋮</button>
+                            </div>
+                        </div>
+
+                        <div class="metro-details">
+                            <div class="detail-inline">
+                                <span class="detail-label">🖼️ Image:</span>
+                                <code class="detail-value">myapp:2.1.0</code>
+                                <span class="badge-update">⬆️ Update Available</span>
+                            </div>
+                        </div>
+
+                        <div class="metro-footer">
+                            <button class="btn-metro btn-sm">📋 Logs</button>
+                            <button class="btn-metro btn-sm success">▶ Resume</button>
+                            <button class="btn-metro btn-sm warning">⏹ Stop</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- DESIGN 2: SPACIOUS MATERIAL -->
+        <section class="design-section">
+            <div class="design-header">
+                <h2>Design 2: Spacious Material</h2>
+                <p class="design-description">
+                    <strong>Philosophy:</strong> Google Material Design 3 with generous whitespace and clear hierarchy.<br>
+                    <strong>Best for:</strong> Users who prefer readability and clean, modern aesthetics.
+                </p>
+            </div>
+
+            <div class="cards-container">
+                <!-- Running Container -->
+                <div class="card-material">
+                    <div class="material-header running">
+                        <div class="material-header-content">
+                            <div class="material-status-icon">✅</div>
+                            <div class="material-title-section">
+                                <h3 class="material-name">web-nginx-prod</h3>
+                                <div class="material-meta">
+                                    <span class="material-meta-item">📍 production-01</span>
+                                    <span class="material-meta-separator">•</span>
+                                    <span class="material-meta-item">⏱️ Started 3d 12h ago</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="material-header-actions">
+                            <button class="material-fab" title="View Stats">📊</button>
+                            <button class="material-fab" title="Timeline">📈</button>
+                        </div>
+                    </div>
+
+                    <div class="material-body">
+                        <div class="material-section">
+                            <div class="material-label">Image</div>
+                            <div class="material-value">
+                                <code>nginx:1.24-alpine</code>
+                            </div>
+                        </div>
+
+                        <div class="material-section">
+                            <div class="material-label">Ports</div>
+                            <div class="material-value">
+                                <span class="port-badge">80:8080</span>
+                                <span class="port-badge">443:8443</span>
+                            </div>
+                        </div>
+
+                        <div class="material-metrics-grid">
+                            <div class="material-metric-card cpu">
+                                <div class="metric-header-row">
+                                    <span class="metric-icon-large">💻</span>
+                                    <span class="metric-trend-indicator">↑</span>
+                                </div>
+                                <div class="metric-label-text">CPU Usage</div>
+                                <div class="metric-value-large">12.4<span class="metric-unit">%</span></div>
+                                <div class="metric-progress">
+                                    <div class="metric-progress-fill" style="width: 12.4%"></div>
+                                </div>
+                            </div>
+
+                            <div class="material-metric-card memory">
+                                <div class="metric-header-row">
+                                    <span class="metric-icon-large">💾</span>
+                                    <span class="metric-trend-indicator">→</span>
+                                </div>
+                                <div class="metric-label-text">Memory Usage</div>
+                                <div class="metric-value-large">234<span class="metric-unit">MB</span></div>
+                                <div class="metric-secondary">of 2GB (11.7%)</div>
+                                <div class="metric-progress">
+                                    <div class="metric-progress-fill" style="width: 11.7%"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="material-footer">
+                        <button class="material-btn outlined">📋 View Logs</button>
+                        <button class="material-btn outlined warning">🔄 Restart</button>
+                        <button class="material-btn outlined warning">⏹ Stop</button>
+                    </div>
+                </div>
+
+                <!-- Stopped Container -->
+                <div class="card-material">
+                    <div class="material-header exited">
+                        <div class="material-header-content">
+                            <div class="material-status-icon">⏹️</div>
+                            <div class="material-title-section">
+                                <h3 class="material-name">database-backup-job</h3>
+                                <div class="material-meta">
+                                    <span class="material-meta-item">📍 backup-server</span>
+                                    <span class="material-meta-separator">•</span>
+                                    <span class="material-meta-item">⏱️ Stopped 6h ago</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="material-body">
+                        <div class="material-section">
+                            <div class="material-label">Image</div>
+                            <div class="material-value">
+                                <code>postgres:15-alpine</code>
+                            </div>
+                        </div>
+
+                        <div class="material-section">
+                            <div class="material-label">Exit Status</div>
+                            <div class="material-value">
+                                <span class="status-success">✓ Exited (0) - Completed successfully</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="material-footer">
+                        <button class="material-btn outlined">📋 View Logs</button>
+                        <button class="material-btn filled success">▶ Start</button>
+                        <button class="material-btn text danger">🗑 Remove</button>
+                    </div>
+                </div>
+
+                <!-- Paused Container -->
+                <div class="card-material">
+                    <div class="material-header paused">
+                        <div class="material-header-content">
+                            <div class="material-status-icon">⏸️</div>
+                            <div class="material-title-section">
+                                <h3 class="material-name">app-maintenance-mode</h3>
+                                <div class="material-meta">
+                                    <span class="material-meta-item">📍 app-server-02</span>
+                                    <span class="material-meta-separator">•</span>
+                                    <span class="material-meta-item">⏱️ Paused 1h ago</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="material-body">
+                        <div class="material-section">
+                            <div class="material-label">Image</div>
+                            <div class="material-value">
+                                <code>myapp:2.1.0</code>
+                                <span class="material-chip update">⬆️ Update Available</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="material-footer">
+                        <button class="material-btn outlined">📋 View Logs</button>
+                        <button class="material-btn filled success">▶ Resume</button>
+                        <button class="material-btn outlined warning">⏹ Stop</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- DESIGN 3: MODERN DASHBOARD -->
+        <section class="design-section">
+            <div class="design-header">
+                <h2>Design 3: Modern Dashboard</h2>
+                <p class="design-description">
+                    <strong>Philosophy:</strong> Data visualization focus inspired by Grafana/DataDog. Metrics-first approach.<br>
+                    <strong>Best for:</strong> Power users who monitor performance and want data at a glance.
+                </p>
+            </div>
+
+            <div class="cards-container">
+                <!-- Running Container -->
+                <div class="card-dashboard running">
+                    <div class="dashboard-header">
+                        <div class="dashboard-title-row">
+                            <div class="dashboard-status-dot"></div>
+                            <h3 class="dashboard-name">web-nginx-prod</h3>
+                            <span class="dashboard-tag">production-01</span>
+                            <span class="dashboard-tag time">3d 12h</span>
+                        </div>
+                        <div class="dashboard-actions-menu">
+                            <button class="dashboard-icon-btn">📊</button>
+                            <button class="dashboard-icon-btn">📈</button>
+                            <button class="dashboard-icon-btn">⋮</button>
+                        </div>
+                    </div>
+
+                    <div class="dashboard-body">
+                        <div class="dashboard-info-row">
+                            <div class="info-item">
+                                <span class="info-icon">🖼️</span>
+                                <code class="info-code">nginx:1.24-alpine</code>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-icon">🔌</span>
+                                <span class="info-text">80:8080, 443:8443</span>
+                            </div>
+                        </div>
+
+                        <div class="dashboard-metrics-row">
+                            <div class="dashboard-metric">
+                                <div class="metric-top">
+                                    <span class="metric-label-small">💻 CPU</span>
+                                    <span class="metric-value-small">12.4%</span>
+                                </div>
+                                <div class="metric-sparkline">
+                                    <svg viewBox="0 0 100 30" class="sparkline">
+                                        <polyline points="0,20 10,18 20,15 30,16 40,14 50,12 60,13 70,11 80,9 90,10 100,8" stroke="#667eea" stroke-width="2" fill="none"/>
+                                        <polyline points="0,30 0,20 10,18 20,15 30,16 40,14 50,12 60,13 70,11 80,9 90,10 100,8 100,30" fill="rgba(102, 126, 234, 0.1)"/>
+                                    </svg>
+                                </div>
+                            </div>
+
+                            <div class="dashboard-metric">
+                                <div class="metric-top">
+                                    <span class="metric-label-small">💾 Memory</span>
+                                    <span class="metric-value-small">234MB</span>
+                                </div>
+                                <div class="metric-sparkline">
+                                    <svg viewBox="0 0 100 30" class="sparkline">
+                                        <polyline points="0,25 10,24 20,23 30,22 40,21 50,20 60,19 70,18 80,17 90,16 100,15" stroke="#28a745" stroke-width="2" fill="none"/>
+                                        <polyline points="0,30 0,25 10,24 20,23 30,22 40,21 50,20 60,19 70,18 80,17 90,16 100,15 100,30" fill="rgba(40, 167, 69, 0.1)"/>
+                                    </svg>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="dashboard-footer">
+                        <button class="dashboard-btn">📋 Logs</button>
+                        <button class="dashboard-btn">🔄 Restart</button>
+                        <button class="dashboard-btn">⏹ Stop</button>
+                    </div>
+                </div>
+
+                <!-- Stopped Container -->
+                <div class="card-dashboard exited">
+                    <div class="dashboard-header">
+                        <div class="dashboard-title-row">
+                            <div class="dashboard-status-dot"></div>
+                            <h3 class="dashboard-name">database-backup-job</h3>
+                            <span class="dashboard-tag">backup-server</span>
+                            <span class="dashboard-tag time">6h ago</span>
+                        </div>
+                        <div class="dashboard-actions-menu">
+                            <button class="dashboard-icon-btn">⋮</button>
+                        </div>
+                    </div>
+
+                    <div class="dashboard-body">
+                        <div class="dashboard-info-row">
+                            <div class="info-item">
+                                <span class="info-icon">🖼️</span>
+                                <code class="info-code">postgres:15-alpine</code>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-icon">📝</span>
+                                <span class="info-text">Exited (0) - Completed successfully</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="dashboard-footer">
+                        <button class="dashboard-btn">📋 Logs</button>
+                        <button class="dashboard-btn primary">▶ Start</button>
+                        <button class="dashboard-btn danger">🗑 Remove</button>
+                    </div>
+                </div>
+
+                <!-- Paused Container with Update -->
+                <div class="card-dashboard paused">
+                    <div class="dashboard-header">
+                        <div class="dashboard-title-row">
+                            <div class="dashboard-status-dot"></div>
+                            <h3 class="dashboard-name">app-maintenance-mode</h3>
+                            <span class="dashboard-tag">app-server-02</span>
+                            <span class="dashboard-tag time">1h ago</span>
+                            <span class="dashboard-tag alert">⬆️ Update</span>
+                        </div>
+                        <div class="dashboard-actions-menu">
+                            <button class="dashboard-icon-btn">⋮</button>
+                        </div>
+                    </div>
+
+                    <div class="dashboard-body">
+                        <div class="dashboard-info-row">
+                            <div class="info-item">
+                                <span class="info-icon">🖼️</span>
+                                <code class="info-code">myapp:2.1.0</code>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="dashboard-footer">
+                        <button class="dashboard-btn">📋 Logs</button>
+                        <button class="dashboard-btn primary">▶ Resume</button>
+                        <button class="dashboard-btn">⏹ Stop</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Comparison Section -->
+        <section class="comparison-section">
+            <h2>Design Comparison</h2>
+            <table class="comparison-table">
+                <thead>
+                    <tr>
+                        <th>Aspect</th>
+                        <th>Compact Metro</th>
+                        <th>Spacious Material</th>
+                        <th>Modern Dashboard</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Information Density</strong></td>
+                        <td>⭐⭐⭐⭐⭐ Highest</td>
+                        <td>⭐⭐⭐ Medium</td>
+                        <td>⭐⭐⭐⭐ High</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Visual Clarity</strong></td>
+                        <td>⭐⭐⭐⭐ Good</td>
+                        <td>⭐⭐⭐⭐⭐ Excellent</td>
+                        <td>⭐⭐⭐⭐ Good</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Metrics Visibility</strong></td>
+                        <td>⭐⭐⭐ Inline bars</td>
+                        <td>⭐⭐⭐⭐⭐ Large cards</td>
+                        <td>⭐⭐⭐⭐⭐ Sparklines</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Modern Aesthetic</strong></td>
+                        <td>⭐⭐⭐⭐ Metro/Fluent</td>
+                        <td>⭐⭐⭐⭐⭐ Material 3</td>
+                        <td>⭐⭐⭐⭐⭐ Dashboard/SaaS</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Best Use Case</strong></td>
+                        <td>Many containers, quick scanning</td>
+                        <td>Fewer containers, readability focus</td>
+                        <td>Performance monitoring, data viz</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Card Height</strong></td>
+                        <td>Compact (~200px)</td>
+                        <td>Tall (~350px)</td>
+                        <td>Medium (~250px)</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Action Discoverability</strong></td>
+                        <td>⭐⭐⭐ Icon menu</td>
+                        <td>⭐⭐⭐⭐⭐ Full buttons</td>
+                        <td>⭐⭐⭐ Icon menu</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <footer class="showcase-footer">
+            <p>Choose your favorite design or mix elements from multiple approaches!</p>
+            <p class="note">All designs are fully responsive and work on mobile devices.</p>
+        </footer>
+    </div>
+</body>
+</html>

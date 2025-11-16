@@ -57,6 +57,7 @@ Anonymous telemetry is opt-in only and can be enabled anytime from the Settings 
 1. **Lightweight Remote Agents** – Secure, zero-config connectivity between hosts
 1. **Simple Web Setup** – Add new hosts with just an IP and token
 1. **Automatic Discovery** – Background scans every few minutes (default: 5)
+1. **Image Update Management** – Check for and apply updates to containers with :latest tags
 1. **CPU & Memory Monitoring** – Real-time resource usage tracking with historical trends
 1. **Historical Insights** – Track what's running, when, and where
 1. **Modern Web UI** – Responsive interface with live updates

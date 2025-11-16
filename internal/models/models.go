@@ -27,6 +27,7 @@ type Container struct {
 	Name         string            `json:"name"`
 	Image        string            `json:"image"`
 	ImageID      string            `json:"image_id"`
+	ImageTags    []string          `json:"image_tags"`    // all tags for this image (e.g., ["nginx:1.25", "nginx:latest"])
 	ImageSize    int64             `json:"image_size"`    // bytes
 	State        string            `json:"state"`         // running, exited, paused, etc.
 	Status       string            `json:"status"`        // detailed status
@@ -235,6 +236,7 @@ type SystemSettings struct {
 	Scanner      ScannerSettings      `json:"scanner"`
 	Telemetry    TelemetrySettings    `json:"telemetry"`
 	Notification NotificationSettings `json:"notification"`
+	UI           UISettings           `json:"ui"`
 	UpdatedAt    time.Time            `json:"updated_at"`
 }
 
@@ -255,6 +257,11 @@ type NotificationSettings struct {
 	RateLimitBatchInterval int `json:"rate_limit_batch_interval" validate:"min=60,max=3600"`
 	ThresholdDuration      int `json:"threshold_duration" validate:"min=30,max=600"`
 	CooldownPeriod         int `json:"cooldown_period" validate:"min=60,max=3600"`
+}
+
+// UISettings contains user interface preferences
+type UISettings struct {
+	CardDesign string `json:"card_design" validate:"oneof=compact material dashboard"`
 }
 
 // Validate validates system settings
@@ -279,6 +286,10 @@ func (s *SystemSettings) Validate() error {
 	}
 	if s.Notification.CooldownPeriod < 60 || s.Notification.CooldownPeriod > 3600 {
 		return fmt.Errorf("notification cooldown period must be between 60 and 3600 seconds")
+	}
+	// Validate UI settings
+	if s.UI.CardDesign != "" && s.UI.CardDesign != "compact" && s.UI.CardDesign != "material" && s.UI.CardDesign != "dashboard" {
+		return fmt.Errorf("card design must be one of: compact, material, dashboard")
 	}
 	return nil
 }
@@ -387,15 +398,16 @@ type ContainerStatsPoint struct {
 
 // Notification event types
 const (
-	EventTypeNewImage         = "new_image"
-	EventTypeStateChange      = "state_change"
-	EventTypeHighCPU          = "high_cpu"
-	EventTypeHighMemory       = "high_memory"
-	EventTypeAnomalousBehavior = "anomalous_behavior"
-	EventTypeContainerStarted  = "container_started"
-	EventTypeContainerStopped  = "container_stopped"
-	EventTypeContainerPaused   = "container_paused"
-	EventTypeContainerResumed  = "container_resumed"
+	EventTypeNewImage           = "new_image"
+	EventTypeImageUpdateAvailable = "image_update_available"
+	EventTypeStateChange        = "state_change"
+	EventTypeHighCPU            = "high_cpu"
+	EventTypeHighMemory         = "high_memory"
+	EventTypeAnomalousBehavior  = "anomalous_behavior"
+	EventTypeContainerStarted   = "container_started"
+	EventTypeContainerStopped   = "container_stopped"
+	EventTypeContainerPaused    = "container_paused"
+	EventTypeContainerResumed   = "container_resumed"
 )
 
 // Notification channel types

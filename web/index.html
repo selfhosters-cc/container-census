@@ -944,6 +944,28 @@
                 </div>
 
                 <div class="settings-card">
+                    <h3>🎨 User Interface</h3>
+                    <p class="settings-description">
+                        Customize the appearance and layout of the container cards to match your preferences.
+                    </p>
+
+                    <div class="frequency-group" style="margin-bottom: 20px;">
+                        <label for="cardDesignTheme" class="frequency-label">Container Card Design:</label>
+                        <select id="cardDesignTheme" class="frequency-select">
+                            <option value="compact">Compact Metro - Information dense, ideal for many containers</option>
+                            <option value="material" selected>Spacious Material - Clean & readable (recommended)</option>
+                            <option value="dashboard">Modern Dashboard - Metrics focused with data visualization</option>
+                        </select>
+                        <button onclick="saveCardDesign()" class="btn btn-primary" style="margin-left: 10px;">Save Design</button>
+                        <span id="cardDesignSaveStatus" class="save-status-inline"></span>
+                    </div>
+
+                    <div class="alert alert-info" style="padding: 12px; background: #e3f2fd; border: 1px solid #90caf9; border-radius: 4px; font-size: 14px;">
+                        <strong>ℹ️ Preview:</strong> Changes will apply immediately to the Containers tab after saving.
+                    </div>
+                </div>
+
+                <div class="settings-card">
                     <h3>📊 Telemetry Collectors</h3>
                     <p class="settings-description">
                         Configure telemetry endpoints to track anonymous container usage statistics.
@@ -1348,14 +1370,27 @@
             </div>
             <div class="modal-body">
                 <form id="addRuleForm">
-                    <div class="form-group">
-                        <label for="ruleName">Rule Name *</label>
-                        <input type="text" id="ruleName" required placeholder="e.g., High CPU Alert">
+                    <div class="form-row">
+                        <div class="form-group" style="flex: 1;">
+                            <label for="ruleName">Rule Name *</label>
+                            <input type="text" id="ruleName" required placeholder="e.g., High CPU Alert">
+                        </div>
+                        <div class="form-group" style="flex: 0 0 auto; min-width: 120px;">
+                            <label style="display: block; margin-bottom: 8px;">Status</label>
+                            <div class="toggle-switch-container">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="ruleEnabled" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span class="toggle-label" id="ruleEnabledLabel">Enabled</span>
+                            </div>
+                        </div>
                     </div>
                     <div class="form-group">
                         <label>Event Types *</label>
                         <div class="checkbox-group-vertical">
                             <label><input type="checkbox" name="eventTypes" value="new_image"><span>🖼️ New Image</span></label>
+                            <label><input type="checkbox" name="eventTypes" value="image_update_available"><span>🔄 Update Available</span></label>
                             <label><input type="checkbox" name="eventTypes" value="state_change"><span>🔄 State Change</span></label>
                             <label><input type="checkbox" name="eventTypes" value="container_started"><span>▶️ Started</span></label>
                             <label><input type="checkbox" name="eventTypes" value="container_stopped"><span>⏹️ Stopped</span></label>
@@ -1409,15 +1444,6 @@
                                 <option value="">Loading channels...</option>
                             </select>
                             <small>Hold Ctrl/Cmd to select multiple channels</small>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <div class="toggle-switch-container">
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="ruleEnabled" checked>
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <span class="toggle-label" id="ruleEnabledLabel">Enabled</span>
                         </div>
                     </div>
                 </form>
@@ -1625,6 +1651,6 @@
 
     <script src="notifications.js?v=5"></script>
     <script src="onboarding.js?v=1"></script>
-    <script src="app.js?v=16"></script>
+    <script src="app.js?v=17"></script>
 </body>
 </html>

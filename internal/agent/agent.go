@@ -162,6 +162,40 @@ func (a *Agent) handleListContainers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get image information for tags and version labels
+	imageTagsMap := make(map[string][]string) // imageID -> all tags (including version from labels)
+	images, err := a.dockerClient.ImageList(ctx, image.ListOptions{})
+	if err == nil {
+		for _, img := range images {
+			// Start with RepoTags
+			tags := make([]string, 0)
+			if len(img.RepoTags) > 0 {
+				tags = append(tags, img.RepoTags...)
+			}
+
+			// Try to extract version from image labels
+			if version, ok := img.Labels["org.opencontainers.image.version"]; ok && version != "" {
+				// Add version as a tag if it's not already present
+				versionTag := version
+				// Only add if it's not already in the tags
+				found := false
+				for _, tag := range tags {
+					if tag == versionTag || strings.HasSuffix(tag, ":"+versionTag) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					tags = append(tags, versionTag)
+				}
+			}
+
+			if len(tags) > 0 {
+				imageTagsMap[img.ID] = tags
+			}
+		}
+	}
+
 	// Convert to our model
 	result := make([]models.Container, 0, len(containers))
 	// Use UTC to ensure consistency across timezones
@@ -237,6 +271,7 @@ func (a *Agent) handleListContainers(w http.ResponseWriter, r *http.Request) {
 			Name:           name,
 			Image:          c.Image,
 			ImageID:        c.ImageID,
+			ImageTags:      imageTagsMap[c.ImageID],
 			State:          c.State,
 			Status:         c.Status,
 			RestartCount:   restartCount,
@@ -438,6 +473,13 @@ func (a *Agent) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 
 	logs, err := a.dockerClient.ContainerLogs(ctx, containerID, options)
 	if err != nil {
+		// Check if the error is due to unsupported logging driver
+		if strings.Contains(err.Error(), "configured logging driver does not support reading") {
+			respondJSON(w, http.StatusOK, map[string]string{
+				"logs": "Logs unavailable: This container uses a logging driver that doesn't support reading logs (e.g., 'none', 'syslog', 'journald'). To view logs, reconfigure the container to use 'json-file' or 'local' logging driver.",
+			})
+			return
+		}
 		respondError(w, http.StatusInternalServerError, "Failed to get logs: "+err.Error())
 		return
 	}

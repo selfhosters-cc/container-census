@@ -192,16 +192,20 @@ func (c *Client) getImageDigest(ctx context.Context, registry, repository, tag s
 
 // getAuthToken retrieves an authentication token for the registry
 func (c *Client) getAuthToken(ctx context.Context, registry, repository string) (string, error) {
-	// Only Docker Hub requires token auth in most cases
-	// For other registries, we'll try without a token first
+	var authURL string
 
-	if !strings.Contains(registry, "docker.io") && registry != "registry-1.docker.io" {
-		// For non-Docker Hub registries, try without auth first
+	// GitHub Container Registry (ghcr.io)
+	if strings.Contains(registry, "ghcr.io") {
+		authURL = fmt.Sprintf("https://ghcr.io/token?scope=repository:%s:pull", repository)
+	} else if strings.Contains(registry, "docker.io") || registry == "registry-1.docker.io" {
+		// Docker Hub
+		authURL = fmt.Sprintf("https://auth.docker.io/token?service=registry.docker.io&scope=repository:%s:pull", repository)
+	} else {
+		// For other registries, try without auth first
 		return "", nil
 	}
 
-	// For Docker Hub, get an anonymous token
-	authURL := fmt.Sprintf("https://auth.docker.io/token?service=registry.docker.io&scope=repository:%s:pull", repository)
+	// Get anonymous token
 
 	req, err := http.NewRequestWithContext(ctx, "GET", authURL, nil)
 	if err != nil {

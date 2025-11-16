@@ -56,12 +56,40 @@ func (s *Scanner) ScanHost(ctx context.Context, host models.Host) ([]models.Cont
 		return nil, fmt.Errorf("failed to list containers: %w", err)
 	}
 
-	// Get image information for size data
-	imageMap := make(map[string]int64) // imageID -> size
+	// Get image information for size data and version labels
+	imageMap := make(map[string]int64)     // imageID -> size
+	imageTagsMap := make(map[string][]string) // imageID -> all tags (including version from labels)
 	images, err := dockerClient.ImageList(ctx, imagetypes.ListOptions{})
 	if err == nil {
 		for _, img := range images {
 			imageMap[img.ID] = img.Size
+
+			// Start with RepoTags
+			tags := make([]string, 0)
+			if len(img.RepoTags) > 0 {
+				tags = append(tags, img.RepoTags...)
+			}
+
+			// Try to extract version from image labels
+			if version, ok := img.Labels["org.opencontainers.image.version"]; ok && version != "" {
+				// Add version as a tag if it's not already present
+				versionTag := version
+				// Only add if it's not already in the tags
+				found := false
+				for _, tag := range tags {
+					if tag == versionTag || strings.HasSuffix(tag, ":"+versionTag) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					tags = append(tags, versionTag)
+				}
+			}
+
+			if len(tags) > 0 {
+				imageTagsMap[img.ID] = tags
+			}
 		}
 	}
 
@@ -88,8 +116,9 @@ func (s *Scanner) ScanHost(ctx context.Context, host models.Host) ([]models.Cont
 			name = strings.TrimPrefix(c.Names[0], "/")
 		}
 
-		// Get image size
+		// Get image size and tags
 		imageSize := imageMap[c.ImageID]
+		imageTags := imageTagsMap[c.ImageID]
 
 		// Inspect container for detailed info (restart count, connections, etc.)
 		var restartCount int
@@ -144,6 +173,7 @@ func (s *Scanner) ScanHost(ctx context.Context, host models.Host) ([]models.Cont
 			Name:           name,
 			Image:          c.Image,
 			ImageID:        c.ImageID,
+			ImageTags:      imageTags,
 			ImageSize:      imageSize,
 			State:          c.State,
 			Status:         c.Status,
@@ -486,6 +516,10 @@ func (s *Scanner) GetContainerLogs(ctx context.Context, host models.Host, contai
 
 	logs, err := dockerClient.ContainerLogs(ctx, containerID, options)
 	if err != nil {
+		// Check if the error is due to unsupported logging driver
+		if strings.Contains(err.Error(), "configured logging driver does not support reading") {
+			return "Logs unavailable: This container uses a logging driver that doesn't support reading logs (e.g., 'none', 'syslog', 'journald'). To view logs, reconfigure the container to use 'json-file' or 'local' logging driver.", nil
+		}
 		return "", fmt.Errorf("failed to get logs: %w", err)
 	}
 	defer logs.Close()

@@ -36,6 +36,10 @@ make build                  # Build server binary
 make run                    # Run server
 make dev                    # Build + run
 
+# Quick development scripts (located in scripts/)
+./scripts/server-build.sh   # Quick rebuild of server binary
+./scripts/run-local.sh      # Run local server binary
+
 # Code quality
 make fmt                    # Format code
 make lint                   # Vet code

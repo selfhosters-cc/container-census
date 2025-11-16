@@ -35,6 +35,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 			"endpoints":      endpoints,
 		},
 		"notification": settings.Notification,
+		"ui":           settings.UI,
 		"updated_at":   settings.UpdatedAt,
 	}
 

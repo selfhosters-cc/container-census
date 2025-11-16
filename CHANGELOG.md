@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Image Version Display**: Show actual version numbers for container images
+  - Displays image tags/versions on container cards (e.g., "11.6.2 (latest)")
+  - Extracts version from OCI image label `org.opencontainers.image.version` when available
+  - Shows multiple tags when image has both version number and :latest
+  - Helps users verify image updates have taken effect
+  - Database field `image_tags` stores all tags for each image
+  - Frontend preferentially displays version numbers over "latest"
+
 - **Image Update Management**: Check for and apply updates to containers running :latest tagged images
   - Manual update checks via "Check Updates" button in dashboard or per-container check
   - Automatic background checking at configurable intervals (default: disabled)
@@ -62,9 +70,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Only checks running containers with :latest tags
   - Logs update detection and check completion
 
+### Fixed
+
+- **GHCR Authentication**: Fixed "401 Unauthorized" errors when checking updates for GitHub Container Registry images
+  - Added authentication support for ghcr.io registry
+  - Anonymous token authentication for public GHCR images
+  - Registry client now supports Docker Hub, GHCR, and generic registries
+
 ### Technical Details
 
-- Registry client package (`internal/registry/`) handles Docker Hub authentication and manifest fetching
+- Registry client package (`internal/registry/`) handles Docker Hub and GHCR authentication and manifest fetching
 - Scanner extensions (`internal/scanner/`) support image pulling and container recreation
 - Image digest normalization for accurate comparison (handles sha256: prefix, truncation)
 - Preserves Docker Compose compatibility (updates don't conflict with compose files since :latest tag remains valid)

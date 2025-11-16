@@ -101,6 +101,22 @@ func (ns *NotificationService) detectLifecycleEvents(hostID int64) ([]models.Not
 
 	// For each container, check for state changes and image updates
 	for _, container := range containers {
+		// Check for available updates (UpdateAvailable flag set)
+		if container.UpdateAvailable && !container.LastUpdateCheck.IsZero() {
+			// Only notify if update was recently detected (within last 5 minutes)
+			if time.Since(container.LastUpdateCheck) < 5*time.Minute {
+				events = append(events, models.NotificationEvent{
+					EventType:     models.EventTypeImageUpdateAvailable,
+					Timestamp:     container.LastUpdateCheck,
+					ContainerID:   container.ID,
+					ContainerName: container.Name,
+					HostID:        container.HostID,
+					HostName:      container.HostName,
+					Image:         container.Image,
+				})
+			}
+		}
+
 		// Get lifecycle events from the last scan interval (we only care about recent changes)
 		lifecycleEvents, err := ns.db.GetContainerLifecycleEvents(container.Name, hostID)
 		if err != nil {

@@ -335,7 +335,7 @@ func main() {
 	}
 
 	// Start image update checker
-	go runImageUpdateChecker(ctx, db, scan)
+	go runImageUpdateChecker(ctx, db, scan, notificationService)
 
 	// Start HTTP server
 	go func() {
@@ -746,7 +746,7 @@ func runDailyVulnerabilityCleanup(ctx context.Context, db *storage.DB, config *v
 	}
 }
 
-func runImageUpdateChecker(ctx context.Context, db *storage.DB, scan *scanner.Scanner) {
+func runImageUpdateChecker(ctx context.Context, db *storage.DB, scan *scanner.Scanner, notifier *notifications.NotificationService) {
 	// Check settings every 5 minutes to pick up changes without restart
 	settingsTicker := time.NewTicker(5 * time.Minute)
 	defer settingsTicker.Stop()
@@ -868,6 +868,26 @@ func runImageUpdateChecker(ctx context.Context, db *storage.DB, scan *scanner.Sc
 			}
 
 			log.Printf("Image update check completed: %d updates found", updateCount)
+
+			// Trigger notification processing for all hosts with updates (in background)
+			if updateCount > 0 && notifier != nil {
+				go func() {
+					// Get unique host IDs from containers with updates
+					hostIDs := make(map[int64]bool)
+					for _, c := range toCheck {
+						if c.UpdateAvailable {
+							hostIDs[c.HostID] = true
+						}
+					}
+
+					// Process notifications for each host
+					for hostID := range hostIDs {
+						if err := notifier.ProcessEvents(ctx, hostID); err != nil {
+							log.Printf("Failed to process notifications for host %d: %v", hostID, err)
+						}
+					}
+				}()
+			}
 		}
 	}
 }
