@@ -1997,8 +1997,8 @@ func (s *Server) handleBulkUpdate(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Recreate the container
-		result, err := s.scanner.RecreateContainer(r.Context(), *host, c.ContainerID, false)
+		// Recreate the container using the container name (more reliable than short ID)
+		result, err := s.scanner.RecreateContainer(r.Context(), *host, container.Name, false)
 		if err != nil {
 			results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = map[string]interface{}{
 				"success": false,
