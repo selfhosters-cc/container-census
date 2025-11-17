@@ -49,15 +49,13 @@ class OnboardingTour {
             text: `
                 <div class="onboarding-content">
                     <p>Container Census is a powerful multi-host Docker monitoring system.</p>
-                    <p><strong>What's new in this version:</strong></p>
+                    <p><strong>What's new in v1.6.0:</strong></p>
                     <ul>
-                        <li>Image update management for :latest containers</li>
-                        <li>Vulnerability scanning with Trivy</li>
-                        <li>CPU & memory monitoring with historical trends</li>
-                        <li>Advanced notification system</li>
-                        <li>Network graph visualization</li>
+                        <li>🔄 Image update management for :latest containers</li>
+                        <li>📊 Configurable card view on Containers tab</li>
+                        <li>🎨 Improved dashboard layout and UI</li>
                     </ul>
-                    <p>Let's take a quick tour to get you started!</p>
+                    <p>Let's take a quick tour of these new features!</p>
                 </div>
             `,
             buttons: [
@@ -73,242 +71,30 @@ class OnboardingTour {
             ]
         });
 
-        // Step 2: Local Containers
-        this.tour.addStep({
-            id: 'containers',
-            title: 'Your Containers',
-            text: `
-                <div class="onboarding-content">
-                    <p>Here you can see all containers discovered on your local Docker socket.</p>
-                    <p><strong>Managing Multiple Hosts:</strong></p>
-                    <p>If you have containers on other machines, you can add them by deploying the lightweight Census Agent and connecting through the Hosts tab.</p>
-                    <p>The agent supports remote monitoring without exposing the Docker socket.</p>
-                </div>
-            `,
-            attachTo: {
-                element: '[data-tab="containers"]',
-                on: 'bottom'
-            },
-            buttons: [
-                {
-                    text: 'Back',
-                    action: this.tour.back,
-                    classes: 'shepherd-button-secondary'
-                },
-                {
-                    text: 'Next',
-                    action: this.tour.next
-                }
-            ],
-            when: {
-                show: () => {
-                    // Switch to containers tab
-                    if (typeof switchTab === 'function') {
-                        switchTab('containers', false);
-                    }
-                }
-            }
-        });
-
-        // Step 3: Vulnerability Scanning
-        this.tour.addStep({
-            id: 'security',
-            title: 'Security & Vulnerability Scanning',
-            text: `
-                <div class="onboarding-content">
-                    <p>Container Census includes integrated Trivy scanning to detect vulnerabilities in your container images.</p>
-                    <p><strong>Features:</strong></p>
-                    <ul>
-                        <li>Automatic scanning of new images</li>
-                        <li>CVE tracking with severity levels</li>
-                        <li>Alert notifications for critical vulnerabilities</li>
-                    </ul>
-                    <div id="vuln-enable-container" style="margin-top: 15px;">
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                            <input type="checkbox" id="enableVulnScanning" checked>
-                            <span>Enable vulnerability scanning</span>
-                        </label>
-                    </div>
-                </div>
-            `,
-            attachTo: {
-                element: '[data-tab="security"]',
-                on: 'bottom'
-            },
-            buttons: [
-                {
-                    text: 'Back',
-                    action: this.tour.back,
-                    classes: 'shepherd-button-secondary'
-                },
-                {
-                    text: 'Next',
-                    action: async () => {
-                        const enabled = document.getElementById('enableVulnScanning')?.checked;
-                        if (enabled !== undefined) {
-                            await this.updateVulnerabilitySettings(enabled);
-                        }
-                        this.tour.next();
-                    }
-                }
-            ],
-            when: {
-                show: () => {
-                    if (typeof switchTab === 'function') {
-                        switchTab('security', false);
-                    }
-                }
-            }
-        });
-
-        // Step 4: Graph Visualization
-        this.tour.addStep({
-            id: 'graph',
-            title: 'Network Graph',
-            text: `
-                <div class="onboarding-content">
-                    <p>The Graph tab provides a visual representation of your container network topology.</p>
-                    <p><strong>What you'll see:</strong></p>
-                    <ul>
-                        <li>Container relationships and dependencies</li>
-                        <li>Network connections between containers</li>
-                        <li>Visual identification of isolated containers</li>
-                    </ul>
-                    <p>This helps you understand how your services communicate.</p>
-                </div>
-            `,
-            attachTo: {
-                element: '[data-tab="graph"]',
-                on: 'bottom'
-            },
-            buttons: [
-                {
-                    text: 'Back',
-                    action: this.tour.back,
-                    classes: 'shepherd-button-secondary'
-                },
-                {
-                    text: 'Next',
-                    action: this.tour.next
-                }
-            ],
-            when: {
-                show: () => {
-                    if (typeof switchTab === 'function') {
-                        switchTab('graph', false);
-                    }
-                }
-            }
-        });
-
-        // Step 5: History Tracking
-        this.tour.addStep({
-            id: 'history',
-            title: 'History & Timeline',
-            text: `
-                <div class="onboarding-content">
-                    <p>The History tab shows your container lifecycle over time.</p>
-                    <p><strong>Track:</strong></p>
-                    <ul>
-                        <li>When containers were created and removed</li>
-                        <li>State changes (start, stop, restart)</li>
-                        <li>Image updates and rollbacks</li>
-                    </ul>
-                    <p>Perfect for troubleshooting and auditing changes.</p>
-                </div>
-            `,
-            attachTo: {
-                element: '[data-tab="history"]',
-                on: 'bottom'
-            },
-            buttons: [
-                {
-                    text: 'Back',
-                    action: this.tour.back,
-                    classes: 'shepherd-button-secondary'
-                },
-                {
-                    text: 'Next',
-                    action: this.tour.next
-                }
-            ],
-            when: {
-                show: () => {
-                    if (typeof switchTab === 'function') {
-                        switchTab('history', false);
-                    }
-                }
-            }
-        });
-
-        // Step 6: Notifications
-        this.tour.addStep({
-            id: 'notifications',
-            title: 'Smart Notifications',
-            text: `
-                <div class="onboarding-content">
-                    <p>Get alerted about important events in your container infrastructure.</p>
-                    <p><strong>Alert Types:</strong></p>
-                    <ul>
-                        <li>Container state changes (stopped, started)</li>
-                        <li>New image updates detected</li>
-                        <li>High CPU/memory usage</li>
-                        <li>Critical vulnerabilities found</li>
-                    </ul>
-                    <p><strong>Delivery Channels:</strong> Webhooks, Ntfy, or in-app notifications</p>
-                </div>
-            `,
-            attachTo: {
-                element: '[data-tab="notifications"]',
-                on: 'bottom'
-            },
-            buttons: [
-                {
-                    text: 'Back',
-                    action: this.tour.back,
-                    classes: 'shepherd-button-secondary'
-                },
-                {
-                    text: 'Next',
-                    action: this.tour.next
-                }
-            ],
-            when: {
-                show: () => {
-                    if (typeof switchTab === 'function') {
-                        switchTab('notifications', false);
-                    }
-                }
-            }
-        });
-
-        // Step 7: Image Updates
+        // Step 2: Image Update Management
         this.tour.addStep({
             id: 'image-updates',
-            title: 'Image Update Management',
+            title: '🔄 Image Update Management',
             text: `
                 <div class="onboarding-content">
                     <p>Keep your containers up-to-date with automated image update checking.</p>
                     <p><strong>Features:</strong></p>
                     <ul>
                         <li>Check for newer versions of :latest tagged images</li>
-                        <li>Pull updated images and recreate containers</li>
+                        <li>One-click updates: pull image + recreate container</li>
                         <li>Preserve all container configuration during updates</li>
                         <li>Automatic background checking at configurable intervals</li>
+                        <li>Bulk update operations for multiple containers</li>
                     </ul>
                     <p>Look for the blue "Update" badge on container cards, or use the "Check Updates" button in the dashboard.</p>
                     <div id="update-enable-container" style="margin-top: 15px;">
                         <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                            <input type="checkbox" id="enableImageUpdates" checked>
+                            <input type="checkbox" id="enableImageUpdates">
                             <span>Enable automatic update checking (every 24 hours)</span>
                         </label>
                     </div>
                 </div>
             `,
-            attachTo: {
-                element: '[data-tab="containers"]',
-                on: 'bottom'
-            },
             buttons: [
                 {
                     text: 'Back',
@@ -319,41 +105,34 @@ class OnboardingTour {
                     text: 'Next',
                     action: async () => {
                         const enabled = document.getElementById('enableImageUpdates')?.checked;
-                        if (enabled !== undefined) {
+                        if (enabled) {
                             await this.updateImageUpdateSettings(enabled);
                         }
                         this.tour.next();
                     }
                 }
-            ],
-            when: {
-                show: () => {
-                    if (typeof switchTab === 'function') {
-                        switchTab('containers', false);
-                    }
-                }
-            }
+            ]
         });
 
-        // Step 8: Activity Log
+        // Step 3: Configurable Card View
         this.tour.addStep({
-            id: 'activity',
-            title: 'Activity Log',
+            id: 'card-view',
+            title: '📊 Configurable Card View',
             text: `
                 <div class="onboarding-content">
-                    <p>The Activity Log provides a complete audit trail of all system actions.</p>
-                    <p><strong>Recorded Events:</strong></p>
+                    <p>Customize how you view your containers with flexible card display options.</p>
+                    <p><strong>On the Containers tab:</strong></p>
                     <ul>
-                        <li>Scanner execution results</li>
-                        <li>Telemetry submissions</li>
-                        <li>API operations</li>
-                        <li>Configuration changes</li>
+                        <li>Click the ⚙️ icon to access view settings</li>
+                        <li>Toggle visibility of different card sections</li>
+                        <li>Show/hide: Networks, Volumes, Environment, Ports, Labels</li>
+                        <li>Settings saved per browser for consistent experience</li>
                     </ul>
-                    <p>Essential for compliance and troubleshooting.</p>
+                    <p>Perfect for focusing on the information that matters most to you!</p>
                 </div>
             `,
             attachTo: {
-                element: '[data-tab="activity"]',
+                element: '[data-tab="containers"]',
                 on: 'bottom'
             },
             buttons: [
@@ -370,38 +149,28 @@ class OnboardingTour {
             when: {
                 show: () => {
                     if (typeof switchTab === 'function') {
-                        switchTab('activity', false);
+                        switchTab('containers', false);
                     }
                 }
             }
         });
 
-        // Step 9: Telemetry Opt-in (final step)
+        // Step 4: Finish
         this.tour.addStep({
-            id: 'telemetry',
-            title: 'Join the Selfhosting Community',
+            id: 'finish',
+            title: 'All Set!',
             text: `
                 <div class="onboarding-content">
-                    <p><strong>Help us understand what the selfhosting community is running!</strong></p>
-                    <p>By sharing anonymous statistics, you contribute to a collective view of popular images and emerging trends across selfhosters worldwide.</p>
-                    <p><strong>What's collected:</strong></p>
+                    <p><strong>You're ready to use Container Census v1.6.0!</strong></p>
+                    <p>Explore these additional features:</p>
                     <ul>
-                        <li>Container image names and versions</li>
-                        <li>Operating systems and counts</li>
-                        <li>Installation ID (random UUID)</li>
-                        <li>Timezone (for geographic distribution)</li>
+                        <li>📈 <strong>Monitoring:</strong> Real-time CPU & memory stats with historical trends</li>
+                        <li>🛡️ <strong>Security:</strong> Vulnerability scanning with Trivy integration</li>
+                        <li>🕸️ <strong>Graph:</strong> Visual network topology and container relationships</li>
+                        <li>📅 <strong>History:</strong> Timeline of container lifecycle events</li>
+                        <li>🔔 <strong>Notifications:</strong> Alerts via webhooks, Ntfy, or in-app</li>
                     </ul>
-                    <p><strong>NOT collected:</strong> IP addresses, container content, logs, environment variables, or any personal data</p>
-                    <p>See what's popular, what's growing, and how your setup compares to the community!</p>
-                    <div id="telemetry-choice" style="margin-top: 15px;">
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                            <input type="checkbox" id="enableTelemetry" checked>
-                            <span>Yes, contribute to community insights</span>
-                        </label>
-                        <p style="font-size: 12px; margin-top: 10px; color: #666;">
-                            <a href="https://selfhosters.cc/stats" target="_blank">View public dashboard</a> • Data submitted weekly
-                        </p>
-                    </div>
+                    <p style="margin-top: 15px;">Need help? Check the <a href="https://github.com/selfhosters-cc/container-census" target="_blank">documentation</a> or replay this tour from the help menu.</p>
                 </div>
             `,
             buttons: [
@@ -411,12 +180,8 @@ class OnboardingTour {
                     classes: 'shepherd-button-secondary'
                 },
                 {
-                    text: 'Finish Setup',
+                    text: 'Get Started',
                     action: async () => {
-                        const enabled = document.getElementById('enableTelemetry')?.checked;
-                        if (enabled !== undefined) {
-                            await this.updateTelemetrySettings(enabled);
-                        }
                         await this.completeTour();
                         this.tour.complete();
                     }
@@ -484,37 +249,6 @@ class OnboardingTour {
         }
     }
 
-    // Update vulnerability scanning settings
-    async updateVulnerabilitySettings(enabled) {
-        try {
-            const response = await fetch('/api/vulnerabilities/settings', {
-                method: 'GET',
-                headers: {
-                    'Authorization': 'Basic ' + btoa(localStorage.getItem('auth') || ':')
-                }
-            });
-            const settings = await response.json();
-
-            settings.enabled = enabled;
-            settings.auto_scan_new_images = enabled;
-
-            await fetch('/api/vulnerabilities/settings', {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': 'Basic ' + btoa(localStorage.getItem('auth') || ':')
-                },
-                body: JSON.stringify(settings)
-            });
-
-            if (enabled) {
-                showToast('Security', 'Vulnerability scanning enabled', 'success');
-            }
-        } catch (err) {
-            console.error('Failed to update vulnerability settings:', err);
-        }
-    }
-
     // Update image update settings
     async updateImageUpdateSettings(enabled) {
         try {
@@ -538,59 +272,6 @@ class OnboardingTour {
             }
         } catch (err) {
             console.error('Failed to update image update settings:', err);
-        }
-    }
-
-    // Update telemetry settings
-    async updateTelemetrySettings(enabled) {
-        try {
-            const response = await fetch('/api/telemetry/endpoints', {
-                method: 'GET',
-                headers: {
-                    'Authorization': 'Basic ' + btoa(localStorage.getItem('auth') || ':')
-                }
-            });
-
-            if (!response.ok) {
-                console.error('Failed to fetch telemetry endpoints:', response.status);
-                return;
-            }
-
-            const endpoints = await response.json();
-
-            // Find community endpoint
-            const communityEndpoint = endpoints.find(e => e.name === 'community');
-            if (communityEndpoint) {
-                const updateResponse = await fetch(`/api/telemetry/endpoints/${communityEndpoint.name}`, {
-                    method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Basic ' + btoa(localStorage.getItem('auth') || ':')
-                    },
-                    body: JSON.stringify({
-                        enabled: enabled
-                    })
-                });
-
-                if (!updateResponse.ok) {
-                    const error = await updateResponse.json();
-                    console.error('Failed to update telemetry endpoint:', error);
-                    showToast('Error', 'Failed to update telemetry settings', 'error');
-                    return;
-                }
-
-                if (enabled) {
-                    showToast('Thank You!', 'Anonymous telemetry enabled', 'success');
-                }
-
-                console.log('Telemetry endpoint updated successfully:', enabled);
-            } else {
-                console.error('Community telemetry endpoint not found');
-                showToast('Error', 'Community endpoint not found', 'error');
-            }
-        } catch (err) {
-            console.error('Failed to update telemetry settings:', err);
-            showToast('Error', 'Failed to update telemetry settings', 'error');
         }
     }
 

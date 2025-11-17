@@ -5,7 +5,7 @@ All notable changes to Container Census will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.6.0] - 2025-11-17
 
 ### Added
 
@@ -17,17 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Dashboard Layout Optimization**: Compact, efficient dashboard design
   - Quick Actions and System Health sections now display side-by-side on desktop
-  - Reduced font sizes, spacing, and icon sizes for better space utilization
-  - Responsive design: stacks vertically on mobile devices (< 1024px)
-  - More content visible without scrolling
 
 - **Image Version Display**: Show actual version numbers for container images
   - Displays image tags/versions on container cards (e.g., "11.6.2 (latest)")
-  - Extracts version from OCI image label `org.opencontainers.image.version` when available
-  - Shows multiple tags when image has both version number and :latest
   - Helps users verify image updates have taken effect
   - Database field `image_tags` stores all tags for each image
-  - Frontend preferentially displays version numbers over "latest"
 
 - **Image Update Management**: Check for and apply updates to containers running :latest tagged images
   - Manual update checks via "Check Updates" button in dashboard or per-container check
@@ -37,42 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Preserves all container settings during update (env vars, volumes, ports, networks, labels, restart policy)
   - Dry-run mode to preview changes before applying
   - Bulk update operations for multiple containers
-  - Docker Registry v2 API integration for anonymous digest comparison
-  - Supports both Docker Hub and private registries (public images only)
   - Agent support for remote container updates
-  - Database-backed configuration (no config.yaml dependency)
-  - Settings modal with real-time configuration updates (no restart required)
-
-- **Image Update Configuration**:
-  - `auto_check_enabled`: Enable/disable automatic background checking
-  - `check_interval_hours`: Check frequency (default: 24 hours)
-  - `only_check_latest_tags`: Restrict to :latest tags only (default: true)
-
-- **Image Update API Endpoints**:
-  - `GET /api/image-updates/settings` - Get current update settings
-  - `PUT /api/image-updates/settings` - Update configuration (takes effect immediately)
-  - `POST /api/containers/{host_id}/{container_id}/check-update` - Check single container
-  - `POST /api/containers/{host_id}/{container_id}/update` - Update single container
-  - `POST /api/containers/bulk-check-updates` - Check all :latest containers
-  - `POST /api/containers/bulk-update` - Update multiple containers
-
-- **Agent Image Update Support**:
-  - `POST /api/images/pull` - Pull new image on remote host
-  - `POST /api/containers/{id}/recreate` - Recreate container with new image
-  - Full configuration preservation during remote updates
-
-- **Database Schema Updates**:
-  - `containers.update_available` - Boolean flag for available updates
-  - `containers.last_update_check` - Timestamp of last check
-  - `image_update_settings` table - Persistent configuration storage
 
 - **Frontend Features**:
-  - Blue "Update" badge with pulsing animation on containers with available updates
   - "Check Update" and "Update Container" buttons on each container card
-  - "Check Updates" and "Update Settings" buttons in dashboard hero section
-  - Progress modals showing image pull and container recreation status
   - Confirmation dialogs before applying updates
-  - Filter containers by update availability
   - Onboarding tour step for image update feature
 
 - **Background Processing**:
