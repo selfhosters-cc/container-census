@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Update Modal Improvements**: Enhanced user experience for bulk container updates
+  - Host badges displayed on each update row with gradient styling
+  - Card-based layout showing container details on multiple lines (prevents horizontal overflow)
+  - Vertical information display: container name, host, image, digests, and remote creation date
+  - Improved readability on all screen sizes
+
+- **Dashboard Layout Optimization**: Compact, efficient dashboard design
+  - Quick Actions and System Health sections now display side-by-side on desktop
+  - Reduced font sizes, spacing, and icon sizes for better space utilization
+  - Responsive design: stacks vertically on mobile devices (< 1024px)
+  - More content visible without scrolling
+
 - **Image Version Display**: Show actual version numbers for container images
   - Displays image tags/versions on container cards (e.g., "11.6.2 (latest)")
   - Extracts version from OCI image label `org.opencontainers.image.version` when available
@@ -71,6 +83,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Logs update detection and check completion
 
 ### Fixed
+
+- **Remote Agent Image Updates**: Fixed image pull failures on remote agent hosts
+  - Agent now pulls images using proper image tags instead of digest-only references
+  - Resolves "pull access denied for sha256" errors
+  - Applied to both single and batch update endpoints
+  - Uses `ImageTags[0]` when available, falls back to `Image` field
+
+- **Toggle Switch Display**: Fixed duplicate circles in notification rule modal
+  - Removed duplicate CSS pseudo-element creating second circle
+  - Toggle switch now displays single sliding circle as intended
 
 - **GHCR Authentication**: Fixed "401 Unauthorized" errors when checking updates for GitHub Container Registry images
   - Added authentication support for ghcr.io registry

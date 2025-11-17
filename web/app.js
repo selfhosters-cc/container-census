@@ -6539,6 +6539,7 @@ function renderDashboardResourceStatus() {
 
     // Find top consumers
     const topCPU = [...containersWithStats].sort((a, b) => b.cpu_percent - a.cpu_percent).slice(0, 3);
+    const topMemory = [...containersWithStats].sort((a, b) => b.memory_percent - a.memory_percent).slice(0, 3);
 
     container.innerHTML = `
         <div style="display: flex; flex-direction: column; gap: 1rem;">
@@ -6548,6 +6549,15 @@ function renderDashboardResourceStatus() {
                     <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0;">
                         <span style="font-size: 0.875rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px;">${escapeHtml(c.name)}</span>
                         <span style="font-weight: 600; color: ${c.cpu_percent > 80 ? 'var(--danger)' : c.cpu_percent > 50 ? 'var(--warning)' : 'var(--success)'};">${c.cpu_percent.toFixed(1)}%</span>
+                    </div>
+                `).join('')}
+            </div>
+            <div style="padding-top: 0.5rem; border-top: 1px solid var(--border);">
+                <h4 style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-secondary);">Top Memory Usage</h4>
+                ${topMemory.map(c => `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0;">
+                        <span style="font-size: 0.875rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px;">${escapeHtml(c.name)}</span>
+                        <span style="font-weight: 600; color: ${c.memory_percent > 80 ? 'var(--danger)' : c.memory_percent > 50 ? 'var(--warning)' : 'var(--success)'};">${c.memory_percent.toFixed(1)}%</span>
                     </div>
                 `).join('')}
             </div>
@@ -7045,7 +7055,22 @@ async function checkAllUpdates() {
         return;
     }
 
-    showNotification(`Checking ${latestContainers.length} container(s) for updates...`, 'info');
+    // Open modal and show loading state with count
+    showUpdateResultsModal();
+    const loadingDiv = document.getElementById('updateResultsLoading');
+    loadingDiv.style.display = 'block';
+    loadingDiv.innerHTML = `
+        <div style="text-align: center;">
+            <div style="font-size: 48px; margin-bottom: 10px;">🔍</div>
+            <div style="font-size: 18px; font-weight: 600; margin-bottom: 10px;">Checking for updates...</div>
+            <div style="color: var(--text-secondary);">Checking ${latestContainers.length} container(s) against their registries</div>
+            <div style="margin-top: 20px;">
+                <div class="spinner"></div>
+            </div>
+        </div>
+    `;
+    document.getElementById('noUpdatesFound').style.display = 'none';
+    document.getElementById('updatesFound').style.display = 'none';
 
     const containerList = latestContainers.map(c => ({
         host_id: c.host_id,
@@ -7064,26 +7089,48 @@ async function checkAllUpdates() {
         const results = await response.json();
 
         if (response.ok) {
-            let availableCount = 0;
+            // Collect containers with updates
+            const containersWithUpdates = [];
             for (const key in results) {
                 if (results[key].available) {
-                    availableCount++;
+                    const [hostId, containerId] = key.split('-');
+                    const container = latestContainers.find(c =>
+                        c.host_id == hostId && c.id === containerId
+                    );
+                    if (container) {
+                        containersWithUpdates.push({
+                            ...container,
+                            updateInfo: results[key]
+                        });
+                    }
                 }
             }
 
-            if (availableCount > 0) {
-                showNotification(`${availableCount} update(s) available`, 'success');
+            // Hide loading, show results
+            document.getElementById('updateResultsLoading').style.display = 'none';
+
+            // Show info banner with counts
+            const infoBanner = document.getElementById('updateCheckInfo');
+            infoBanner.style.display = 'block';
+            document.getElementById('checkedCount').textContent = latestContainers.length;
+            document.getElementById('totalCount').textContent = containers.length;
+
+            if (containersWithUpdates.length > 0) {
+                displayUpdateResults(containersWithUpdates);
             } else {
-                showNotification('All containers are up to date', 'info');
+                document.getElementById('noUpdatesFound').style.display = 'block';
+                document.getElementById('noUpdatesCheckedCount').textContent = latestContainers.length;
             }
 
             // Reload containers to update UI badges
             await loadData();
         } else {
+            closeUpdateResultsModal();
             showNotification('Failed to check for updates', 'error');
         }
     } catch (error) {
         console.error('Error checking for updates:', error);
+        closeUpdateResultsModal();
         showNotification('Error checking for updates: ' + error.message, 'error');
     }
 }
@@ -7259,4 +7306,322 @@ function hideProgressModal() {
     if (modal) {
         modal.classList.remove('show');
     }
+}
+
+// ===== UPDATE RESULTS MODAL FUNCTIONS =====
+
+// Global variable to store containers with updates
+let containersWithUpdates = [];
+
+// Show update results modal
+function showUpdateResultsModal() {
+    document.getElementById('updateResultsModal').classList.add('show');
+}
+
+// Close update results modal
+function closeUpdateResultsModal() {
+    document.getElementById('updateResultsModal').classList.remove('show');
+}
+
+// Display update results in the modal
+function displayUpdateResults(containers) {
+    containersWithUpdates = containers;
+    document.getElementById('updatesFound').style.display = 'block';
+    document.getElementById('updateCount').textContent = containers.length;
+
+    const tbody = document.getElementById('updatesTableBody');
+    tbody.innerHTML = '';
+
+    containers.forEach((container, index) => {
+        const row = document.createElement('tr');
+        row.dataset.index = index;
+        row.dataset.hostId = container.host_id;
+        row.dataset.containerId = container.id;
+
+        // Truncate digest for display
+        const truncateDigest = (digest) => {
+            if (!digest) return 'N/A';
+            return digest.substring(0, 12) + '...';
+        };
+
+        // Format date
+        const formatDate = (dateStr) => {
+            if (!dateStr || dateStr === '0001-01-01T00:00:00Z') return 'Unknown';
+            const date = new Date(dateStr);
+            if (isNaN(date.getTime())) return 'Invalid Date';
+            return date.toLocaleString();
+        };
+
+        row.className = 'update-row-card';
+        row.innerHTML = `
+            <td style="width: 40px; vertical-align: top; padding-top: 20px;">
+                <input type="checkbox" class="update-checkbox" data-index="${index}" onchange="updateSelectedButton()">
+            </td>
+            <td>
+                <div class="update-card-content">
+                    <div class="update-card-header">
+                        <strong class="update-container-name">${escapeHtml(container.name)}</strong>
+                        <span class="update-host-badge">${escapeHtml(container.host_name || 'Unknown')}</span>
+                    </div>
+                    <div class="update-card-image">
+                        <strong>Image:</strong> <span class="digest-text">${escapeHtml(container.image)}</span>
+                    </div>
+                    <div class="update-card-digests">
+                        <div><strong>Current:</strong> <span class="digest-text">${truncateDigest(container.updateInfo.local_digest)}</span></div>
+                        <div><strong>New:</strong> <span class="digest-text">${truncateDigest(container.updateInfo.remote_digest)}</span></div>
+                    </div>
+                    <div class="update-card-date">
+                        <strong>Remote Created:</strong> ${formatDate(container.updateInfo.remote_created)}
+                    </div>
+                </div>
+            </td>
+        `;
+
+        tbody.appendChild(row);
+    });
+
+    // Reset selection state
+    document.getElementById('selectAllCheckbox').checked = false;
+    updateSelectedButton();
+}
+
+// Toggle all updates
+function toggleAllUpdates(checked) {
+    const checkboxes = document.querySelectorAll('.update-checkbox');
+    checkboxes.forEach(cb => {
+        cb.checked = checked;
+        const row = cb.closest('tr');
+        if (checked) {
+            row.classList.add('selected');
+        } else {
+            row.classList.remove('selected');
+        }
+    });
+    updateSelectedButton();
+}
+
+// Select all updates
+function selectAllUpdates() {
+    document.getElementById('selectAllCheckbox').checked = true;
+    toggleAllUpdates(true);
+}
+
+// Deselect all updates
+function deselectAllUpdates() {
+    document.getElementById('selectAllCheckbox').checked = false;
+    toggleAllUpdates(false);
+}
+
+// Update the "Update Selected" button state
+function updateSelectedButton() {
+    const checkboxes = document.querySelectorAll('.update-checkbox:checked');
+    const button = document.getElementById('updateSelectedBtn');
+    button.disabled = checkboxes.length === 0;
+
+    // Update row selection styles
+    document.querySelectorAll('.update-checkbox').forEach(cb => {
+        const row = cb.closest('tr');
+        if (cb.checked) {
+            row.classList.add('selected');
+        } else {
+            row.classList.remove('selected');
+        }
+    });
+}
+
+// Start batch update
+async function startBatchUpdate() {
+    const selectedCheckboxes = document.querySelectorAll('.update-checkbox:checked');
+    const selectedContainers = [];
+
+    selectedCheckboxes.forEach(cb => {
+        const index = parseInt(cb.dataset.index);
+        selectedContainers.push(containersWithUpdates[index]);
+    });
+
+    if (selectedContainers.length === 0) {
+        showNotification('Please select at least one container to update', 'warning');
+        return;
+    }
+
+    // Close results modal and open progress modal
+    closeUpdateResultsModal();
+    showUpdateProgressModal(selectedContainers);
+
+    // Start updating containers
+    await performBatchUpdate(selectedContainers);
+}
+
+// ===== UPDATE PROGRESS MODAL FUNCTIONS =====
+
+let updateProgressData = {
+    total: 0,
+    completed: 0,
+    failed: 0,
+    containers: []
+};
+
+// Show update progress modal
+function showUpdateProgressModal(containers) {
+    updateProgressData = {
+        total: containers.length,
+        completed: 0,
+        failed: 0,
+        containers: containers.map(c => ({
+            hostId: c.host_id,
+            containerId: c.id,
+            name: c.name,
+            image: c.image,
+            status: 'pending'
+        }))
+    };
+
+    document.getElementById('updateProgressModal').classList.add('show');
+    document.getElementById('updateProgressCloseBtn').disabled = true;
+    document.getElementById('updateProgressDoneBtn').style.display = 'none';
+
+    // Initialize UI
+    updateProgressUI();
+    renderUpdateContainersList();
+
+    // Clear logs
+    document.getElementById('updateLogs').innerHTML = '<div style="color: #4CAF50;">▶ Starting batch update...</div>';
+}
+
+// Close update progress modal
+function closeUpdateProgressModal() {
+    document.getElementById('updateProgressModal').classList.remove('show');
+}
+
+// Update progress UI
+function updateProgressUI() {
+    const percentage = updateProgressData.total > 0 ? (updateProgressData.completed / updateProgressData.total) * 100 : 0;
+    document.getElementById('updateProgressBar').style.width = percentage + '%';
+    document.getElementById('updateProgressText').textContent = `${updateProgressData.completed} / ${updateProgressData.total}`;
+
+    const inProgress = updateProgressData.containers.filter(c => c.status === 'pulling' || c.status === 'recreating').length;
+    if (inProgress > 0) {
+        document.getElementById('updateStatusText').textContent = `Updating ${inProgress} container(s)...`;
+    } else if (updateProgressData.completed === updateProgressData.total) {
+        const successCount = updateProgressData.total - updateProgressData.failed;
+        document.getElementById('updateStatusText').textContent = `Completed: ${successCount} successful, ${updateProgressData.failed} failed`;
+    } else {
+        document.getElementById('updateStatusText').textContent = 'Preparing...';
+    }
+}
+
+// Render containers list
+function renderUpdateContainersList() {
+    const list = document.getElementById('updateContainersList');
+    list.innerHTML = '';
+
+    updateProgressData.containers.forEach((container, index) => {
+        const item = document.createElement('div');
+        item.className = `update-container-item ${container.status}`;
+        item.id = `update-item-${index}`;
+
+        let statusIcon = '⏸️';
+        let statusText = 'Pending';
+
+        switch (container.status) {
+            case 'pulling':
+                statusIcon = '<span class="spinning">🔄</span>';
+                statusText = 'Pulling image...';
+                break;
+            case 'recreating':
+                statusIcon = '<span class="spinning">⚙️</span>';
+                statusText = 'Recreating container...';
+                break;
+            case 'complete':
+                statusIcon = '✅';
+                statusText = 'Complete';
+                break;
+            case 'failed':
+                statusIcon = '❌';
+                statusText = 'Failed';
+                break;
+        }
+
+        item.innerHTML = `
+            <div class="update-container-status">
+                <span class="status-icon">${statusIcon}</span>
+                <span>${statusText}</span>
+            </div>
+            <div class="update-container-name">${escapeHtml(container.name)}</div>
+            <div class="update-container-image">${escapeHtml(container.image)}</div>
+        `;
+
+        list.appendChild(item);
+    });
+}
+
+// Add log entry
+function addUpdateLog(message, color = '#d4d4d4') {
+    const logsDiv = document.getElementById('updateLogs');
+    const timestamp = new Date().toLocaleTimeString();
+    const logEntry = document.createElement('div');
+    logEntry.style.color = color;
+    logEntry.textContent = `[${timestamp}] ${message}`;
+    logsDiv.appendChild(logEntry);
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+}
+
+// Perform batch update
+async function performBatchUpdate(containers) {
+    for (let i = 0; i < containers.length; i++) {
+        const container = containers[i];
+        updateProgressData.containers[i].status = 'in-progress';
+        renderUpdateContainersList();
+        updateProgressUI();
+
+        addUpdateLog(`Starting update for: ${container.name}`, '#60a5fa');
+        addUpdateLog(`  → Pulling and recreating container...`, '#fbbf24');
+
+        try {
+            // The /update endpoint handles both pulling and recreating
+            const updateResponse = await fetch(`/api/containers/${container.host_id}/${container.id}/update`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (!updateResponse.ok) {
+                const errorData = await updateResponse.json().catch(() => ({ error: 'Unknown error' }));
+                throw new Error(errorData.error || `HTTP ${updateResponse.status}`);
+            }
+
+            const result = await updateResponse.json();
+            addUpdateLog(`  ✓ Image pulled: ${container.image}`, '#4CAF50');
+            addUpdateLog(`  ✓ Container recreated with ID: ${result.new_container_id ? result.new_container_id.substring(0, 12) : 'unknown'}`, '#4CAF50');
+
+            updateProgressData.containers[i].status = 'complete';
+            updateProgressData.completed++;
+            addUpdateLog(`  ✓ Container updated successfully: ${container.name}`, '#4CAF50');
+
+        } catch (error) {
+            updateProgressData.containers[i].status = 'failed';
+            updateProgressData.completed++;
+            updateProgressData.failed++;
+            addUpdateLog(`  ✗ Failed to update ${container.name}: ${error.message}`, '#ef4444');
+        }
+
+        renderUpdateContainersList();
+        updateProgressUI();
+    }
+
+    // All done
+    addUpdateLog(`\n▶ Batch update complete!`, '#4CAF50');
+    addUpdateLog(`  Total: ${updateProgressData.total} | Successful: ${updateProgressData.total - updateProgressData.failed} | Failed: ${updateProgressData.failed}`, '#60a5fa');
+
+    document.getElementById('updateProgressCloseBtn').disabled = false;
+    document.getElementById('updateProgressDoneBtn').style.display = 'block';
+}
+
+// Finish batch update
+async function finishBatchUpdate() {
+    closeUpdateProgressModal();
+    await loadData();  // Reload containers to reflect updates
+    showNotification(`Update complete: ${updateProgressData.total - updateProgressData.failed} successful, ${updateProgressData.failed} failed`,
+                    updateProgressData.failed > 0 ? 'warning' : 'success');
 }

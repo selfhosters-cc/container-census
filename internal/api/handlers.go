@@ -1802,8 +1802,13 @@ func (s *Server) handleUpdateContainer(w http.ResponseWriter, r *http.Request) {
 
 	if !dryRun {
 		// Pull the new image first
-		log.Printf("Pulling image %s on host %s", container.Image, host.Name)
-		if err := s.scanner.PullImage(r.Context(), *host, container.Image); err != nil {
+		// Use the first image tag if available (container.Image might be a digest like sha256:...)
+		imageToPull := container.Image
+		if len(container.ImageTags) > 0 {
+			imageToPull = container.ImageTags[0]
+		}
+		log.Printf("Pulling image %s on host %s", imageToPull, host.Name)
+		if err := s.scanner.PullImage(r.Context(), *host, imageToPull); err != nil {
 			respondError(w, http.StatusInternalServerError, "Failed to pull image: "+err.Error())
 			return
 		}
@@ -1814,6 +1819,17 @@ func (s *Server) handleUpdateContainer(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to recreate container: "+err.Error())
 		return
+	}
+
+	// If not a dry run, trigger a scan to update the container state with the new image ID
+	if !dryRun {
+		go func() {
+			ctx := context.Background()
+			log.Printf("Triggering scan for host %s after container update", host.Name)
+			if _, err := s.scanner.ScanHost(ctx, *host); err != nil {
+				log.Printf("Failed to scan host after update: %v", err)
+			}
+		}()
 	}
 
 	respondJSON(w, http.StatusOK, result)
@@ -1967,8 +1983,13 @@ func (s *Server) handleBulkUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Pull the new image first
-		log.Printf("Pulling image %s on host %s", container.Image, host.Name)
-		if err := s.scanner.PullImage(r.Context(), *host, container.Image); err != nil {
+		// Use the first image tag if available (container.Image might be a digest like sha256:...)
+		imageToPull := container.Image
+		if len(container.ImageTags) > 0 {
+			imageToPull = container.ImageTags[0]
+		}
+		log.Printf("Pulling image %s on host %s", imageToPull, host.Name)
+		if err := s.scanner.PullImage(r.Context(), *host, imageToPull); err != nil {
 			results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = map[string]interface{}{
 				"success": false,
 				"error":   "Failed to pull image: " + err.Error(),

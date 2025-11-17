@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -103,6 +104,14 @@ func (c *Client) CheckImageUpdate(ctx context.Context, imageName string, localDi
 		return nil, fmt.Errorf("failed to get remote digest: %w", err)
 	}
 
+	// Get the remote image creation time from manifest
+	remoteCreated, err := c.getImageCreatedTime(ctx, registry, repository, tag)
+	if err != nil {
+		// Log error but don't fail - creation time is optional
+		log.Printf("Warning: failed to get image creation time for %s - %v", imageName, err)
+		remoteCreated = time.Time{}
+	}
+
 	// Normalize digests for comparison (remove sha256: prefix if present)
 	normalizedLocal := normalizeDigest(localDigest)
 	normalizedRemote := normalizeDigest(remoteDigest)
@@ -111,11 +120,12 @@ func (c *Client) CheckImageUpdate(ctx context.Context, imageName string, localDi
 	available := normalizedLocal != normalizedRemote
 
 	return &ImageUpdateInfo{
-		Available:    available,
-		LocalDigest:  normalizedLocal,
-		RemoteDigest: normalizedRemote,
-		ImageName:    imageName,
-		Tag:          tag,
+		Available:     available,
+		LocalDigest:   normalizedLocal,
+		RemoteDigest:  normalizedRemote,
+		RemoteCreated: remoteCreated,
+		ImageName:     imageName,
+		Tag:           tag,
 	}, nil
 }
 
@@ -291,4 +301,132 @@ func normalizeDigest(digest string) string {
 	}
 
 	return digest
+}
+
+// getImageCreatedTime retrieves the creation time of an image from the registry manifest
+func (c *Client) getImageCreatedTime(ctx context.Context, registry, repository, tag string) (time.Time, error) {
+	// Get auth token if needed
+	token, err := c.getAuthToken(ctx, registry, repository)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to get auth token: %w", err)
+	}
+
+	// Build the manifest URL
+	manifestURL := fmt.Sprintf("https://%s/v2/%s/manifests/%s", registry, repository, tag)
+
+	// Debug logging
+	log.Printf("DEBUG: Fetching manifest for registry=%s, repo=%s, tag=%s, URL=%s", registry, repository, tag, manifestURL)
+
+	// Create request
+	req, err := http.NewRequestWithContext(ctx, "GET", manifestURL, nil)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers - accept both Docker and OCI formats, including manifest lists
+	req.Header.Set("Accept", "application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	// Make request
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to fetch manifest: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("DEBUG: Manifest fetch failed: status=%d, body=%s", resp.StatusCode, string(body))
+		return time.Time{}, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	// Read the response body
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to read manifest body: %w", err)
+	}
+
+	// Try to parse as a manifest list first
+	var manifestList struct {
+		SchemaVersion int `json:"schemaVersion"`
+		MediaType     string `json:"mediaType"`
+		Manifests     []struct {
+			Digest   string `json:"digest"`
+			Platform struct {
+				Architecture string `json:"architecture"`
+				OS           string `json:"os"`
+			} `json:"platform"`
+		} `json:"manifests"`
+	}
+
+	// Check if this is a manifest list
+	if err := json.Unmarshal(bodyBytes, &manifestList); err == nil && len(manifestList.Manifests) > 0 {
+		// It's a manifest list, skip for now as we'd need to fetch the platform-specific manifest
+		log.Printf("DEBUG: Skipping manifest list (multi-arch image) - not yet supported")
+		return time.Time{}, fmt.Errorf("manifest list not yet supported")
+	}
+
+	// Parse as regular manifest
+	var manifest struct {
+		Config struct {
+			Digest string `json:"digest"`
+		} `json:"config"`
+	}
+
+	if err := json.Unmarshal(bodyBytes, &manifest); err != nil {
+		return time.Time{}, fmt.Errorf("failed to decode manifest: %w", err)
+	}
+
+	// Check if config digest is empty
+	if manifest.Config.Digest == "" {
+		log.Printf("DEBUG: Manifest has no config digest, body=%s", string(bodyBytes))
+		return time.Time{}, fmt.Errorf("manifest has no config digest")
+	}
+
+	// Now fetch the config blob to get the created time
+	configURL := fmt.Sprintf("https://%s/v2/%s/blobs/%s", registry, repository, manifest.Config.Digest)
+
+	configReq, err := http.NewRequestWithContext(ctx, "GET", configURL, nil)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to create config request: %w", err)
+	}
+
+	if token != "" {
+		configReq.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	configResp, err := c.httpClient.Do(configReq)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to fetch config blob: %w", err)
+	}
+	defer configResp.Body.Close()
+
+	if configResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(configResp.Body)
+		log.Printf("DEBUG: Config blob fetch failed: status=%d, URL=%s, body=%s", configResp.StatusCode, configURL, string(body))
+		return time.Time{}, fmt.Errorf("unexpected config status code: %d", configResp.StatusCode)
+	}
+
+	// Parse config to get created time
+	var config struct {
+		Created string `json:"created"`
+	}
+
+	if err := json.NewDecoder(configResp.Body).Decode(&config); err != nil {
+		return time.Time{}, fmt.Errorf("failed to decode config: %w", err)
+	}
+
+	// Parse the created timestamp
+	if config.Created == "" {
+		return time.Time{}, fmt.Errorf("created time not found in config")
+	}
+
+	createdTime, err := time.Parse(time.RFC3339, config.Created)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to parse created time: %w", err)
+	}
+
+	return createdTime, nil
 }

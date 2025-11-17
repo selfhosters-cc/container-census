@@ -262,6 +262,10 @@ func (s *Scanner) pullAgentImage(ctx context.Context, host models.Host, imageNam
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("agent does not support image pulling - please update your census-agent to the latest version")
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("agent returned status %d: %s", resp.StatusCode, string(bodyBytes))

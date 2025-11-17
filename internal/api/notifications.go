@@ -165,15 +165,16 @@ func (s *Server) handleCreateNotificationRule(w http.ResponseWriter, r *http.Req
 
 	// Validate event types
 	validEventTypes := map[string]bool{
-		models.EventTypeNewImage:           true,
-		models.EventTypeStateChange:        true,
-		models.EventTypeHighCPU:            true,
-		models.EventTypeHighMemory:         true,
-		models.EventTypeAnomalousBehavior:  true,
-		models.EventTypeContainerStarted:   true,
-		models.EventTypeContainerStopped:   true,
-		models.EventTypeContainerPaused:    true,
-		models.EventTypeContainerResumed:   true,
+		models.EventTypeNewImage:              true,
+		models.EventTypeImageUpdateAvailable:  true,
+		models.EventTypeStateChange:           true,
+		models.EventTypeHighCPU:               true,
+		models.EventTypeHighMemory:            true,
+		models.EventTypeAnomalousBehavior:     true,
+		models.EventTypeContainerStarted:      true,
+		models.EventTypeContainerStopped:      true,
+		models.EventTypeContainerPaused:       true,
+		models.EventTypeContainerResumed:      true,
 	}
 
 	for _, et := range rule.EventTypes {

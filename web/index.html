@@ -223,50 +223,89 @@
                     </h1>
                     <p class="dashboard-subtitle">Monitor and manage your multi-host Docker infrastructure</p>
                 </div>
-                <div class="dashboard-hero-actions">
-                    <button id="dashboardScanBtn" class="btn btn-primary btn-lg">
-                        <span>🔄</span> Scan All Hosts
-                    </button>
-                    <button onclick="checkAllUpdates()" class="btn btn-info btn-lg">
-                        <span>⬆️</span> Check Updates
-                    </button>
+            </div>
+
+            <!-- System Health & Quick Actions (combined, side-by-side on desktop) -->
+            <div class="dashboard-section dashboard-top-row" style="margin-top: 0;">
+                <div class="dashboard-top-left">
+                    <h2 class="dashboard-section-title">Quick Actions</h2>
+                    <div class="dashboard-quick-actions-compact">
+                        <button id="dashboardScanBtn" class="dashboard-action-card-compact">
+                            <span class="action-icon">🔄</span>
+                            <span class="action-label">Scan All Hosts</span>
+                        </button>
+                        <button onclick="checkAllUpdates()" class="dashboard-action-card-compact">
+                            <span class="action-icon">⬆️</span>
+                            <span class="action-label">Check Updates</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="dashboard-top-right">
+                    <h2 class="dashboard-section-title">System Health</h2>
+                    <div class="dashboard-metrics-grid">
+                        <div class="dashboard-metric-card">
+                            <div class="metric-icon" style="background: linear-gradient(135deg, #667eea, #764ba2);">
+                                🖥️
+                            </div>
+                            <div class="metric-content">
+                                <div class="metric-value" id="dashTotalHosts">-</div>
+                                <div class="metric-label">Total Hosts</div>
+                                <div class="metric-change" id="dashHostsChange"></div>
+                            </div>
+                        </div>
+                        <div class="dashboard-metric-card">
+                            <div class="metric-icon" style="background: linear-gradient(135deg, #10b981, #34d399);">
+                                ✅
+                            </div>
+                            <div class="metric-content">
+                                <div class="metric-value" id="dashRunningContainers">-</div>
+                                <div class="metric-label">Running Containers</div>
+                                <div class="metric-change" id="dashRunningChange"></div>
+                            </div>
+                        </div>
+                        <div class="dashboard-metric-card">
+                            <div class="metric-icon" style="background: linear-gradient(135deg, #f59e0b, #fbbf24);">
+                                📦
+                            </div>
+                            <div class="metric-content">
+                                <div class="metric-value" id="dashTotalContainers">-</div>
+                                <div class="metric-label">Total Containers</div>
+                                <div class="metric-change" id="dashContainersChange"></div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <!-- System Health Overview -->
+            <!-- Navigation Links -->
             <div class="dashboard-section">
-                <h2 class="dashboard-section-title">System Health</h2>
-                <div class="dashboard-metrics-grid">
-                    <div class="dashboard-metric-card">
-                        <div class="metric-icon" style="background: linear-gradient(135deg, #667eea, #764ba2);">
-                            🖥️
-                        </div>
-                        <div class="metric-content">
-                            <div class="metric-value" id="dashTotalHosts">-</div>
-                            <div class="metric-label">Total Hosts</div>
-                            <div class="metric-change" id="dashHostsChange"></div>
-                        </div>
-                    </div>
-                    <div class="dashboard-metric-card">
-                        <div class="metric-icon" style="background: linear-gradient(135deg, #10b981, #34d399);">
-                            ✅
-                        </div>
-                        <div class="metric-content">
-                            <div class="metric-value" id="dashRunningContainers">-</div>
-                            <div class="metric-label">Running Containers</div>
-                            <div class="metric-change" id="dashRunningChange"></div>
-                        </div>
-                    </div>
-                    <div class="dashboard-metric-card">
-                        <div class="metric-icon" style="background: linear-gradient(135deg, #f59e0b, #fbbf24);">
-                            📦
-                        </div>
-                        <div class="metric-content">
-                            <div class="metric-value" id="dashTotalContainers">-</div>
-                            <div class="metric-label">Total Containers</div>
-                            <div class="metric-change" id="dashContainersChange"></div>
-                        </div>
-                    </div>
+                <h2 class="dashboard-section-title">Navigation</h2>
+                <div class="dashboard-quick-actions">
+                    <button onclick="switchTab('hosts', true)" class="dashboard-action-card">
+                        <span class="action-icon">🖥️</span>
+                        <span class="action-label">Manage Hosts</span>
+                    </button>
+                    <button onclick="switchTab('containers', true)" class="dashboard-action-card">
+                        <span class="action-icon">📦</span>
+                        <span class="action-label">View Containers</span>
+                    </button>
+                    <button onclick="switchTab('security', true)" class="dashboard-action-card">
+                        <span class="action-icon">🛡️</span>
+                        <span class="action-label">Scan Vulnerabilities</span>
+                    </button>
+                    <button onclick="switchTab('graph', true)" class="dashboard-action-card">
+                        <span class="action-icon">🕸️</span>
+                        <span class="action-label">Network Graph</span>
+                    </button>
+                    <button onclick="switchTab('reports', true)" class="dashboard-action-card">
+                        <span class="action-icon">📈</span>
+                        <span class="action-label">Generate Reports</span>
+                    </button>
+                    <button onclick="switchTab('notifications', true)" class="dashboard-action-card">
+                        <span class="action-icon">🔔</span>
+                        <span class="action-label">Notifications</span>
+                    </button>
                 </div>
             </div>
 
@@ -353,37 +392,6 @@
                             View Security Details
                         </button>
                     </div>
-                </div>
-            </div>
-
-            <!-- Quick Actions -->
-            <div class="dashboard-section">
-                <h2 class="dashboard-section-title">Quick Actions</h2>
-                <div class="dashboard-quick-actions">
-                    <button onclick="switchTab('hosts', true)" class="dashboard-action-card">
-                        <span class="action-icon">🖥️</span>
-                        <span class="action-label">Manage Hosts</span>
-                    </button>
-                    <button onclick="switchTab('containers', true)" class="dashboard-action-card">
-                        <span class="action-icon">📦</span>
-                        <span class="action-label">View Containers</span>
-                    </button>
-                    <button onclick="switchTab('security', true)" class="dashboard-action-card">
-                        <span class="action-icon">🛡️</span>
-                        <span class="action-label">Scan Vulnerabilities</span>
-                    </button>
-                    <button onclick="switchTab('graph', true)" class="dashboard-action-card">
-                        <span class="action-icon">🕸️</span>
-                        <span class="action-label">Network Graph</span>
-                    </button>
-                    <button onclick="switchTab('reports', true)" class="dashboard-action-card">
-                        <span class="action-icon">📈</span>
-                        <span class="action-label">Generate Reports</span>
-                    </button>
-                    <button onclick="switchTab('notifications', true)" class="dashboard-action-card">
-                        <span class="action-icon">🔔</span>
-                        <span class="action-label">Notifications</span>
-                    </button>
                 </div>
             </div>
         </div>
@@ -1375,14 +1383,14 @@
                             <label for="ruleName">Rule Name *</label>
                             <input type="text" id="ruleName" required placeholder="e.g., High CPU Alert">
                         </div>
-                        <div class="form-group" style="flex: 0 0 auto; min-width: 120px;">
+                        <div class="form-group" style="flex: 0 0 auto; min-width: 140px;">
                             <label style="display: block; margin-bottom: 8px;">Status</label>
-                            <div class="toggle-switch-container">
+                            <div style="display: inline-flex; align-items: center; gap: 12px;">
                                 <label class="toggle-switch">
-                                    <input type="checkbox" id="ruleEnabled" checked>
+                                    <input type="checkbox" id="ruleEnabled" checked onchange="document.getElementById('ruleEnabledText').textContent = this.checked ? 'Enabled' : 'Disabled'">
                                     <span class="toggle-slider"></span>
                                 </label>
-                                <span class="toggle-label" id="ruleEnabledLabel">Enabled</span>
+                                <span class="toggle-text-label" id="ruleEnabledText">Enabled</span>
                             </div>
                         </div>
                     </div>
@@ -1626,7 +1634,110 @@
         </div>
     </div>
 
-    <!-- Image Update Settings Modal -->
+    <!-- Update Results Modal -->
+    <div id="updateResultsModal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3>Container Updates Available</h3>
+                <button class="close-btn" onclick="closeUpdateResultsModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- Info banner explaining filtering -->
+                <div class="alert alert-info" style="margin-bottom: 20px; display: none;" id="updateCheckInfo">
+                    <strong>ℹ️ Update Check:</strong> Checked <strong><span id="checkedCount">0</span></strong> of <strong><span id="totalCount">0</span></strong> total containers.
+                    Only containers using <code>:latest</code> tags (or no tag) are checked for updates.
+                    Containers with specific version tags (e.g., <code>:1.2.3</code>) are skipped.
+                </div>
+
+                <div id="updateResultsContent">
+                    <!-- Empty state -->
+                    <div id="noUpdatesFound" class="empty-state" style="display: none;">
+                        <div style="font-size: 48px; margin-bottom: 10px;">✅</div>
+                        <h3>All containers are up to date!</h3>
+                        <p>All <span id="noUpdatesCheckedCount">0</span> checked container(s) with <code>:latest</code> tags are up to date.</p>
+                    </div>
+
+                    <!-- Updates found -->
+                    <div id="updatesFound" style="display: none;">
+                        <div class="updates-header" style="margin-bottom: 15px;">
+                            <p><strong><span id="updateCount">0</span> container(s)</strong> have updates available</p>
+                            <div style="display: flex; gap: 10px; margin-top: 10px;">
+                                <button onclick="selectAllUpdates()" class="btn btn-sm btn-secondary">Select All</button>
+                                <button onclick="deselectAllUpdates()" class="btn btn-sm btn-secondary">Deselect All</button>
+                            </div>
+                        </div>
+
+                        <div class="table-container">
+                            <table class="updates-table updates-table-card-layout">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 40px;">
+                                            <input type="checkbox" id="selectAllCheckbox" onchange="toggleAllUpdates(this.checked)">
+                                        </th>
+                                        <th>Update Details</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="updatesTableBody">
+                                    <!-- Populated by JavaScript -->
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="alert alert-info" style="margin-top: 20px;">
+                            <strong>💡 Tip:</strong> You can also check and update individual containers from the <strong>Containers</strong> tab. Each container card has dedicated buttons for checking and applying updates.
+                        </div>
+                    </div>
+
+                    <!-- Loading state -->
+                    <div id="updateResultsLoading" class="loading">
+                        Checking for updates...
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" onclick="closeUpdateResultsModal()" class="btn btn-secondary">Close</button>
+                <button type="button" id="updateSelectedBtn" onclick="startBatchUpdate()" class="btn btn-primary" disabled>Update Selected</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Update Progress Modal -->
+    <div id="updateProgressModal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3>Updating Containers</h3>
+                <button class="close-btn" onclick="closeUpdateProgressModal()" id="updateProgressCloseBtn" disabled>&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="update-progress-summary" style="margin-bottom: 20px;">
+                    <div class="progress-bar-container" style="background: #e9ecef; border-radius: 4px; height: 24px; position: relative; overflow: hidden;">
+                        <div id="updateProgressBar" class="progress-bar-fill" style="background: linear-gradient(90deg, #4CAF50, #45a049); height: 100%; width: 0%; transition: width 0.3s ease;"></div>
+                        <div id="updateProgressText" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #333;">0 / 0</div>
+                    </div>
+                    <div style="margin-top: 10px; text-align: center; font-size: 14px; color: var(--text-secondary);">
+                        <span id="updateStatusText">Preparing...</span>
+                    </div>
+                </div>
+
+                <div class="update-containers-list" style="max-height: 400px; overflow-y: auto;">
+                    <div id="updateContainersList">
+                        <!-- Populated by JavaScript -->
+                    </div>
+                </div>
+
+                <div class="update-logs-section" style="margin-top: 20px;">
+                    <h4 style="margin-bottom: 10px;">Real-time Logs</h4>
+                    <div id="updateLogs" class="log-content" style="max-height: 300px; overflow-y: auto; background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 4px; font-family: 'Courier New', monospace; font-size: 12px;">
+                        <div style="color: #4CAF50;">▶ Starting batch update...</div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" id="updateProgressDoneBtn" onclick="finishBatchUpdate()" class="btn btn-primary" style="display: none;">Done</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Changelog Modal -->
     <div id="changelogModal" class="modal">
         <div class="modal-content modal-large">
