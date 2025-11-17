@@ -26,11 +26,31 @@ else
     DB_FILE="census.db"
 fi
 
+# Prompt for authentication
+read -p "Enable authentication? (y/N): " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    echo "Authentication ENABLED (username: qwerty, password: qwerty)"
+    AUTH_ENABLED=true
+    AUTH_USERNAME=qwerty
+    AUTH_PASSWORD=qwerty
+    SESSION_SECRET="local-dev-secret-$(date +%s)"
+else
+    echo "Authentication DISABLED"
+    AUTH_ENABLED=false
+    AUTH_USERNAME=""
+    AUTH_PASSWORD=""
+    SESSION_SECRET=""
+fi
+
 # Run the server with local development settings
 DOCKER_HOST="${DOCKER_HOST:-unix:///var/run/docker.sock}" \
 SERVER_PORT=3000 \
 CONFIG_PATH=/opt/docker-compose/census-server/census/config/${CONFIG_FILE} \
-AUTH_ENABLED=false \
+AUTH_ENABLED=${AUTH_ENABLED} \
+AUTH_USERNAME=${AUTH_USERNAME} \
+AUTH_PASSWORD=${AUTH_PASSWORD} \
+SESSION_SECRET=${SESSION_SECRET} \
 DATABASE_PATH=/opt/docker-compose/census-server/census/server/${DB_FILE} \
 TRIVY_CACHE_DIR=/tmp/trivy-cache \
 /tmp/census-server

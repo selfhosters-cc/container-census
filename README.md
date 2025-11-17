@@ -100,6 +100,7 @@ Anonymous telemetry is opt-in only and can be enabled anytime from the Settings 
       # AUTH_ENABLED: "false"
       # AUTH_USERNAME: "your_username"
       # AUTH_PASSWORD: "your_secure_password"
+      # SESSION_SECRET: "change-me-in-production"  # Required if AUTH_ENABLED=true
 
       # Timezone for telemetry reporting
       TZ: ${TZ:-UTC}
@@ -375,6 +376,30 @@ Use the interactive `build-all-images.sh` script in the scripts folder.
 
 
 ## Troubleshooting
+
+### Authentication Issues
+
+**Finding your credentials:**
+If you've enabled authentication and don't know your username/password, check the Docker container environment variables:
+
+```bash
+docker exec census-server env | grep AUTH_
+```
+
+This will show:
+- `AUTH_USERNAME` - Your username
+- `AUTH_PASSWORD` - Your password
+- `AUTH_ENABLED` - Whether auth is enabled
+
+**Browser keeps asking for login:**
+- Clear your browser cookies for the Census URL
+- Try an incognito/private window
+- Check that `SESSION_SECRET` is set in your environment variables
+
+**API clients getting 401 errors:**
+Census supports both session-based (browser) and Basic Auth (API clients):
+- For browsers: Use the login page at `/login.html`
+- For API clients: Include `Authorization: Basic <base64(username:password)>` header
 
 ### Cannot connect to Docker daemon
 

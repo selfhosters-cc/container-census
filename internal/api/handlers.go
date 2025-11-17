@@ -157,16 +157,20 @@ func (s *Server) RestartTelemetry() error {
 
 // setupRoutes configures all API routes
 func (s *Server) setupRoutes() {
-	// Apply authentication middleware to all routes
-	authMiddleware := auth.BasicAuthMiddleware(s.authConfig)
+	// Use session-based authentication middleware (supports Basic Auth fallback)
+	sessionMiddleware := auth.SessionMiddleware(s.authConfig)
 
-	// Health endpoint without authentication (for monitoring)
-	// Supports both GET and HEAD methods (HEAD is used by Docker healthcheck)
+	// Public endpoints (no authentication required)
+	// Health endpoint for monitoring
 	s.router.HandleFunc("/api/health", s.handleHealth).Methods("GET", "HEAD")
+
+	// Login/logout endpoints
+	s.router.HandleFunc("/api/login", s.handleLogin).Methods("POST")
+	s.router.HandleFunc("/api/logout", s.handleLogout).Methods("POST")
 
 	// Protected API routes
 	api := s.router.PathPrefix("/api").Subrouter()
-	api.Use(authMiddleware)
+	api.Use(sessionMiddleware)
 
 	// Host endpoints
 	api.HandleFunc("/hosts", s.handleGetHosts).Methods("GET")
@@ -287,8 +291,31 @@ func (s *Server) setupRoutes() {
 	// Changelog endpoint
 	api.HandleFunc("/changelog", s.handleGetChangelog).Methods("GET")
 
-	// Serve static files (embedded web frontend) - also protected
-	s.router.PathPrefix("/").Handler(authMiddleware(http.FileServer(http.Dir("./web"))))
+	// Serve static files with selective authentication
+	// Login pages are public, everything else requires auth
+	s.router.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Redirect root path to login page if auth is enabled and no session
+		if r.URL.Path == "/" && s.authConfig.Enabled {
+			session, _ := auth.GetSession(r)
+			if auth, ok := session.Values["authenticated"].(bool); !ok || !auth {
+				// Check if Basic Auth is provided
+				_, _, hasBasicAuth := r.BasicAuth()
+				if !hasBasicAuth {
+					http.Redirect(w, r, "/login.html", http.StatusFound)
+					return
+				}
+			}
+		}
+
+		// Allow login page and its dependencies without authentication
+		if r.URL.Path == "/login.html" || r.URL.Path == "/login.js" || r.URL.Path == "/styles.css" {
+			http.FileServer(http.Dir("./web")).ServeHTTP(w, r)
+			return
+		}
+
+		// All other static files require authentication
+		sessionMiddleware(http.FileServer(http.Dir("./web"))).ServeHTTP(w, r)
+	})
 }
 
 // Router returns the configured router

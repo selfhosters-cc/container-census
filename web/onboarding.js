@@ -49,7 +49,7 @@ class OnboardingTour {
             text: `
                 <div class="onboarding-content">
                     <p>Container Census is a powerful multi-host Docker monitoring system.</p>
-                    <p><strong>What's new in v1.6.0:</strong></p>
+                    <p><strong>What's new in v1.6:</strong></p>
                     <ul>
                         <li>🔄 Image update management for :latest containers</li>
                         <li>📊 Configurable card view on Containers tab</li>
@@ -155,13 +155,60 @@ class OnboardingTour {
             }
         });
 
-        // Step 4: Finish
+        // Step 4: Telemetry Opt-in (Join Community)
+        this.tour.addStep({
+            id: 'telemetry',
+            title: 'Join the Selfhosting Community',
+            text: `
+                <div class="onboarding-content">
+                    <p><strong>Help us understand what the selfhosting community is running!</strong></p>
+                    <p>By sharing anonymous statistics, you contribute to a collective view of popular images and emerging trends across selfhosters worldwide.</p>
+                    <p><strong>What's collected:</strong></p>
+                    <ul>
+                        <li>Container image names and versions</li>
+                        <li>Operating systems and counts</li>
+                        <li>Installation ID (random UUID)</li>
+                        <li>Timezone (for geographic distribution)</li>
+                    </ul>
+                    <p><strong>NOT collected:</strong> IP addresses, container content, logs, environment variables, or any personal data</p>
+                    <p>See what's popular, what's growing, and how your setup compares to the community!</p>
+                    <div id="telemetry-choice" style="margin-top: 15px;">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" id="enableTelemetry" checked>
+                            <span>Yes, contribute to community insights</span>
+                        </label>
+                        <p style="font-size: 12px; margin-top: 10px; color: #666;">
+                            <a href="https://selfhosters.cc/stats" target="_blank">View public dashboard</a> • Data submitted weekly
+                        </p>
+                    </div>
+                </div>
+            `,
+            buttons: [
+                {
+                    text: 'Back',
+                    action: this.tour.back,
+                    classes: 'shepherd-button-secondary'
+                },
+                {
+                    text: 'Next',
+                    action: async () => {
+                        const enabled = document.getElementById('enableTelemetry')?.checked;
+                        if (enabled !== undefined) {
+                            await this.updateTelemetrySettings(enabled);
+                        }
+                        this.tour.next();
+                    }
+                }
+            ]
+        });
+
+        // Step 5: Finish
         this.tour.addStep({
             id: 'finish',
             title: 'All Set!',
             text: `
                 <div class="onboarding-content">
-                    <p><strong>You're ready to use Container Census v1.6.0!</strong></p>
+                    <p><strong>You're ready to use Container Census v1.6.2!</strong></p>
                     <p>Explore these additional features:</p>
                     <ul>
                         <li>📈 <strong>Monitoring:</strong> Real-time CPU & memory stats with historical trends</li>
@@ -272,6 +319,36 @@ class OnboardingTour {
             }
         } catch (err) {
             console.error('Failed to update image update settings:', err);
+        }
+    }
+
+    // Update telemetry settings
+    async updateTelemetrySettings(enabled) {
+        try {
+            const response = await fetch('/api/telemetry/endpoints', {
+                method: 'GET'
+            });
+            const endpoints = await response.json();
+
+            // Find community endpoint
+            const communityEndpoint = endpoints.find(e => e.name === 'community');
+            if (communityEndpoint) {
+                await fetch(`/api/telemetry/endpoints/${communityEndpoint.name}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        enabled: enabled
+                    })
+                });
+
+                if (enabled) {
+                    showToast('Thank You!', 'Anonymous telemetry enabled', 'success');
+                }
+            }
+        } catch (err) {
+            console.error('Failed to update telemetry settings:', err);
         }
     }
 

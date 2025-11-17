@@ -17,21 +17,29 @@ let vulnerabilityScansMap = {}; // Pre-loaded map of all scans to avoid 404s
 let vulnerabilitySummary = null; // Cache overall summary
 let cardDesignTheme = 'material'; // Default card design theme (compact, material, dashboard)
 
-// Auth credentials (empty if auth is disabled)
-let authUsername = '';
-let authPassword = '';
-
-// Helper function for authenticated fetch requests
+// Session-based authentication (cookies handle auth automatically)
+// Redirect to login page on 401 Unauthorized
 async function fetchWithAuth(url, options = {}) {
-    const headers = {
-        ...options.headers,
-        'Authorization': 'Basic ' + btoa(authUsername + ':' + authPassword)
-    };
+    const response = await fetch(url, options);
 
-    return fetch(url, {
-        ...options,
-        headers
-    });
+    // Redirect to login if unauthorized
+    if (response.status === 401) {
+        window.location.href = '/login.html';
+        throw new Error('Unauthorized - redirecting to login');
+    }
+
+    return response;
+}
+
+// Logout function
+async function logout() {
+    try {
+        await fetch('/api/logout', { method: 'POST' });
+    } catch (error) {
+        console.error('Logout error:', error);
+    } finally {
+        window.location.href = '/login.html';
+    }
 }
 
 // Initialize

@@ -210,6 +210,14 @@ func main() {
 		log.Println("Authentication disabled - UI and API are publicly accessible")
 	}
 
+	// Initialize session store
+	sessionSecret := os.Getenv("SESSION_SECRET")
+	if sessionSecret == "" {
+		sessionSecret = "change-me-in-production-" + fmt.Sprintf("%d", time.Now().UnixNano())
+		log.Println("WARNING: Using auto-generated SESSION_SECRET. Set SESSION_SECRET environment variable for production.")
+	}
+	auth.InitSessionStore(sessionSecret)
+
 	// Get server host and port from environment variables
 	serverHost := os.Getenv("SERVER_HOST")
 	if serverHost == "" {
