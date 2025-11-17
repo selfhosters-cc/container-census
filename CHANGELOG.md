@@ -38,39 +38,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Confirmation dialogs before applying updates
   - Onboarding tour step for image update feature
 
-- **Background Processing**:
-  - Dynamic settings reload every 5 minutes (no restart required)
-  - Automatic ticker interval adjustment when configuration changes
-  - Scheduled checks based on configured interval
-  - Only checks running containers with :latest tags
-  - Logs update detection and check completion
-
-### Fixed
-
-- **Remote Agent Image Updates**: Fixed image pull failures on remote agent hosts
-  - Agent now pulls images using proper image tags instead of digest-only references
-  - Resolves "pull access denied for sha256" errors
-  - Applied to both single and batch update endpoints
-  - Uses `ImageTags[0]` when available, falls back to `Image` field
-
-- **Toggle Switch Display**: Fixed duplicate circles in notification rule modal
-  - Removed duplicate CSS pseudo-element creating second circle
-  - Toggle switch now displays single sliding circle as intended
-
-- **GHCR Authentication**: Fixed "401 Unauthorized" errors when checking updates for GitHub Container Registry images
-  - Added authentication support for ghcr.io registry
-  - Anonymous token authentication for public GHCR images
-  - Registry client now supports Docker Hub, GHCR, and generic registries
-
-### Technical Details
-
-- Registry client package (`internal/registry/`) handles Docker Hub and GHCR authentication and manifest fetching
-- Scanner extensions (`internal/scanner/`) support image pulling and container recreation
-- Image digest normalization for accurate comparison (handles sha256: prefix, truncation)
-- Preserves Docker Compose compatibility (updates don't conflict with compose files since :latest tag remains valid)
-- Old images retained after update for rollback capability
-- Works with all connection types: unix://, agent://, tcp://, ssh://
-
 ## [1.5.0] - 2025-11-04
 
 ### Changed
