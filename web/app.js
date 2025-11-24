@@ -5148,11 +5148,7 @@ async function getVulnerabilityScan(imageID) {
 // Pre-load all vulnerability scans to avoid 404 requests
 async function preloadVulnerabilityScans() {
     try {
-        const response = await fetch('/api/vulnerabilities/scans?limit=1000', {
-            headers: {
-                'Authorization': 'Basic ' + btoa(authUsername + ':' + authPassword)
-            }
-        });
+        const response = await fetch('/api/vulnerabilities/scans?limit=1000');
         if (response.ok) {
             const scans = await response.json();
             // Build a map of imageID -> scan data
@@ -5796,8 +5792,7 @@ function renderSecurityScansTable(scans) {
 async function scanAllImages() {
     try {
         const response = await fetch('/api/vulnerabilities/scan-all', {
-            method: 'POST',
-            headers: { 'Authorization': 'Basic ' + btoa(authUsername + ':' + authPassword) }
+            method: 'POST'
         });
         if (response.ok) {
             const data = await response.json();
@@ -5818,8 +5813,7 @@ async function scanAllImages() {
 async function rescanImage(imageID, imageName) {
     try {
         const response = await fetch(`/api/vulnerabilities/scan/${encodeURIComponent(imageID)}`, {
-            method: 'POST',
-            headers: { 'Authorization': 'Basic ' + btoa(authUsername + ':' + authPassword) }
+            method: 'POST'
         });
         if (response.ok) {
             showNotification(`Queued ${imageName} for scanning`, 'success');
@@ -5880,8 +5874,7 @@ async function updateTrivyDB() {
     try {
         showNotification('Updating Trivy database... This may take a few minutes.', 'info');
         const response = await fetch('/api/vulnerabilities/update-db', {
-            method: 'POST',
-            headers: { 'Authorization': 'Basic ' + btoa(authUsername + ':' + authPassword) }
+            method: 'POST'
         });
         if (response.ok) {
             showNotification('Trivy database updated successfully', 'success');
@@ -5902,11 +5895,7 @@ async function viewVulnerabilityDetails(imageID, imageName) {
     document.getElementById('vulnDetailsContent').innerHTML = '<div class="loading">Loading vulnerabilities...</div>';
 
     try {
-        const response = await fetch(`/api/vulnerabilities/image/${encodeURIComponent(imageID)}`, {
-            headers: {
-                'Authorization': 'Basic ' + btoa(authUsername + ':' + authPassword)
-            }
-        });
+        const response = await fetch(`/api/vulnerabilities/image/${encodeURIComponent(imageID)}`);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
         }
@@ -6010,11 +5999,7 @@ let currentVulnerabilitySettings = null;
 // Open vulnerability settings modal
 async function openVulnerabilitySettingsModal() {
     try {
-        const response = await fetch('/api/vulnerabilities/settings', {
-            headers: {
-                'Authorization': 'Basic ' + btoa(authUsername + ':' + authPassword)
-            }
-        });
+        const response = await fetch('/api/vulnerabilities/settings');
         if (response.ok) {
             currentVulnerabilitySettings = await response.json();
             populateVulnerabilitySettingsForm(currentVulnerabilitySettings);
