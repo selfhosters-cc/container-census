@@ -23,9 +23,15 @@ import { ComposeAdoptionChart } from '@/components/ComposeAdoptionChart';
 import { ConnectivityChart } from '@/components/ConnectivityChart';
 import { SharedVolumesChart } from '@/components/SharedVolumesChart';
 import { CustomNetworksChart } from '@/components/CustomNetworksChart';
-import type { ImageCount, Growth, RegistryCount, ImageDetail, Summary, ConnectionMetrics } from '@/lib/telemetry-api';
+import { HottestImagesChart } from '@/components/HottestImagesChart';
+import { MoversChart } from '@/components/MoversChart';
+import { NewEntriesCard } from '@/components/NewEntriesCard';
+import type {
+  ImageCount, Growth, RegistryCount, ImageDetail, Summary, ConnectionMetrics,
+  HottestResponse, MoversResponse, NewEntriesResponse
+} from '@/lib/telemetry-api';
 
-type TabType = 'overview' | 'images' | 'architecture';
+type TabType = 'overview' | 'trends' | 'images' | 'architecture';
 
 export default function TelemetryDashboard() {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
@@ -35,6 +41,9 @@ export default function TelemetryDashboard() {
   const [registries, setRegistries] = useState<RegistryCount[]>([]);
   const [imageDetails, setImageDetails] = useState<ImageDetail[]>([]);
   const [connectionMetrics, setConnectionMetrics] = useState<ConnectionMetrics | null>(null);
+  const [hottest, setHottest] = useState<HottestResponse | null>(null);
+  const [movers, setMovers] = useState<MoversResponse | null>(null);
+  const [newEntries, setNewEntries] = useState<NewEntriesResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -54,6 +63,15 @@ export default function TelemetryDashboard() {
           setTopImages(topImagesData);
           setGrowth(growthData);
           setRegistries(registriesData);
+        } else if (activeTab === 'trends') {
+          const [hottestData, moversData, newEntriesData] = await Promise.all([
+            api.getHottest({ limit: 10, days: 7 }),
+            api.getMovers({ limit: 10, weeks: 1 }),
+            api.getNewEntries({ limit: 12, days: 30 })
+          ]);
+          setHottest(hottestData);
+          setMovers(moversData);
+          setNewEntries(newEntriesData);
         } else if (activeTab === 'architecture') {
           const metricsData = await api.getConnectionMetrics({ days: 30 });
           setConnectionMetrics(metricsData);
@@ -99,6 +117,18 @@ export default function TelemetryDashboard() {
                 `}
               >
                 Overview
+              </button>
+              <button
+                onClick={() => setActiveTab('trends')}
+                className={`
+                  py-4 px-1 border-b-2 font-medium text-sm transition-colors
+                  ${activeTab === 'trends'
+                    ? 'border-purple-500 text-purple-600 dark:text-purple-400'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+                  }
+                `}
+              >
+                Trends
               </button>
               <button
                 onClick={() => setActiveTab('images')}
@@ -241,6 +271,26 @@ export default function TelemetryDashboard() {
                   <RegistryChart data={registries} />
                 </div>
               </div>
+            </div>
+          </>
+        ) : activeTab === 'trends' ? (
+          <>
+            {/* Trends Overview */}
+            <div className="space-y-8">
+              {/* New Entries */}
+              {newEntries && (
+                <NewEntriesCard data={newEntries} title="New Entries" />
+              )}
+
+              {/* Hottest Images */}
+              {hottest && (
+                <HottestImagesChart data={hottest} title="Hottest Container Images" />
+              )}
+
+              {/* Movers */}
+              {movers && (
+                <MoversChart data={movers} title="Biggest Movers This Week" />
+              )}
             </div>
           </>
         ) : activeTab === 'architecture' ? (

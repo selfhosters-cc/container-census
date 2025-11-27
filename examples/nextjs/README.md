@@ -344,7 +344,6 @@ import { CustomNetworksChart } from '@/components/CustomNetworksChart';
 **Props:**
 - `metrics: ConnectionMetrics` - Connection metrics data
 - `title?: string` - Chart title (default: "🕸️ Custom Networks")
-- `title?: string` - Table title (default: "Container Images")
 
 **Features:**
 - Client-side search/filtering by image name
@@ -354,6 +353,84 @@ import { CustomNetworksChart } from '@/components/CustomNetworksChart';
 - Percentage of total containers calculation
 - Installation count per image
 - Responsive design with Tailwind CSS
+
+### Trending Statistics Charts
+
+These components visualize trends in container image popularity, week-over-week changes, and newly discovered images.
+
+#### `HottestImagesChart`
+
+Dual-ranking horizontal bar chart showing the most popular container images by both container count and adoption rate.
+
+```typescript
+import { HottestImagesChart } from '@/components/HottestImagesChart';
+import { createTelemetryAPI } from '@/lib/telemetry-api';
+
+const api = createTelemetryAPI();
+const hottest = await api.getHottest({ limit: 10, days: 7 });
+
+<HottestImagesChart data={hottest} title="Hottest Container Images" />
+```
+
+**Props:**
+- `data: HottestResponse` - Hottest images data with `by_containers` and `by_adoption` arrays
+- `title?: string` - Chart title (default: "Hottest Container Images")
+
+**Features:**
+- Toggle between "By Containers" and "By Adoption" views
+- Medal badges for top 3 positions (🥇🥈🥉)
+- Rich tooltips with container count and adoption percentage
+- Color-coded bars by rank
+
+#### `MoversChart`
+
+Two-column layout showing week-over-week biggest gainers (risers) and losers (fallers).
+
+```typescript
+import { MoversChart } from '@/components/MoversChart';
+import { createTelemetryAPI } from '@/lib/telemetry-api';
+
+const api = createTelemetryAPI();
+const movers = await api.getMovers({ limit: 10, weeks: 1 });
+
+<MoversChart data={movers} title="Biggest Movers This Week" />
+```
+
+**Props:**
+- `data: MoversResponse` - Movers data with `risers` and `fallers` arrays
+- `title?: string` - Chart title (default: "Biggest Movers This Week")
+
+**Features:**
+- Side-by-side risers (green) and fallers (red) columns
+- Change percentage badges
+- Previous → Current count display
+- Installation count indicators
+- Rank badges with medals for top 3
+
+#### `NewEntriesCard`
+
+Card grid layout displaying newly discovered container images that have reached significant adoption.
+
+```typescript
+import { NewEntriesCard } from '@/components/NewEntriesCard';
+import { createTelemetryAPI } from '@/lib/telemetry-api';
+
+const api = createTelemetryAPI();
+const newEntries = await api.getNewEntries({ limit: 12, days: 30 });
+
+<NewEntriesCard data={newEntries} title="New Entries" />
+```
+
+**Props:**
+- `data: NewEntriesResponse` - New entries data with `new_images` array
+- `title?: string` - Card title (default: "New Entries")
+
+**Features:**
+- "NEW" badge with pulse animation for very recent images
+- Days since first seen indicator
+- Adoption percentage progress bar
+- Container and installation counts
+- Responsive grid layout (1-4 columns)
 
 ## API Reference
 
@@ -384,6 +461,9 @@ const api = new TelemetryAPI({
 | `getInstallations()` | `{ days? }` | `Promise<{...}>` | Get installation count |
 | `getImageDetails()` | `{ limit?, offset?, days?, search?, sort_by?, sort_order? }` | `Promise<ImageDetailsResponse>` | Get detailed image data with pagination and search |
 | `getConnectionMetrics()` | `{ days? }` | `Promise<ConnectionMetrics>` | Get container connectivity and architecture metrics |
+| `getHottest()` | `{ limit?, days?, metric? }` | `Promise<HottestResponse>` | Get hottest images by containers and/or adoption |
+| `getMovers()` | `{ limit?, weeks?, min_installations? }` | `Promise<MoversResponse>` | Get week-over-week biggest risers and fallers |
+| `getNewEntries()` | `{ limit?, days?, min_installations? }` | `Promise<NewEntriesResponse>` | Get newly discovered images with significant adoption |
 
 ### Data Types
 
@@ -402,7 +482,13 @@ import {
   SubmissionEvent,
   ImageDetail,
   ImageDetailsResponse,
-  ConnectionMetrics
+  ConnectionMetrics,
+  HotImage,
+  HottestResponse,
+  Mover,
+  MoversResponse,
+  NewEntry,
+  NewEntriesResponse
 } from '@/lib/telemetry-api';
 ```
 
@@ -442,6 +528,62 @@ interface ConnectionMetrics {
   total_dependencies: number;            // Total dependency relationships
   avg_connections_per_container: number; // Average network + volume connections per container
   installations: number;                 // Number of installations reporting this data
+}
+```
+
+**Trending Statistics Types:**
+
+```typescript
+interface HotImage {
+  rank: number;                // Position in the ranking
+  image: string;               // Normalized image name (no registry prefix or tag)
+  total_containers: number;    // Total container instances across all installations
+  installation_count: number;  // Number of unique installations using this image
+  adoption_percentage: number; // Percentage of installations using this image
+}
+
+interface HottestResponse {
+  by_containers?: HotImage[];  // Ranked by total container count
+  by_adoption?: HotImage[];    // Ranked by adoption percentage
+  total_installations: number; // Total installations in the period
+  period_days: number;         // Number of days included
+}
+
+interface Mover {
+  rank: number;                    // Position in risers/fallers list
+  image: string;                   // Normalized image name
+  current_count: number;           // Current week container count
+  previous_count: number;          // Previous week container count
+  change: number;                  // Absolute change (current - previous)
+  change_percentage: number;       // Percentage change
+  current_installations: number;   // Current week installation count
+  previous_installations: number;  // Previous week installation count
+}
+
+interface MoversResponse {
+  risers: Mover[];             // Images that gained the most containers
+  fallers: Mover[];            // Images that lost the most containers
+  comparison_weeks: number;    // Number of weeks compared
+  current_week: string;        // Current week start date (YYYY-MM-DD)
+  previous_week: string;       // Previous week start date (YYYY-MM-DD)
+  min_installations: number;   // Minimum installations threshold used
+}
+
+interface NewEntry {
+  rank: number;                  // Position in the list
+  image: string;                 // Normalized image name
+  first_seen: string;            // Date first observed (YYYY-MM-DD)
+  days_since_first_seen: number; // Days since first seen
+  total_containers: number;      // Current total container count
+  installation_count: number;    // Current installation count
+  adoption_percentage: number;   // Percentage of installations using this image
+}
+
+interface NewEntriesResponse {
+  new_images: NewEntry[];      // List of newly discovered images
+  period_days: number;         // Lookback period in days
+  min_installations: number;   // Minimum installations threshold used
+  total_new_images: number;    // Total count of new images
 }
 ```
 

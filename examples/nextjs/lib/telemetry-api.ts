@@ -97,6 +97,59 @@ export interface ConnectionMetrics {
   installations: number;
 }
 
+// Trending Statistics Types
+export interface HotImage {
+  rank: number;
+  image: string;
+  total_containers: number;
+  installation_count: number;
+  adoption_percentage: number;
+}
+
+export interface HottestResponse {
+  by_containers?: HotImage[];
+  by_adoption?: HotImage[];
+  total_installations: number;
+  period_days: number;
+}
+
+export interface Mover {
+  rank: number;
+  image: string;
+  current_count: number;
+  previous_count: number;
+  change: number;
+  change_percentage: number;
+  current_installations: number;
+  previous_installations: number;
+}
+
+export interface MoversResponse {
+  risers: Mover[];
+  fallers: Mover[];
+  comparison_weeks: number;
+  current_week: string;
+  previous_week: string;
+  min_installations: number;
+}
+
+export interface NewEntry {
+  rank: number;
+  image: string;
+  first_seen: string;
+  days_since_first_seen: number;
+  total_containers: number;
+  installation_count: number;
+  adoption_percentage: number;
+}
+
+export interface NewEntriesResponse {
+  new_images: NewEntry[];
+  period_days: number;
+  min_installations: number;
+  total_new_images: number;
+}
+
 // API Client Configuration
 interface TelemetryAPIConfig {
   baseURL: string;
@@ -261,6 +314,39 @@ export class TelemetryAPI {
    */
   async getConnectionMetrics(params?: { days?: number }): Promise<ConnectionMetrics> {
     return this.request<ConnectionMetrics>('/api/stats/connection-metrics', params);
+  }
+
+  /**
+   * Get hottest/most popular images by container count and adoption
+   */
+  async getHottest(params?: {
+    limit?: number;
+    days?: number;
+    metric?: 'containers' | 'adoption' | 'both';
+  }): Promise<HottestResponse> {
+    return this.request<HottestResponse>('/api/stats/hottest', params);
+  }
+
+  /**
+   * Get biggest week-over-week movers (risers and fallers)
+   */
+  async getMovers(params?: {
+    limit?: number;
+    weeks?: number;
+    min_installations?: number;
+  }): Promise<MoversResponse> {
+    return this.request<MoversResponse>('/api/stats/movers', params);
+  }
+
+  /**
+   * Get new image entries (first seen in the last N days)
+   */
+  async getNewEntries(params?: {
+    limit?: number;
+    days?: number;
+    min_installations?: number;
+  }): Promise<NewEntriesResponse> {
+    return this.request<NewEntriesResponse>('/api/stats/new-entries', params);
   }
 }
 

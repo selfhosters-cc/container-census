@@ -72,6 +72,7 @@
 
         <div class="tabs">
             <button class="tab-button active" onclick="showTab('charts', this)">Charts</button>
+            <button class="tab-button" onclick="showTab('trends', this)">Trends</button>
             <button class="tab-button" onclick="showTab('images', this)">Container Images</button>
             <button class="tab-button" onclick="showTab('database', this)">Database</button>
         </div>
@@ -135,6 +136,69 @@
             <h2>🌍 Geographic Distribution (by Timezone)</h2>
             <canvas id="geographyChart"></canvas>
         </div>
+        </div>
+
+        <div id="trendsTab" class="tab-content">
+            <!-- Hottest Images Section -->
+            <div class="chart-container">
+                <div class="trends-header">
+                    <h2>Hottest Container Images</h2>
+                    <div class="trends-toggle">
+                        <button id="hottestByContainersBtn" class="toggle-btn active" onclick="switchHottestView('containers')">By Containers</button>
+                        <button id="hottestByAdoptionBtn" class="toggle-btn" onclick="switchHottestView('adoption')">By Adoption</button>
+                    </div>
+                </div>
+                <p class="chart-subtitle" id="hottestSubtitle">Loading...</p>
+                <div id="hottestContainersChart" class="hottest-chart">
+                    <canvas id="hottestByContainersCanvas"></canvas>
+                </div>
+                <div id="hottestAdoptionChart" class="hottest-chart" style="display: none;">
+                    <canvas id="hottestByAdoptionCanvas"></canvas>
+                </div>
+            </div>
+
+            <!-- Movers Section -->
+            <div class="chart-container">
+                <div class="trends-header">
+                    <h2>Biggest Movers This Week</h2>
+                    <span class="period-badge" id="moversPeriodBadge">Week over Week</span>
+                </div>
+                <p class="chart-subtitle" id="moversSubtitle">Loading...</p>
+                <div class="movers-grid">
+                    <div class="movers-column risers">
+                        <div class="movers-column-header">
+                            <span class="movers-icon">📈</span>
+                            <h3>Risers</h3>
+                            <span class="movers-count" id="risersCount">(0)</span>
+                        </div>
+                        <div id="risersList" class="movers-list">
+                            <p class="loading-message">Loading...</p>
+                        </div>
+                    </div>
+                    <div class="movers-column fallers">
+                        <div class="movers-column-header">
+                            <span class="movers-icon">📉</span>
+                            <h3>Fallers</h3>
+                            <span class="movers-count" id="fallersCount">(0)</span>
+                        </div>
+                        <div id="fallersList" class="movers-list">
+                            <p class="loading-message">Loading...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- New Entries Section -->
+            <div class="chart-container new-entries-section">
+                <div class="trends-header">
+                    <h2>✨ New Entries</h2>
+                    <span class="new-entries-badge" id="newEntriesBadge">0 new</span>
+                </div>
+                <p class="chart-subtitle" id="newEntriesSubtitle">Loading...</p>
+                <div id="newEntriesGrid" class="new-entries-grid">
+                    <p class="loading-message">Loading...</p>
+                </div>
+            </div>
         </div>
 
         <div id="imagesTab" class="tab-content">

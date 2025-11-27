@@ -10,6 +10,11 @@ let connectivityChart = null;
 let sharedVolumesChart = null;
 let customNetworksChart = null;
 
+// Trends tab charts
+let hottestByContainersChart = null;
+let hottestByAdoptionChart = null;
+let trendsDataLoaded = false;
+
 // Vibrant color palette for charts
 const colorPalette = [
     '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8',
@@ -1121,11 +1126,7 @@ function showTab(tabName, clickedButton) {
         clickedButton.classList.add('active');
     } else {
         // Fallback: find button by tab name
-        const targetButton = tabName === 'charts' ?
-            document.querySelector('.tab-button[onclick*="charts"]') :
-            tabName === 'images' ?
-            document.querySelector('.tab-button[onclick*="images"]') :
-            document.querySelector('.tab-button[onclick*="database"]');
+        const targetButton = document.querySelector(`.tab-button[onclick*="${tabName}"]`);
         if (targetButton) {
             targetButton.classList.add('active');
         }
@@ -1138,6 +1139,12 @@ function showTab(tabName, clickedButton) {
 
     if (tabName === 'charts') {
         document.getElementById('chartsTab').classList.add('active');
+    } else if (tabName === 'trends') {
+        document.getElementById('trendsTab').classList.add('active');
+        // Load trends data if not already loaded
+        if (!trendsDataLoaded) {
+            loadTrendsData();
+        }
     } else if (tabName === 'images') {
         document.getElementById('imagesTab').classList.add('active');
         // Load image data if not already loaded
@@ -1599,3 +1606,355 @@ window.addEventListener('beforeunload', () => {
         clearInterval(dbAutoRefreshInterval);
     }
 });
+
+// ========== Trends Tab Functions ==========
+
+async function loadTrendsData() {
+    const days = document.getElementById('timeRange').value;
+
+    try {
+        // Load all trends data in parallel
+        await Promise.all([
+            loadHottestImages(days),
+            loadMovers(),
+            loadNewEntries()
+        ]);
+
+        trendsDataLoaded = true;
+    } catch (error) {
+        console.error('Failed to load trends data:', error);
+    }
+}
+
+// Hottest Images
+async function loadHottestImages(days) {
+    try {
+        const response = await fetch(`/api/stats/hottest?limit=10&days=${days}`);
+        if (!response.ok) throw new Error('Failed to fetch hottest images');
+
+        const data = await response.json();
+
+        // Update subtitle
+        document.getElementById('hottestSubtitle').textContent =
+            `Based on ${data.total_installations.toLocaleString()} installations over the last ${data.period_days} days`;
+
+        // Create charts
+        createHottestCharts(data);
+    } catch (error) {
+        console.error('Failed to load hottest images:', error);
+        document.getElementById('hottestSubtitle').textContent = 'Failed to load data';
+    }
+}
+
+function createHottestCharts(data) {
+    // Destroy existing charts
+    if (hottestByContainersChart) {
+        hottestByContainersChart.destroy();
+    }
+    if (hottestByAdoptionChart) {
+        hottestByAdoptionChart.destroy();
+    }
+
+    // By Containers chart
+    const containersCtx = document.getElementById('hottestByContainersCanvas').getContext('2d');
+    hottestByContainersChart = new Chart(containersCtx, {
+        type: 'bar',
+        data: {
+            labels: data.by_containers.map(img => `${getRankBadge(img.rank)} ${img.image}`),
+            datasets: [{
+                label: 'Total Containers',
+                data: data.by_containers.map(img => img.total_containers),
+                backgroundColor: data.by_containers.map((_, i) => colorPalette[i] || '#6C5CE7'),
+                borderColor: data.by_containers.map((_, i) => colorPalette[i] || '#6C5CE7'),
+                borderWidth: 2,
+                borderRadius: 6,
+                maxBarThickness: 35
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            indexAxis: 'y',
+            animation: {
+                duration: 1200,
+                easing: 'easeOutQuart'
+            },
+            plugins: {
+                legend: { display: false },
+                title: {
+                    display: true,
+                    text: 'By Total Containers',
+                    font: { size: 16, weight: 'bold' },
+                    padding: { bottom: 20 }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+                    padding: 14,
+                    callbacks: {
+                        label: function(context) {
+                            const img = data.by_containers[context.dataIndex];
+                            return [
+                                ` ${img.total_containers.toLocaleString()} containers`,
+                                ` ${img.installation_count} installations (${img.adoption_percentage}%)`
+                            ];
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    beginAtZero: true,
+                    title: { display: true, text: 'Container Count', font: { size: 13, weight: 'bold' } },
+                    grid: { color: 'rgba(0, 0, 0, 0.05)' }
+                },
+                y: {
+                    grid: { display: false },
+                    ticks: { font: { size: 12 } }
+                }
+            }
+        }
+    });
+
+    // By Adoption chart
+    const adoptionCtx = document.getElementById('hottestByAdoptionCanvas').getContext('2d');
+    hottestByAdoptionChart = new Chart(adoptionCtx, {
+        type: 'bar',
+        data: {
+            labels: data.by_adoption.map(img => `${getRankBadge(img.rank)} ${img.image}`),
+            datasets: [{
+                label: 'Adoption %',
+                data: data.by_adoption.map(img => img.adoption_percentage),
+                backgroundColor: data.by_adoption.map((_, i) => colorPalette[i] || '#6C5CE7'),
+                borderColor: data.by_adoption.map((_, i) => colorPalette[i] || '#6C5CE7'),
+                borderWidth: 2,
+                borderRadius: 6,
+                maxBarThickness: 35
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            indexAxis: 'y',
+            animation: {
+                duration: 1200,
+                easing: 'easeOutQuart'
+            },
+            plugins: {
+                legend: { display: false },
+                title: {
+                    display: true,
+                    text: 'By Adoption Rate',
+                    font: { size: 16, weight: 'bold' },
+                    padding: { bottom: 20 }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+                    padding: 14,
+                    callbacks: {
+                        label: function(context) {
+                            const img = data.by_adoption[context.dataIndex];
+                            return [
+                                ` ${img.adoption_percentage}% of installations`,
+                                ` ${img.installation_count} out of ${data.total_installations}`,
+                                ` ${img.total_containers.toLocaleString()} total containers`
+                            ];
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    beginAtZero: true,
+                    max: 100,
+                    title: { display: true, text: 'Adoption Rate (%)', font: { size: 13, weight: 'bold' } },
+                    grid: { color: 'rgba(0, 0, 0, 0.05)' }
+                },
+                y: {
+                    grid: { display: false },
+                    ticks: { font: { size: 12 } }
+                }
+            }
+        }
+    });
+}
+
+function switchHottestView(view) {
+    const containersBtn = document.getElementById('hottestByContainersBtn');
+    const adoptionBtn = document.getElementById('hottestByAdoptionBtn');
+    const containersChart = document.getElementById('hottestContainersChart');
+    const adoptionChart = document.getElementById('hottestAdoptionChart');
+
+    if (view === 'containers') {
+        containersBtn.classList.add('active');
+        adoptionBtn.classList.remove('active');
+        containersChart.style.display = 'block';
+        adoptionChart.style.display = 'none';
+    } else {
+        containersBtn.classList.remove('active');
+        adoptionBtn.classList.add('active');
+        containersChart.style.display = 'none';
+        adoptionChart.style.display = 'block';
+    }
+}
+
+function getRankBadge(rank) {
+    switch (rank) {
+        case 1: return '🥇';
+        case 2: return '🥈';
+        case 3: return '🥉';
+        default: return `#${rank}`;
+    }
+}
+
+// Movers
+async function loadMovers() {
+    try {
+        const response = await fetch('/api/stats/movers?limit=10&weeks=1');
+        if (!response.ok) throw new Error('Failed to fetch movers');
+
+        const data = await response.json();
+
+        // Update subtitle and period badge
+        document.getElementById('moversSubtitle').textContent =
+            `Comparing ${data.previous_week} to ${data.current_week} • Min ${data.min_installations} installations`;
+        document.getElementById('moversPeriodBadge').textContent =
+            data.comparison_weeks === 1 ? 'Week over Week' : `${data.comparison_weeks} Weeks`;
+
+        // Render risers
+        renderMovers('risersList', 'risersCount', data.risers || [], 'riser');
+
+        // Render fallers
+        renderMovers('fallersList', 'fallersCount', data.fallers || [], 'faller');
+
+    } catch (error) {
+        console.error('Failed to load movers:', error);
+        document.getElementById('moversSubtitle').textContent = 'Failed to load data';
+    }
+}
+
+function renderMovers(listId, countId, movers, type) {
+    const list = document.getElementById(listId);
+    const count = document.getElementById(countId);
+
+    count.textContent = `(${movers.length})`;
+
+    if (movers.length === 0) {
+        list.innerHTML = '<p class="no-data-message"><span class="icon">📊</span><p>No movement data available</p><p class="hint">Check back after weekly snapshots are generated</p></p>';
+        return;
+    }
+
+    list.innerHTML = movers.map(mover => {
+        const isPositive = mover.change > 0;
+        const changePrefix = isPositive ? '+' : '';
+        const changeClass = isPositive ? 'positive' : 'negative';
+        const arrowClass = isPositive ? 'up' : 'down';
+        const arrow = isPositive ? '↑' : '↓';
+
+        return `
+            <div class="mover-card ${type}">
+                <div class="mover-card-header">
+                    <div class="mover-rank-name">
+                        <span class="mover-rank">${getRankBadge(mover.rank)}</span>
+                        <span class="mover-name" title="${escapeHtml(mover.image)}">${escapeHtml(mover.image)}</span>
+                    </div>
+                    <span class="mover-arrow ${arrowClass}">${arrow}</span>
+                </div>
+                <div class="mover-stats">
+                    <div class="mover-stat">
+                        <span class="mover-stat-label">Change:</span>
+                        <span class="mover-stat-value ${changeClass}">${changePrefix}${mover.change.toLocaleString()} containers</span>
+                    </div>
+                    <div class="mover-stat">
+                        <span class="mover-stat-label">Percentage:</span>
+                        <span class="change-badge ${changeClass}">${changePrefix}${mover.change_percentage.toFixed(1)}%</span>
+                    </div>
+                </div>
+                <div class="mover-previous">
+                    <span>${mover.previous_count.toLocaleString()} → ${mover.current_count.toLocaleString()}</span>
+                    <span>${mover.current_installations} installs</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// New Entries
+async function loadNewEntries() {
+    try {
+        const response = await fetch('/api/stats/new-entries?limit=12&days=30');
+        if (!response.ok) throw new Error('Failed to fetch new entries');
+
+        const data = await response.json();
+
+        // Update subtitle and badge
+        document.getElementById('newEntriesSubtitle').textContent =
+            `Images first seen in the last ${data.period_days} days with at least ${data.min_installations} installations`;
+        document.getElementById('newEntriesBadge').textContent =
+            `${data.total_new_images} new`;
+
+        renderNewEntries(data);
+
+    } catch (error) {
+        console.error('Failed to load new entries:', error);
+        document.getElementById('newEntriesSubtitle').textContent = 'Failed to load data';
+    }
+}
+
+function renderNewEntries(data) {
+    const grid = document.getElementById('newEntriesGrid');
+
+    if (!data.new_images || data.new_images.length === 0) {
+        grid.innerHTML = `
+            <div class="no-data-message">
+                <span class="icon">🔍</span>
+                <p>No new entries yet</p>
+                <p class="hint">New container images will appear here once they reach ${data.min_installations}+ installations</p>
+            </div>
+        `;
+        return;
+    }
+
+    grid.innerHTML = data.new_images.map(entry => {
+        const isVeryNew = entry.days_since_first_seen <= 7;
+        const isRecent = entry.days_since_first_seen <= 14;
+        const badgeClass = isVeryNew ? 'very-new' : isRecent ? 'recent' : 'standard';
+        const daysLabel = entry.days_since_first_seen === 0 ? 'Today' :
+                         entry.days_since_first_seen === 1 ? '1 day ago' :
+                         `${entry.days_since_first_seen} days ago`;
+
+        return `
+            <div class="new-entry-card">
+                <div class="new-entry-header">
+                    <div class="new-entry-rank-name">
+                        <span class="new-entry-rank">${getRankBadge(entry.rank)}</span>
+                        <span class="new-entry-name" title="${escapeHtml(entry.image)}">${escapeHtml(entry.image)}</span>
+                    </div>
+                    <span class="new-badge ${badgeClass}">NEW</span>
+                </div>
+                <div class="new-entry-stats">
+                    <div class="new-entry-stat">
+                        <span class="new-entry-stat-label">First seen:</span>
+                        <span class="new-entry-stat-value">${daysLabel}</span>
+                    </div>
+                    <div class="new-entry-stat">
+                        <span class="new-entry-stat-label">Containers:</span>
+                        <span class="new-entry-stat-value">${entry.total_containers.toLocaleString()}</span>
+                    </div>
+                    <div class="new-entry-stat">
+                        <span class="new-entry-stat-label">Installations:</span>
+                        <span class="new-entry-stat-value">${entry.installation_count}</span>
+                    </div>
+                    <div class="adoption-bar">
+                        <div class="adoption-bar-label">
+                            <span>Adoption</span>
+                            <span>${entry.adoption_percentage}%</span>
+                        </div>
+                        <div class="adoption-bar-track">
+                            <div class="adoption-bar-fill" style="width: ${Math.min(entry.adoption_percentage, 100)}%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}

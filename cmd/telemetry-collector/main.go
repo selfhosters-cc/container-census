@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -21,12 +22,13 @@ import (
 )
 
 type Config struct {
-	DatabaseURL  string
-	Port         int
-	AuthEnabled  bool
-	AuthUsername string
-	AuthPassword string
-	StatsAPIKey  string // API key for stats endpoints
+	DatabaseURL         string
+	Port                int
+	AuthEnabled         bool
+	AuthUsername        string
+	AuthPassword        string
+	StatsAPIKey         string // API key for stats endpoints
+	StatsMinInstalls    int    // Minimum installations for trending stats (default: 10)
 }
 
 type Server struct {
@@ -49,12 +51,13 @@ func main() {
 
 	// Load configuration from environment
 	config := Config{
-		DatabaseURL:  getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/telemetry?sslmode=disable"),
-		Port:         getEnvInt("PORT", 8081),
-		AuthEnabled:  getEnv("COLLECTOR_AUTH_ENABLED", "") == "true",
-		AuthUsername: getEnv("COLLECTOR_AUTH_USERNAME", ""),
-		AuthPassword: getEnv("COLLECTOR_AUTH_PASSWORD", ""),
-		StatsAPIKey:  getEnv("STATS_API_KEY", ""),
+		DatabaseURL:      getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/telemetry?sslmode=disable"),
+		Port:             getEnvInt("PORT", 8081),
+		AuthEnabled:      getEnv("COLLECTOR_AUTH_ENABLED", "") == "true",
+		AuthUsername:     getEnv("COLLECTOR_AUTH_USERNAME", ""),
+		AuthPassword:     getEnv("COLLECTOR_AUTH_PASSWORD", ""),
+		StatsAPIKey:      getEnv("STATS_API_KEY", ""),
+		StatsMinInstalls: getEnvInt("STATS_MIN_INSTALLATIONS", 10),
 	}
 
 	if config.AuthEnabled {
@@ -117,6 +120,9 @@ func main() {
 	// Start daily version check
 	go runDailyVersionCheck(bgCtx)
 
+	// Create weekly snapshot on startup if needed, then schedule weekly
+	go server.runWeeklySnapshotJob(bgCtx)
+
 	// Start server
 	go func() {
 		log.Printf("Telemetry collector listening on http://0.0.0.0%s", addr)
@@ -165,6 +171,11 @@ func (s *Server) setupRoutes() {
 	s.router.HandleFunc("/api/stats/connection-metrics", s.apiKeyMiddleware(s.handleConnectionMetrics)).Methods("GET", "OPTIONS")
 	s.router.HandleFunc("/api/stats/recent-events", s.apiKeyMiddleware(s.handleRecentEvents)).Methods("GET", "OPTIONS")
 	s.router.HandleFunc("/api/stats/database-view", s.apiKeyMiddleware(s.handleDatabaseView)).Methods("GET", "OPTIONS")
+
+	// Trending stats endpoints
+	s.router.HandleFunc("/api/stats/hottest", s.apiKeyMiddleware(s.handleHottestStats)).Methods("GET", "OPTIONS")
+	s.router.HandleFunc("/api/stats/movers", s.apiKeyMiddleware(s.handleMoversStats)).Methods("GET", "OPTIONS")
+	s.router.HandleFunc("/api/stats/new-entries", s.apiKeyMiddleware(s.handleNewEntries)).Methods("GET", "OPTIONS")
 
 	// Static files for analytics dashboard - protected if auth is enabled
 	if s.config.AuthEnabled {
@@ -1370,6 +1381,22 @@ func initSchema(db *sql.DB) error {
 
 	CREATE INDEX IF NOT EXISTS idx_submission_events_timestamp ON submission_events(timestamp DESC);
 	CREATE INDEX IF NOT EXISTS idx_submission_events_id ON submission_events(id DESC);
+
+	-- Weekly aggregated image stats for trending analysis
+	CREATE TABLE IF NOT EXISTS image_stats_weekly (
+		id SERIAL PRIMARY KEY,
+		week_start DATE NOT NULL,
+		image VARCHAR(500) NOT NULL,
+		total_count INTEGER NOT NULL DEFAULT 0,
+		installation_count INTEGER NOT NULL DEFAULT 0,
+		first_seen DATE,
+		created_at TIMESTAMPTZ DEFAULT NOW(),
+		UNIQUE(week_start, image)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_image_stats_weekly_week ON image_stats_weekly(week_start);
+	CREATE INDEX IF NOT EXISTS idx_image_stats_weekly_image ON image_stats_weekly(image);
+	CREATE INDEX IF NOT EXISTS idx_image_stats_weekly_first_seen ON image_stats_weekly(first_seen);
 	`
 
 	_, err := db.Exec(schema)
@@ -1707,4 +1734,676 @@ func runDailyVersionCheck(ctx context.Context) {
 			checkForUpdates()
 		}
 	}
+}
+
+// ============================================================================
+// Trending Statistics - Weekly Snapshots and Analysis
+// ============================================================================
+
+// normalizeImageNameFull strips registry prefix AND tag from image name
+// "ghcr.io/linuxserver/nginx:latest" -> "linuxserver/nginx"
+// "docker.io/library/nginx:1.25" -> "nginx"
+// "nginx:latest" -> "nginx"
+func normalizeImageNameFull(image string) string {
+	// Strip registry prefixes
+	registryPattern := regexp.MustCompile(`^(ghcr\.io|docker\.io|hub\.docker\.com|registry\.hub\.docker\.com|quay\.io|gcr\.io|mcr\.microsoft\.com|lscr\.io)/`)
+	image = registryPattern.ReplaceAllString(image, "")
+
+	// Strip "library/" prefix (Docker Hub official images)
+	image = regexp.MustCompile(`^library/`).ReplaceAllString(image, "")
+
+	// Strip tag (everything after last colon, but only if colon comes after last slash)
+	lastSlash := strings.LastIndex(image, "/")
+	lastColon := strings.LastIndex(image, ":")
+	if lastColon > lastSlash {
+		image = image[:lastColon]
+	}
+
+	return image
+}
+
+// getWeekStart returns the Monday of the week for a given date
+func getWeekStart(t time.Time) time.Time {
+	// Get the weekday (Sunday = 0, Monday = 1, etc.)
+	weekday := int(t.Weekday())
+	if weekday == 0 {
+		weekday = 7 // Treat Sunday as day 7
+	}
+	// Go back to Monday
+	monday := t.AddDate(0, 0, -(weekday - 1))
+	return time.Date(monday.Year(), monday.Month(), monday.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// runWeeklySnapshotJob creates weekly snapshots and schedules future runs
+func (s *Server) runWeeklySnapshotJob(ctx context.Context) {
+	// On startup, check if we need to create snapshots
+	if err := s.createWeeklySnapshotsIfNeeded(); err != nil {
+		log.Printf("Warning: Failed to create weekly snapshots on startup: %v", err)
+	}
+
+	// Calculate time until next Sunday midnight UTC
+	now := time.Now().UTC()
+	nextSunday := now
+	daysUntilSunday := (7 - int(now.Weekday())) % 7
+	if daysUntilSunday == 0 && now.Hour() >= 0 {
+		daysUntilSunday = 7 // If it's already Sunday, wait for next Sunday
+	}
+	nextSunday = nextSunday.AddDate(0, 0, daysUntilSunday)
+	nextSunday = time.Date(nextSunday.Year(), nextSunday.Month(), nextSunday.Day(), 0, 0, 0, 0, time.UTC)
+
+	initialDelay := nextSunday.Sub(now)
+	log.Printf("Weekly snapshot job scheduled for %s (in %s)", nextSunday.Format(time.RFC3339), initialDelay.Round(time.Minute))
+
+	// Wait for next Sunday
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(initialDelay):
+	}
+
+	// Create snapshot immediately
+	if err := s.createWeeklySnapshot(); err != nil {
+		log.Printf("Warning: Failed to create weekly snapshot: %v", err)
+	}
+
+	// Then run weekly
+	ticker := time.NewTicker(7 * 24 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.createWeeklySnapshot(); err != nil {
+				log.Printf("Warning: Failed to create weekly snapshot: %v", err)
+			}
+		}
+	}
+}
+
+// createWeeklySnapshotsIfNeeded checks if snapshots exist and backfills if needed
+func (s *Server) createWeeklySnapshotsIfNeeded() error {
+	// Check if we have any snapshots
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM image_stats_weekly").Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to check snapshot count: %w", err)
+	}
+
+	if count > 0 {
+		log.Printf("Found %d existing weekly snapshots", count)
+		// Check if current week exists
+		currentWeek := getWeekStart(time.Now().UTC())
+		var currentCount int
+		err := s.db.QueryRow("SELECT COUNT(*) FROM image_stats_weekly WHERE week_start = $1", currentWeek).Scan(&currentCount)
+		if err != nil {
+			return err
+		}
+		if currentCount == 0 {
+			log.Println("Current week snapshot missing, creating...")
+			return s.createWeeklySnapshot()
+		}
+		return nil
+	}
+
+	log.Println("No weekly snapshots found, backfilling from historical data...")
+	return s.backfillWeeklySnapshots()
+}
+
+// backfillWeeklySnapshots creates historical weekly snapshots from existing data
+func (s *Server) backfillWeeklySnapshots() error {
+	// Get the date range of existing data
+	var minDate, maxDate time.Time
+	err := s.db.QueryRow(`
+		SELECT MIN(timestamp), MAX(timestamp)
+		FROM image_stats
+		WHERE timestamp IS NOT NULL
+	`).Scan(&minDate, &maxDate)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			log.Println("No image_stats data to backfill from")
+			return nil
+		}
+		return fmt.Errorf("failed to get date range: %w", err)
+	}
+
+	// Generate snapshots for each week
+	startWeek := getWeekStart(minDate)
+	endWeek := getWeekStart(maxDate)
+	weeksCreated := 0
+
+	for week := startWeek; !week.After(endWeek); week = week.AddDate(0, 0, 7) {
+		if err := s.createWeeklySnapshotForWeek(week); err != nil {
+			log.Printf("Warning: Failed to create snapshot for week %s: %v", week.Format("2006-01-02"), err)
+			continue
+		}
+		weeksCreated++
+	}
+
+	log.Printf("Backfilled %d weekly snapshots", weeksCreated)
+	return nil
+}
+
+// createWeeklySnapshot creates a snapshot for the current week
+func (s *Server) createWeeklySnapshot() error {
+	weekStart := getWeekStart(time.Now().UTC())
+	return s.createWeeklySnapshotForWeek(weekStart)
+}
+
+// createWeeklySnapshotForWeek creates a snapshot for a specific week
+func (s *Server) createWeeklySnapshotForWeek(weekStart time.Time) error {
+	weekEnd := weekStart.AddDate(0, 0, 7)
+
+	log.Printf("Creating weekly snapshot for week starting %s", weekStart.Format("2006-01-02"))
+
+	// Query to aggregate image stats for the week with full normalization
+	// Uses DISTINCT ON to get latest per installation per image, then aggregates
+	query := `
+		INSERT INTO image_stats_weekly (week_start, image, total_count, installation_count, first_seen)
+		SELECT
+			$1::date as week_start,
+			normalized_image as image,
+			SUM(count) as total_count,
+			COUNT(DISTINCT installation_id) as installation_count,
+			MIN(first_seen_date) as first_seen
+		FROM (
+			SELECT DISTINCT ON (installation_id, normalized_image)
+				installation_id,
+				normalized_image,
+				count,
+				DATE(timestamp) as first_seen_date
+			FROM (
+				SELECT
+					installation_id,
+					timestamp,
+					count,
+					-- Full normalization: strip registry AND tag
+					REGEXP_REPLACE(
+						REGEXP_REPLACE(
+							REGEXP_REPLACE(
+								REGEXP_REPLACE(
+									REGEXP_REPLACE(
+										REGEXP_REPLACE(
+											REGEXP_REPLACE(
+												REGEXP_REPLACE(image, '^ghcr\.io/', ''),
+											'^docker\.io/', ''),
+										'^hub\.docker\.com/', ''),
+									'^registry\.hub\.docker\.com/', ''),
+								'^quay\.io/', ''),
+							'^gcr\.io/', ''),
+						'^mcr\.microsoft\.com/', ''),
+					'^lscr\.io/', '') as image_no_registry
+				FROM image_stats
+				WHERE timestamp >= $1 AND timestamp < $2
+			) stripped
+			CROSS JOIN LATERAL (
+				SELECT
+					CASE
+						WHEN POSITION(':' IN REVERSE(image_no_registry)) > 0
+							AND POSITION(':' IN REVERSE(image_no_registry)) < COALESCE(NULLIF(POSITION('/' IN REVERSE(image_no_registry)), 0), 999)
+						THEN LEFT(image_no_registry, LENGTH(image_no_registry) - POSITION(':' IN REVERSE(image_no_registry)))
+						ELSE image_no_registry
+					END as normalized_image
+			) norm
+			ORDER BY installation_id, normalized_image, timestamp DESC
+		) latest_per_install
+		WHERE normalized_image != '' AND normalized_image IS NOT NULL
+		GROUP BY normalized_image
+		ON CONFLICT (week_start, image) DO UPDATE SET
+			total_count = EXCLUDED.total_count,
+			installation_count = EXCLUDED.installation_count,
+			first_seen = LEAST(image_stats_weekly.first_seen, EXCLUDED.first_seen)
+	`
+
+	result, err := s.db.Exec(query, weekStart, weekEnd)
+	if err != nil {
+		return fmt.Errorf("failed to create weekly snapshot: %w", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	log.Printf("Weekly snapshot created/updated with %d images for week %s", rowsAffected, weekStart.Format("2006-01-02"))
+
+	// Update first_seen for any images that don't have it set
+	// (look back through all historical data)
+	updateFirstSeen := `
+		UPDATE image_stats_weekly w
+		SET first_seen = (
+			SELECT MIN(week_start)
+			FROM image_stats_weekly
+			WHERE image = w.image
+		)
+		WHERE first_seen IS NULL
+	`
+	s.db.Exec(updateFirstSeen)
+
+	return nil
+}
+
+// handleHottestStats returns the most popular images by container count and adoption
+func (s *Server) handleHottestStats(w http.ResponseWriter, r *http.Request) {
+	limit := getQueryInt(r, "limit", 20)
+	if limit > 100 {
+		limit = 100
+	}
+	days := getQueryInt(r, "days", 7)
+	metric := r.URL.Query().Get("metric")
+	if metric == "" {
+		metric = "both"
+	}
+
+	since := time.Now().AddDate(0, 0, -days)
+
+	// Get total installations for percentage calculation
+	var totalInstallations int
+	err := s.db.QueryRow(`
+		SELECT COUNT(DISTINCT installation_id)
+		FROM telemetry_reports
+		WHERE timestamp >= $1
+	`, since).Scan(&totalInstallations)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get total installations: "+err.Error())
+		return
+	}
+
+	type HotImage struct {
+		Rank               int     `json:"rank"`
+		Image              string  `json:"image"`
+		TotalContainers    int     `json:"total_containers"`
+		InstallationCount  int     `json:"installation_count"`
+		AdoptionPercentage float64 `json:"adoption_percentage"`
+	}
+
+	// Query for image stats with full normalization (strip registry AND tag)
+	query := `
+		SELECT
+			normalized_image,
+			SUM(count) as total_count,
+			COUNT(DISTINCT installation_id) as installation_count
+		FROM (
+			SELECT DISTINCT ON (installation_id, normalized_image)
+				installation_id,
+				normalized_image,
+				count
+			FROM (
+				SELECT
+					installation_id,
+					timestamp,
+					count,
+					-- Full normalization: strip registry AND tag
+					REGEXP_REPLACE(
+						REGEXP_REPLACE(
+							REGEXP_REPLACE(
+								REGEXP_REPLACE(
+									REGEXP_REPLACE(
+										REGEXP_REPLACE(
+											REGEXP_REPLACE(
+												REGEXP_REPLACE(image, '^ghcr\.io/', ''),
+											'^docker\.io/', ''),
+										'^hub\.docker\.com/', ''),
+									'^registry\.hub\.docker\.com/', ''),
+								'^quay\.io/', ''),
+							'^gcr\.io/', ''),
+						'^mcr\.microsoft\.com/', ''),
+					'^lscr\.io/', '') as image_no_registry
+				FROM image_stats
+				WHERE timestamp >= $1
+			) stripped
+			CROSS JOIN LATERAL (
+				SELECT
+					CASE
+						WHEN POSITION(':' IN REVERSE(image_no_registry)) > 0
+							AND POSITION(':' IN REVERSE(image_no_registry)) < COALESCE(NULLIF(POSITION('/' IN REVERSE(image_no_registry)), 0), 999)
+						THEN LEFT(image_no_registry, LENGTH(image_no_registry) - POSITION(':' IN REVERSE(image_no_registry)))
+						ELSE image_no_registry
+					END as normalized_image
+			) norm
+			ORDER BY installation_id, normalized_image, timestamp DESC
+		) latest_stats
+		WHERE normalized_image != '' AND normalized_image IS NOT NULL
+		GROUP BY normalized_image
+	`
+
+	rows, err := s.db.Query(query, since)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Query failed: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	var allImages []HotImage
+	for rows.Next() {
+		var img HotImage
+		if err := rows.Scan(&img.Image, &img.TotalContainers, &img.InstallationCount); err != nil {
+			log.Printf("Scan error: %v", err)
+			continue
+		}
+		if totalInstallations > 0 {
+			img.AdoptionPercentage = float64(img.InstallationCount) / float64(totalInstallations) * 100
+			img.AdoptionPercentage = float64(int(img.AdoptionPercentage*10)) / 10
+		}
+		allImages = append(allImages, img)
+	}
+
+	// Sort by containers
+	byContainers := make([]HotImage, len(allImages))
+	copy(byContainers, allImages)
+	// Sort descending by total_containers
+	for i := 0; i < len(byContainers)-1; i++ {
+		for j := i + 1; j < len(byContainers); j++ {
+			if byContainers[j].TotalContainers > byContainers[i].TotalContainers {
+				byContainers[i], byContainers[j] = byContainers[j], byContainers[i]
+			}
+		}
+	}
+	if len(byContainers) > limit {
+		byContainers = byContainers[:limit]
+	}
+	for i := range byContainers {
+		byContainers[i].Rank = i + 1
+	}
+
+	// Sort by adoption
+	byAdoption := make([]HotImage, len(allImages))
+	copy(byAdoption, allImages)
+	// Sort descending by installation_count
+	for i := 0; i < len(byAdoption)-1; i++ {
+		for j := i + 1; j < len(byAdoption); j++ {
+			if byAdoption[j].InstallationCount > byAdoption[i].InstallationCount {
+				byAdoption[i], byAdoption[j] = byAdoption[j], byAdoption[i]
+			}
+		}
+	}
+	if len(byAdoption) > limit {
+		byAdoption = byAdoption[:limit]
+	}
+	for i := range byAdoption {
+		byAdoption[i].Rank = i + 1
+	}
+
+	response := map[string]interface{}{
+		"total_installations": totalInstallations,
+		"period_days":         days,
+	}
+
+	switch metric {
+	case "containers":
+		response["by_containers"] = byContainers
+	case "adoption":
+		response["by_adoption"] = byAdoption
+	default: // "both"
+		response["by_containers"] = byContainers
+		response["by_adoption"] = byAdoption
+	}
+
+	respondJSON(w, http.StatusOK, response)
+}
+
+// handleMoversStats returns the biggest week-over-week changes
+func (s *Server) handleMoversStats(w http.ResponseWriter, r *http.Request) {
+	limit := getQueryInt(r, "limit", 10)
+	if limit > 50 {
+		limit = 50
+	}
+	weeks := getQueryInt(r, "weeks", 1)
+	if weeks > 4 {
+		weeks = 4
+	}
+	minInstallations := getQueryInt(r, "min_installations", s.config.StatsMinInstalls)
+
+	currentWeek := getWeekStart(time.Now().UTC())
+	previousWeek := currentWeek.AddDate(0, 0, -7*weeks)
+
+	type Mover struct {
+		Rank                  int     `json:"rank"`
+		Image                 string  `json:"image"`
+		CurrentCount          int     `json:"current_count"`
+		PreviousCount         int     `json:"previous_count"`
+		Change                int     `json:"change"`
+		ChangePercentage      float64 `json:"change_percentage"`
+		CurrentInstallations  int     `json:"current_installations"`
+		PreviousInstallations int     `json:"previous_installations"`
+	}
+
+	// Get current week stats
+	currentQuery := `
+		SELECT image, total_count, installation_count
+		FROM image_stats_weekly
+		WHERE week_start = $1 AND installation_count >= $2
+	`
+	currentRows, err := s.db.Query(currentQuery, currentWeek, minInstallations)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Query failed: "+err.Error())
+		return
+	}
+	defer currentRows.Close()
+
+	currentStats := make(map[string]struct {
+		count         int
+		installations int
+	})
+	for currentRows.Next() {
+		var image string
+		var count, installations int
+		if err := currentRows.Scan(&image, &count, &installations); err != nil {
+			continue
+		}
+		currentStats[image] = struct {
+			count         int
+			installations int
+		}{count, installations}
+	}
+
+	// Get previous week stats
+	previousQuery := `
+		SELECT image, total_count, installation_count
+		FROM image_stats_weekly
+		WHERE week_start = $1
+	`
+	previousRows, err := s.db.Query(previousQuery, previousWeek)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Query failed: "+err.Error())
+		return
+	}
+	defer previousRows.Close()
+
+	previousStats := make(map[string]struct {
+		count         int
+		installations int
+	})
+	for previousRows.Next() {
+		var image string
+		var count, installations int
+		if err := previousRows.Scan(&image, &count, &installations); err != nil {
+			continue
+		}
+		previousStats[image] = struct {
+			count         int
+			installations int
+		}{count, installations}
+	}
+
+	// Calculate changes
+	var movers []Mover
+	for image, current := range currentStats {
+		previous := previousStats[image]
+		change := current.count - previous.count
+		var changePercent float64
+		if previous.count > 0 {
+			changePercent = float64(change) / float64(previous.count) * 100
+			changePercent = float64(int(changePercent*10)) / 10
+		} else if current.count > 0 {
+			changePercent = 100.0 // New image
+		}
+
+		movers = append(movers, Mover{
+			Image:                 image,
+			CurrentCount:          current.count,
+			PreviousCount:         previous.count,
+			Change:                change,
+			ChangePercentage:      changePercent,
+			CurrentInstallations:  current.installations,
+			PreviousInstallations: previous.installations,
+		})
+	}
+
+	// Also include images that disappeared (were in previous but not current)
+	for image, previous := range previousStats {
+		if _, exists := currentStats[image]; !exists && previous.installations >= minInstallations {
+			movers = append(movers, Mover{
+				Image:                 image,
+				CurrentCount:          0,
+				PreviousCount:         previous.count,
+				Change:                -previous.count,
+				ChangePercentage:      -100.0,
+				CurrentInstallations:  0,
+				PreviousInstallations: previous.installations,
+			})
+		}
+	}
+
+	// Separate into risers and fallers
+	var risers, fallers []Mover
+	for _, m := range movers {
+		if m.Change > 0 {
+			risers = append(risers, m)
+		} else if m.Change < 0 {
+			fallers = append(fallers, m)
+		}
+	}
+
+	// Sort risers by change descending
+	for i := 0; i < len(risers)-1; i++ {
+		for j := i + 1; j < len(risers); j++ {
+			if risers[j].Change > risers[i].Change {
+				risers[i], risers[j] = risers[j], risers[i]
+			}
+		}
+	}
+	if len(risers) > limit {
+		risers = risers[:limit]
+	}
+	for i := range risers {
+		risers[i].Rank = i + 1
+	}
+
+	// Sort fallers by change ascending (biggest drops first)
+	for i := 0; i < len(fallers)-1; i++ {
+		for j := i + 1; j < len(fallers); j++ {
+			if fallers[j].Change < fallers[i].Change {
+				fallers[i], fallers[j] = fallers[j], fallers[i]
+			}
+		}
+	}
+	if len(fallers) > limit {
+		fallers = fallers[:limit]
+	}
+	for i := range fallers {
+		fallers[i].Rank = i + 1
+	}
+
+	response := map[string]interface{}{
+		"risers":           risers,
+		"fallers":          fallers,
+		"comparison_weeks": weeks,
+		"current_week":     currentWeek.Format("2006-01-02"),
+		"previous_week":    previousWeek.Format("2006-01-02"),
+		"min_installations": minInstallations,
+	}
+
+	respondJSON(w, http.StatusOK, response)
+}
+
+// handleNewEntries returns images first seen in the last N days
+func (s *Server) handleNewEntries(w http.ResponseWriter, r *http.Request) {
+	limit := getQueryInt(r, "limit", 20)
+	if limit > 50 {
+		limit = 50
+	}
+	days := getQueryInt(r, "days", 30)
+	minInstallations := getQueryInt(r, "min_installations", s.config.StatsMinInstalls)
+
+	cutoffDate := time.Now().AddDate(0, 0, -days)
+
+	type NewEntry struct {
+		Rank               int     `json:"rank"`
+		Image              string  `json:"image"`
+		FirstSeen          string  `json:"first_seen"`
+		DaysSinceFirstSeen int     `json:"days_since_first_seen"`
+		TotalContainers    int     `json:"total_containers"`
+		InstallationCount  int     `json:"installation_count"`
+		AdoptionPercentage float64 `json:"adoption_percentage"`
+	}
+
+	// Get total installations for percentage
+	var totalInstallations int
+	s.db.QueryRow(`
+		SELECT COUNT(DISTINCT installation_id)
+		FROM telemetry_reports
+		WHERE timestamp >= NOW() - INTERVAL '30 days'
+	`).Scan(&totalInstallations)
+
+	// Get the most recent week's data for current stats
+	currentWeek := getWeekStart(time.Now().UTC())
+
+	query := `
+		SELECT
+			image,
+			first_seen,
+			total_count,
+			installation_count
+		FROM image_stats_weekly
+		WHERE week_start = $1
+			AND first_seen >= $2
+			AND installation_count >= $3
+		ORDER BY installation_count DESC, total_count DESC
+		LIMIT $4
+	`
+
+	rows, err := s.db.Query(query, currentWeek, cutoffDate, minInstallations, limit)
+	if err != nil {
+		// If no current week data, try the most recent week
+		var latestWeek time.Time
+		s.db.QueryRow("SELECT MAX(week_start) FROM image_stats_weekly").Scan(&latestWeek)
+		if !latestWeek.IsZero() {
+			rows, err = s.db.Query(query, latestWeek, cutoffDate, minInstallations, limit)
+		}
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "Query failed: "+err.Error())
+			return
+		}
+	}
+	defer rows.Close()
+
+	var entries []NewEntry
+	now := time.Now()
+	for rows.Next() {
+		var entry NewEntry
+		var firstSeen time.Time
+		if err := rows.Scan(&entry.Image, &firstSeen, &entry.TotalContainers, &entry.InstallationCount); err != nil {
+			log.Printf("Scan error: %v", err)
+			continue
+		}
+		entry.FirstSeen = firstSeen.Format("2006-01-02")
+		entry.DaysSinceFirstSeen = int(now.Sub(firstSeen).Hours() / 24)
+		if totalInstallations > 0 {
+			entry.AdoptionPercentage = float64(entry.InstallationCount) / float64(totalInstallations) * 100
+			entry.AdoptionPercentage = float64(int(entry.AdoptionPercentage*10)) / 10
+		}
+		entries = append(entries, entry)
+	}
+
+	// Add ranks
+	for i := range entries {
+		entries[i].Rank = i + 1
+	}
+
+	response := map[string]interface{}{
+		"new_images":        entries,
+		"period_days":       days,
+		"min_installations": minInstallations,
+		"total_new_images":  len(entries),
+	}
+
+	respondJSON(w, http.StatusOK, response)
 }
