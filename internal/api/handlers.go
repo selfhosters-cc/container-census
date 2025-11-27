@@ -293,6 +293,16 @@ func (s *Server) setupRoutes() {
 
 	// Serve static files with selective authentication
 	// Login pages are public, everything else requires auth
+	// Add cache control headers for JS files to ensure updates are seen
+	staticFileServer := http.FileServer(http.Dir("./web"))
+	noCacheFileServer := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// For JS files, set cache headers to force revalidation
+		if strings.HasSuffix(r.URL.Path, ".js") {
+			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		}
+		staticFileServer.ServeHTTP(w, r)
+	})
+
 	s.router.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Redirect root path to login page if auth is enabled and no session
 		if r.URL.Path == "/" && s.authConfig.Enabled {
@@ -309,12 +319,12 @@ func (s *Server) setupRoutes() {
 
 		// Allow login page and its dependencies without authentication
 		if r.URL.Path == "/login.html" || r.URL.Path == "/login.js" || r.URL.Path == "/styles.css" {
-			http.FileServer(http.Dir("./web")).ServeHTTP(w, r)
+			noCacheFileServer.ServeHTTP(w, r)
 			return
 		}
 
 		// All other static files require authentication
-		sessionMiddleware(http.FileServer(http.Dir("./web"))).ServeHTTP(w, r)
+		sessionMiddleware(noCacheFileServer).ServeHTTP(w, r)
 	})
 }
 
@@ -793,9 +803,10 @@ func (s *Server) handleGetActivityLog(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
-		"status":  "healthy",
-		"version": version.Get(),
-		"time":    time.Now().Format(time.RFC3339),
+		"status":       "healthy",
+		"version":      version.Get(),
+		"time":         time.Now().Format(time.RFC3339),
+		"auth_enabled": s.authConfig.Enabled,
 	}
 
 	// Add update information if available
@@ -1758,8 +1769,12 @@ func (s *Server) handleCheckContainerUpdate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Check for updates
-	updateInfo, err := s.registryClient.CheckImageUpdate(r.Context(), imageName, container.ImageID)
+	// Check for updates - use ImageDigest (registry digest) if available, fall back to ImageID
+	localDigest := container.ImageDigest
+	if localDigest == "" {
+		localDigest = container.ImageID
+	}
+	updateInfo, err := s.registryClient.CheckImageUpdate(r.Context(), imageName, localDigest)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to check for updates: "+err.Error())
 		return
@@ -1926,8 +1941,12 @@ func (s *Server) handleBulkCheckUpdates(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
-		// Check for updates
-		updateInfo, err := s.registryClient.CheckImageUpdate(r.Context(), imageName, container.ImageID)
+		// Check for updates - use ImageDigest (registry digest) if available, fall back to ImageID
+		localDigest := container.ImageDigest
+		if localDigest == "" {
+			localDigest = container.ImageID
+		}
+		updateInfo, err := s.registryClient.CheckImageUpdate(r.Context(), imageName, localDigest)
 		if err != nil {
 			results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = map[string]interface{}{
 				"error": err.Error(),

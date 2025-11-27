@@ -885,6 +885,12 @@ async function loadVersion() {
                 badge.onclick = null;
             }
         }
+
+        // Show/hide logout button based on auth status
+        const logoutBtn = document.getElementById('logoutBtn');
+        if (logoutBtn) {
+            logoutBtn.style.display = data.auth_enabled ? '' : 'none';
+        }
     } catch (error) {
         console.error('Error loading version:', error);
     }
@@ -1946,6 +1952,11 @@ function renderHosts(hostsData) {
             'unknown': '❓'
         }[hostType] || '❓';
 
+        // Show agent version for agent hosts
+        const agentVersion = host.host_type === 'agent' && host.agent_version
+            ? `<span class="badge badge-info" title="Agent version">v${escapeHtml(host.agent_version)}</span>`
+            : '';
+
         const statsCollectionBadge = host.collect_stats
             ? '<span class="badge badge-success" style="cursor: pointer;" onclick="toggleStatsCollection(' + host.id + ', false)" title="Click to disable stats collection">✓ Enabled</span>'
             : '<span class="badge badge-secondary" style="cursor: pointer;" onclick="toggleStatsCollection(' + host.id + ', true)" title="Click to enable stats collection">Disabled</span>';
@@ -1953,7 +1964,7 @@ function renderHosts(hostsData) {
         return `
         <tr>
             <td><strong>${escapeHtml(host.name)}</strong></td>
-            <td>${typeIcon} ${escapeHtml(hostType)}</td>
+            <td>${typeIcon} ${escapeHtml(hostType)} ${agentVersion}</td>
             <td><code>${escapeHtml(host.address)}</code></td>
             <td>${statusBadge}</td>
             <td>${statsCollectionBadge}</td>
@@ -7563,12 +7574,12 @@ function addUpdateLog(message, color = '#d4d4d4') {
 async function performBatchUpdate(containers) {
     for (let i = 0; i < containers.length; i++) {
         const container = containers[i];
-        updateProgressData.containers[i].status = 'in-progress';
+        updateProgressData.containers[i].status = 'pulling';
         renderUpdateContainersList();
         updateProgressUI();
 
         addUpdateLog(`Starting update for: ${container.name}`, '#60a5fa');
-        addUpdateLog(`  → Pulling and recreating container...`, '#fbbf24');
+        addUpdateLog(`  → Pulling image (this may take a few minutes)...`, '#fbbf24');
 
         try {
             // The /update endpoint handles both pulling and recreating

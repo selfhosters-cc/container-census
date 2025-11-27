@@ -66,6 +66,7 @@ func (db *DB) initSchema() error {
 		host_type TEXT DEFAULT 'unknown',
 		agent_token TEXT,
 		agent_status TEXT DEFAULT 'unknown',
+		agent_version TEXT,
 		last_seen TIMESTAMP,
 		enabled BOOLEAN NOT NULL DEFAULT 1,
 		collect_stats BOOLEAN NOT NULL DEFAULT 1,
@@ -78,6 +79,7 @@ func (db *DB) initSchema() error {
 		name TEXT NOT NULL,
 		image TEXT NOT NULL,
 		image_id TEXT NOT NULL,
+		image_digest TEXT,
 		image_tags TEXT,
 		state TEXT NOT NULL,
 		status TEXT NOT NULL,
@@ -389,6 +391,7 @@ func (db *DB) runMigrations() error {
 			`ALTER TABLE hosts ADD COLUMN host_type TEXT DEFAULT 'unknown'`,
 			`ALTER TABLE hosts ADD COLUMN agent_token TEXT`,
 			`ALTER TABLE hosts ADD COLUMN agent_status TEXT DEFAULT 'unknown'`,
+			`ALTER TABLE hosts ADD COLUMN agent_version TEXT`,
 			`ALTER TABLE hosts ADD COLUMN last_seen TIMESTAMP`,
 		}
 
@@ -398,6 +401,23 @@ func (db *DB) runMigrations() error {
 				if !isSQLiteColumnExistsError(err) {
 					return err
 				}
+			}
+		}
+	}
+
+	// Check if hosts.agent_version column exists
+	var agentVersionExists int
+	err = db.conn.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('hosts') WHERE name='agent_version'
+	`).Scan(&agentVersionExists)
+	if err != nil {
+		return err
+	}
+
+	if agentVersionExists == 0 {
+		if _, err := db.conn.Exec(`ALTER TABLE hosts ADD COLUMN agent_version TEXT`); err != nil {
+			if !isSQLiteColumnExistsError(err) {
+				return err
 			}
 		}
 	}
@@ -513,6 +533,21 @@ func (db *DB) runMigrations() error {
 		}
 	}
 
+	// Check if image_digest column exists (for registry digest comparison)
+	var imageDigestExists int
+	err = db.conn.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('containers') WHERE name = 'image_digest'`).Scan(&imageDigestExists)
+	if err != nil {
+		return err
+	}
+
+	if imageDigestExists == 0 {
+		if _, err := db.conn.Exec(`ALTER TABLE containers ADD COLUMN image_digest TEXT`); err != nil {
+			if !isSQLiteColumnExistsError(err) {
+				return err
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -556,9 +591,9 @@ func isSQLiteUpdateColumnExistsError(err error) bool {
 // AddHost adds a new host
 func (db *DB) AddHost(host models.Host) (int64, error) {
 	result, err := db.conn.Exec(
-		`INSERT INTO hosts (name, address, description, host_type, agent_token, agent_status, last_seen, enabled, collect_stats)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		host.Name, host.Address, host.Description, host.HostType, host.AgentToken, host.AgentStatus, host.LastSeen, host.Enabled, host.CollectStats,
+		`INSERT INTO hosts (name, address, description, host_type, agent_token, agent_status, agent_version, last_seen, enabled, collect_stats)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		host.Name, host.Address, host.Description, host.HostType, host.AgentToken, host.AgentStatus, host.AgentVersion, host.LastSeen, host.Enabled, host.CollectStats,
 	)
 	if err != nil {
 		return 0, err
@@ -569,7 +604,7 @@ func (db *DB) AddHost(host models.Host) (int64, error) {
 // GetHosts returns all hosts
 func (db *DB) GetHosts() ([]models.Host, error) {
 	rows, err := db.conn.Query(`
-		SELECT id, name, address, description, host_type, agent_token, agent_status, last_seen, enabled, collect_stats, created_at, updated_at
+		SELECT id, name, address, description, host_type, agent_token, agent_status, agent_version, last_seen, enabled, collect_stats, created_at, updated_at
 		FROM hosts
 		ORDER BY name
 	`)
@@ -582,10 +617,10 @@ func (db *DB) GetHosts() ([]models.Host, error) {
 	for rows.Next() {
 		var h models.Host
 		var lastSeen sql.NullTime
-		var agentToken, agentStatus sql.NullString
+		var agentToken, agentStatus, agentVersion sql.NullString
 		var collectStats sql.NullBool
 
-		if err := rows.Scan(&h.ID, &h.Name, &h.Address, &h.Description, &h.HostType, &agentToken, &agentStatus, &lastSeen, &h.Enabled, &collectStats, &h.CreatedAt, &h.UpdatedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.Name, &h.Address, &h.Description, &h.HostType, &agentToken, &agentStatus, &agentVersion, &lastSeen, &h.Enabled, &collectStats, &h.CreatedAt, &h.UpdatedAt); err != nil {
 			return nil, err
 		}
 
@@ -594,6 +629,9 @@ func (db *DB) GetHosts() ([]models.Host, error) {
 		}
 		if agentStatus.Valid {
 			h.AgentStatus = agentStatus.String
+		}
+		if agentVersion.Valid {
+			h.AgentVersion = agentVersion.String
 		}
 		if lastSeen.Valid {
 			h.LastSeen = lastSeen.Time
@@ -614,13 +652,13 @@ func (db *DB) GetHosts() ([]models.Host, error) {
 func (db *DB) GetHost(id int64) (*models.Host, error) {
 	var h models.Host
 	var lastSeen sql.NullTime
-	var agentToken, agentStatus sql.NullString
+	var agentToken, agentStatus, agentVersion sql.NullString
 	var collectStats sql.NullBool
 
 	err := db.conn.QueryRow(`
-		SELECT id, name, address, description, host_type, agent_token, agent_status, last_seen, enabled, collect_stats, created_at, updated_at
+		SELECT id, name, address, description, host_type, agent_token, agent_status, agent_version, last_seen, enabled, collect_stats, created_at, updated_at
 		FROM hosts WHERE id = ?
-	`, id).Scan(&h.ID, &h.Name, &h.Address, &h.Description, &h.HostType, &agentToken, &agentStatus, &lastSeen, &h.Enabled, &collectStats, &h.CreatedAt, &h.UpdatedAt)
+	`, id).Scan(&h.ID, &h.Name, &h.Address, &h.Description, &h.HostType, &agentToken, &agentStatus, &agentVersion, &lastSeen, &h.Enabled, &collectStats, &h.CreatedAt, &h.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -630,6 +668,9 @@ func (db *DB) GetHost(id int64) (*models.Host, error) {
 	}
 	if agentStatus.Valid {
 		h.AgentStatus = agentStatus.String
+	}
+	if agentVersion.Valid {
+		h.AgentVersion = agentVersion.String
 	}
 	if lastSeen.Valid {
 		h.LastSeen = lastSeen.Time
@@ -647,9 +688,9 @@ func (db *DB) GetHost(id int64) (*models.Host, error) {
 func (db *DB) UpdateHost(host models.Host) error {
 	_, err := db.conn.Exec(`
 		UPDATE hosts
-		SET name = ?, address = ?, description = ?, host_type = ?, agent_token = ?, agent_status = ?, last_seen = ?, enabled = ?, collect_stats = ?, updated_at = CURRENT_TIMESTAMP
+		SET name = ?, address = ?, description = ?, host_type = ?, agent_token = ?, agent_status = ?, agent_version = ?, last_seen = ?, enabled = ?, collect_stats = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, host.Name, host.Address, host.Description, host.HostType, host.AgentToken, host.AgentStatus, host.LastSeen, host.Enabled, host.CollectStats, host.ID)
+	`, host.Name, host.Address, host.Description, host.HostType, host.AgentToken, host.AgentStatus, host.AgentVersion, host.LastSeen, host.Enabled, host.CollectStats, host.ID)
 	return err
 }
 
@@ -675,8 +716,8 @@ func (db *DB) SaveContainers(containers []models.Container) error {
 
 	stmt, err := tx.Prepare(`
 		INSERT INTO containers
-		(id, name, image, image_id, image_tags, state, status, ports, labels, created, host_id, host_name, scanned_at, networks, volumes, links, compose_project, cpu_percent, memory_usage, memory_limit, memory_percent, update_available, last_update_check)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, name, image, image_id, image_digest, image_tags, state, status, ports, labels, created, host_id, host_name, scanned_at, networks, volumes, links, compose_project, cpu_percent, memory_usage, memory_limit, memory_percent, update_available, last_update_check)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return err
@@ -736,7 +777,7 @@ func (db *DB) SaveContainers(containers []models.Container) error {
 		}
 
 		_, err = stmt.Exec(
-			c.ID, c.Name, c.Image, c.ImageID, string(imageTagsJSON), c.State, c.Status,
+			c.ID, c.Name, c.Image, c.ImageID, c.ImageDigest, string(imageTagsJSON), c.State, c.Status,
 			string(portsJSON), string(labelsJSON), c.Created,
 			c.HostID, c.HostName, c.ScannedAt,
 			string(networksJSON), string(volumesJSON), string(linksJSON), c.ComposeProject,
@@ -754,7 +795,7 @@ func (db *DB) SaveContainers(containers []models.Container) error {
 // GetLatestContainers returns the most recent containers for all hosts
 func (db *DB) GetLatestContainers() ([]models.Container, error) {
 	query := `
-		SELECT c.id, c.name, c.image, c.image_id, c.image_tags, c.state, c.status,
+		SELECT c.id, c.name, c.image, c.image_id, c.image_digest, c.image_tags, c.state, c.status,
 		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at,
 		       c.networks, c.volumes, c.links, c.compose_project,
 		       c.cpu_percent, c.memory_usage, c.memory_limit, c.memory_percent,
@@ -780,7 +821,7 @@ func (db *DB) GetLatestContainers() ([]models.Container, error) {
 // GetContainersByHost returns latest containers for a specific host
 func (db *DB) GetContainersByHost(hostID int64) ([]models.Container, error) {
 	query := `
-		SELECT c.id, c.name, c.image, c.image_id, c.image_tags, c.state, c.status,
+		SELECT c.id, c.name, c.image, c.image_id, c.image_digest, c.image_tags, c.state, c.status,
 		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at,
 		       c.networks, c.volumes, c.links, c.compose_project,
 		       c.cpu_percent, c.memory_usage, c.memory_limit, c.memory_percent,
@@ -807,7 +848,7 @@ func (db *DB) GetContainersByHost(hostID int64) ([]models.Container, error) {
 // GetContainersHistory returns containers within a time range
 func (db *DB) GetContainersHistory(start, end time.Time) ([]models.Container, error) {
 	query := `
-		SELECT id, name, image, image_id, image_tags, state, status,
+		SELECT id, name, image, image_id, image_digest, image_tags, state, status,
 		       ports, labels, created, host_id, host_name, scanned_at,
 		       networks, volumes, links, compose_project,
 		       cpu_percent, memory_usage, memory_limit, memory_percent,
@@ -833,14 +874,14 @@ func (db *DB) scanContainers(rows *sql.Rows) ([]models.Container, error) {
 	for rows.Next() {
 		var c models.Container
 		var portsJSON, labelsJSON, networksJSON, volumesJSON, linksJSON string
-		var imageTagsJSON sql.NullString
+		var imageDigest, imageTagsJSON sql.NullString
 		var composeProject sql.NullString
 		var cpuPercent, memoryPercent sql.NullFloat64
 		var memoryUsage, memoryLimit sql.NullInt64
 		var lastUpdateCheck sql.NullTime
 
 		err := rows.Scan(
-			&c.ID, &c.Name, &c.Image, &c.ImageID, &imageTagsJSON, &c.State, &c.Status,
+			&c.ID, &c.Name, &c.Image, &c.ImageID, &imageDigest, &imageTagsJSON, &c.State, &c.Status,
 			&portsJSON, &labelsJSON, &c.Created,
 			&c.HostID, &c.HostName, &c.ScannedAt,
 			&networksJSON, &volumesJSON, &linksJSON, &composeProject,
@@ -857,6 +898,10 @@ func (db *DB) scanContainers(rows *sql.Rows) ([]models.Container, error) {
 
 		if err := json.Unmarshal([]byte(labelsJSON), &c.Labels); err != nil {
 			return nil, err
+		}
+
+		if imageDigest.Valid {
+			c.ImageDigest = imageDigest.String
 		}
 
 		if imageTagsJSON.Valid && imageTagsJSON.String != "" && imageTagsJSON.String != "null" {
@@ -2490,7 +2535,7 @@ func (db *DB) SaveContainerUpdateStatus(containerID string, hostID int64, availa
 // GetContainersWithUpdates returns containers that have updates available
 func (db *DB) GetContainersWithUpdates() ([]models.Container, error) {
 	query := `
-		SELECT c.id, c.name, c.image, c.image_id, c.image_tags, c.state, c.status,
+		SELECT c.id, c.name, c.image, c.image_id, c.image_digest, c.image_tags, c.state, c.status,
 		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at,
 		       c.networks, c.volumes, c.links, c.compose_project,
 		       c.cpu_percent, c.memory_usage, c.memory_limit, c.memory_percent,

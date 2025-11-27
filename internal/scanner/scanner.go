@@ -56,9 +56,10 @@ func (s *Scanner) ScanHost(ctx context.Context, host models.Host) ([]models.Cont
 		return nil, fmt.Errorf("failed to list containers: %w", err)
 	}
 
-	// Get image information for size data and version labels
-	imageMap := make(map[string]int64)     // imageID -> size
+	// Get image information for size data, version labels, and repo digests
+	imageMap := make(map[string]int64)       // imageID -> size
 	imageTagsMap := make(map[string][]string) // imageID -> all tags (including version from labels)
+	imageDigestMap := make(map[string]string) // imageID -> first repo digest (for update comparison)
 	images, err := dockerClient.ImageList(ctx, imagetypes.ListOptions{})
 	if err == nil {
 		for _, img := range images {
@@ -90,6 +91,12 @@ func (s *Scanner) ScanHost(ctx context.Context, host models.Host) ([]models.Cont
 			if len(tags) > 0 {
 				imageTagsMap[img.ID] = tags
 			}
+
+			// Store first repo digest for update comparison
+			// RepoDigests contains the registry digest (e.g., "nginx@sha256:abc123...")
+			if len(img.RepoDigests) > 0 {
+				imageDigestMap[img.ID] = img.RepoDigests[0]
+			}
 		}
 	}
 
@@ -116,9 +123,10 @@ func (s *Scanner) ScanHost(ctx context.Context, host models.Host) ([]models.Cont
 			name = strings.TrimPrefix(c.Names[0], "/")
 		}
 
-		// Get image size and tags
+		// Get image size, tags, and digest
 		imageSize := imageMap[c.ImageID]
 		imageTags := imageTagsMap[c.ImageID]
+		imageDigest := imageDigestMap[c.ImageID]
 
 		// Inspect container for detailed info (restart count, connections, etc.)
 		var restartCount int
@@ -173,6 +181,7 @@ func (s *Scanner) ScanHost(ctx context.Context, host models.Host) ([]models.Cont
 			Name:           name,
 			Image:          c.Image,
 			ImageID:        c.ImageID,
+			ImageDigest:    imageDigest,
 			ImageTags:      imageTags,
 			ImageSize:      imageSize,
 			State:          c.State,

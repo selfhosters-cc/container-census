@@ -485,12 +485,24 @@ func performScan(ctx context.Context, db *storage.DB, scan *scanner.Scanner) {
 			result.ContainersFound = len(containers)
 			log.Printf("Scan completed for host %s: found %d containers", host.Name, len(containers))
 
-			// Update agent status to online on successful scan
-			if host.HostType == "agent" && host.AgentStatus != "online" {
+			// Update agent status and version on successful scan
+			if host.HostType == "agent" {
+				needsUpdate := host.AgentStatus != "online"
 				host.AgentStatus = "online"
 				host.LastSeen = time.Now()
-				if updateErr := db.UpdateHost(host); updateErr != nil {
-					log.Printf("Failed to update host status for %s: %v", host.Name, updateErr)
+
+				// Always fetch and check agent version
+				if agentInfo, err := scan.GetAgentInfo(ctx, host); err == nil && agentInfo != nil {
+					if host.AgentVersion != agentInfo.Version {
+						host.AgentVersion = agentInfo.Version
+						needsUpdate = true
+					}
+				}
+
+				if needsUpdate {
+					if updateErr := db.UpdateHost(host); updateErr != nil {
+						log.Printf("Failed to update host status for %s: %v", host.Name, updateErr)
+					}
 				}
 			}
 
@@ -858,7 +870,12 @@ func runImageUpdateChecker(ctx context.Context, db *storage.DB, scan *scanner.Sc
 			// Check each container
 			updateCount := 0
 			for _, container := range toCheck {
-				updateInfo, err := registryClient.CheckImageUpdate(ctx, container.Image, container.ImageID)
+				// Use ImageDigest (registry digest) if available, fall back to ImageID
+				localDigest := container.ImageDigest
+				if localDigest == "" {
+					localDigest = container.ImageID
+				}
+				updateInfo, err := registryClient.CheckImageUpdate(ctx, container.Image, localDigest)
 				if err != nil {
 					log.Printf("Failed to check update for %s: %v", container.Name, err)
 					continue

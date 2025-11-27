@@ -285,9 +285,18 @@ func parseImageName(imageName string) (string, string, string, error) {
 	return registry, repository, tag, nil
 }
 
-// normalizeDigest removes the "sha256:" prefix if present
+// normalizeDigest extracts and normalizes the digest hash for comparison
+// Handles formats like:
+//   - "sha256:abc123..."
+//   - "imagename@sha256:abc123..." (RepoDigests format)
+//   - "abc123..." (raw hash)
 func normalizeDigest(digest string) string {
 	digest = strings.TrimSpace(digest)
+
+	// Handle RepoDigests format: "imagename@sha256:abc123..."
+	if idx := strings.Index(digest, "@"); idx != -1 {
+		digest = digest[idx+1:]
+	}
 
 	// Remove sha256: prefix
 	if strings.HasPrefix(digest, "sha256:") {
@@ -361,11 +370,47 @@ func (c *Client) getImageCreatedTime(ctx context.Context, registry, repository, 
 		} `json:"manifests"`
 	}
 
-	// Check if this is a manifest list
+	// Check if this is a manifest list (multi-arch image)
 	if err := json.Unmarshal(bodyBytes, &manifestList); err == nil && len(manifestList.Manifests) > 0 {
-		// It's a manifest list, skip for now as we'd need to fetch the platform-specific manifest
-		log.Printf("DEBUG: Skipping manifest list (multi-arch image) - not yet supported")
-		return time.Time{}, fmt.Errorf("manifest list not yet supported")
+		// Find the linux/amd64 manifest (most common) or fall back to first one
+		var targetDigest string
+		for _, m := range manifestList.Manifests {
+			if m.Platform.OS == "linux" && m.Platform.Architecture == "amd64" {
+				targetDigest = m.Digest
+				break
+			}
+		}
+		if targetDigest == "" && len(manifestList.Manifests) > 0 {
+			targetDigest = manifestList.Manifests[0].Digest
+		}
+
+		if targetDigest != "" {
+			// Fetch the platform-specific manifest
+			platformManifestURL := fmt.Sprintf("https://%s/v2/%s/manifests/%s", registry, repository, targetDigest)
+			platformReq, err := http.NewRequestWithContext(ctx, "GET", platformManifestURL, nil)
+			if err != nil {
+				return time.Time{}, fmt.Errorf("failed to create platform manifest request: %w", err)
+			}
+			platformReq.Header.Set("Accept", "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json")
+			if token != "" {
+				platformReq.Header.Set("Authorization", "Bearer "+token)
+			}
+
+			platformResp, err := c.httpClient.Do(platformReq)
+			if err != nil {
+				return time.Time{}, fmt.Errorf("failed to fetch platform manifest: %w", err)
+			}
+			defer platformResp.Body.Close()
+
+			if platformResp.StatusCode != http.StatusOK {
+				return time.Time{}, fmt.Errorf("platform manifest fetch failed: %d", platformResp.StatusCode)
+			}
+
+			bodyBytes, err = io.ReadAll(platformResp.Body)
+			if err != nil {
+				return time.Time{}, fmt.Errorf("failed to read platform manifest: %w", err)
+			}
+		}
 	}
 
 	// Parse as regular manifest

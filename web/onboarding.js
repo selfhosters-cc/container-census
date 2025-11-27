@@ -49,13 +49,13 @@ class OnboardingTour {
             text: `
                 <div class="onboarding-content">
                     <p>Container Census is a powerful multi-host Docker monitoring system.</p>
-                    <p><strong>What's new in v1.6:</strong></p>
+                    <p><strong>What's new in v1.7:</strong></p>
                     <ul>
-                        <li>🔄 Image update management for :latest containers</li>
-                        <li>📊 Configurable card view on Containers tab</li>
-                        <li>🎨 Improved dashboard layout and UI</li>
+                        <li>Improved image update detection accuracy</li>
+                        <li>Agent version display on Hosts page</li>
+                        <li>Fixed leftover authentication bug in the Security tab</li>
                     </ul>
-                    <p>Let's take a quick tour of these new features!</p>
+                    <p>Let's take a quick tour of the key features!</p>
                 </div>
             `,
             buttons: [
@@ -208,7 +208,7 @@ class OnboardingTour {
             title: 'All Set!',
             text: `
                 <div class="onboarding-content">
-                    <p><strong>You're ready to use Container Census v1.6.2!</strong></p>
+                    <p><strong>You're ready to use Container Census v${this.currentVersion}!</strong></p>
                     <p>Explore these additional features:</p>
                     <ul>
                         <li>📈 <strong>Monitoring:</strong> Real-time CPU & memory stats with historical trends</li>
@@ -355,6 +355,11 @@ class OnboardingTour {
     // Check if tour should be shown
     static async shouldShow() {
         try {
+            // Get current version from health endpoint
+            const healthResponse = await fetch('/api/health');
+            const health = await healthResponse.json();
+            const currentVersion = health.version;
+
             const response = await fetch('/api/preferences', {
                 method: 'GET',
                 headers: {
@@ -364,11 +369,38 @@ class OnboardingTour {
             const prefs = await response.json();
 
             // Show tour if not completed
-            return prefs.onboarding_completed !== 'true';
+            if (prefs.onboarding_completed !== 'true') {
+                return true;
+            }
+
+            // Show tour if version has changed (major or minor version bump)
+            const lastVersion = prefs.onboarding_version || '0.0.0';
+            if (OnboardingTour.isNewMajorOrMinorVersion(lastVersion, currentVersion)) {
+                return true;
+            }
+
+            return false;
         } catch (err) {
             console.error('Failed to check onboarding status:', err);
             return false; // Don't show on error
         }
+    }
+
+    // Compare versions to check if there's a new major or minor version
+    static isNewMajorOrMinorVersion(oldVersion, newVersion) {
+        const parseVersion = (v) => {
+            const parts = v.split('.').map(p => parseInt(p, 10) || 0);
+            return { major: parts[0] || 0, minor: parts[1] || 0, patch: parts[2] || 0 };
+        };
+
+        const old = parseVersion(oldVersion);
+        const current = parseVersion(newVersion);
+
+        // Show tour if major or minor version increased
+        if (current.major > old.major) return true;
+        if (current.major === old.major && current.minor > old.minor) return true;
+
+        return false;
     }
 }
 

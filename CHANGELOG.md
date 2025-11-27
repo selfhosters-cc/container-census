@@ -5,6 +5,37 @@ All notable changes to Container Census will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.1] - 2025-11-27
+
+### Fixed
+
+- **Image Update Detection**: Fixed false positive updates for containers already running the latest image
+  - Root cause: Was comparing local image ID with remote registry digest (different identifiers)
+  - Solution: Now stores and compares registry digest (RepoDigests) for accurate comparison
+  - Added `image_digest` field to container model and database
+  - Handles both single-arch and multi-arch images correctly
+
+- **Multi-arch Image Timestamps**: Fixed "Remote Created: Unknown" for multi-arch images
+  - Now properly fetches platform-specific manifest (linux/amd64) from manifest lists
+  - Extracts creation timestamp from the correct image config
+
+- **Logout Button Visibility**: Logout button now only shows when authentication is enabled
+  - Added `auth_enabled` field to `/api/health` endpoint
+  - Frontend hides logout button when auth is disabled
+
+### Added
+
+- **Agent Version Display**: Show census agent version on the Hosts page
+  - New `agent_version` field stored in database for agent hosts
+  - Version fetched on each successful scan and displayed next to host type
+  - Helps track which agents need updating
+
+### Changed
+
+- **Update Progress UI**: Improved feedback during container updates
+  - Shows "Pulling image..." status immediately when update starts
+  - Updated log message to indicate pulling may take a few minutes
+
 ## [1.6.0] - 2025-11-17
 
 ### Added

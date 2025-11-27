@@ -162,8 +162,9 @@ func (a *Agent) handleListContainers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get image information for tags and version labels
-	imageTagsMap := make(map[string][]string) // imageID -> all tags (including version from labels)
+	// Get image information for tags, version labels, and repo digests
+	imageTagsMap := make(map[string][]string)  // imageID -> all tags (including version from labels)
+	imageDigestMap := make(map[string]string)  // imageID -> first repo digest (for update comparison)
 	images, err := a.dockerClient.ImageList(ctx, image.ListOptions{})
 	if err == nil {
 		for _, img := range images {
@@ -192,6 +193,12 @@ func (a *Agent) handleListContainers(w http.ResponseWriter, r *http.Request) {
 
 			if len(tags) > 0 {
 				imageTagsMap[img.ID] = tags
+			}
+
+			// Store first repo digest for update comparison
+			// RepoDigests contains the registry digest (e.g., "nginx@sha256:abc123...")
+			if len(img.RepoDigests) > 0 {
+				imageDigestMap[img.ID] = img.RepoDigests[0]
 			}
 		}
 	}
@@ -271,6 +278,7 @@ func (a *Agent) handleListContainers(w http.ResponseWriter, r *http.Request) {
 			Name:           name,
 			Image:          c.Image,
 			ImageID:        c.ImageID,
+			ImageDigest:    imageDigestMap[c.ImageID],
 			ImageTags:      imageTagsMap[c.ImageID],
 			State:          c.State,
 			Status:         c.Status,

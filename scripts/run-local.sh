@@ -45,7 +45,7 @@ fi
 
 # Run the server with local development settings
 DOCKER_HOST="${DOCKER_HOST:-unix:///var/run/docker.sock}" \
-SERVER_PORT=3000 \
+SERVER_PORT=3333 \
 CONFIG_PATH=/opt/docker-compose/census-server/census/config/${CONFIG_FILE} \
 AUTH_ENABLED=${AUTH_ENABLED} \
 AUTH_USERNAME=${AUTH_USERNAME} \

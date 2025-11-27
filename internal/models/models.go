@@ -14,6 +14,7 @@ type Host struct {
 	HostType     string    `json:"host_type"`    // unix, tcp, ssh, agent
 	AgentToken   string    `json:"agent_token,omitempty"` // API token for agent authentication
 	AgentStatus  string    `json:"agent_status,omitempty"` // online, offline, unknown
+	AgentVersion string    `json:"agent_version,omitempty"` // version of the census agent
 	LastSeen     time.Time `json:"last_seen,omitempty"`
 	Enabled      bool      `json:"enabled"`
 	CollectStats bool      `json:"collect_stats"` // whether to collect CPU/memory stats for this host
@@ -27,6 +28,7 @@ type Container struct {
 	Name         string            `json:"name"`
 	Image        string            `json:"image"`
 	ImageID      string            `json:"image_id"`
+	ImageDigest  string            `json:"image_digest"`  // registry digest (sha256:...) for update comparison
 	ImageTags    []string          `json:"image_tags"`    // all tags for this image (e.g., ["nginx:1.25", "nginx:latest"])
 	ImageSize    int64             `json:"image_size"`    // bytes
 	State        string            `json:"state"`         // running, exited, paused, etc.
