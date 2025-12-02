@@ -2671,6 +2671,137 @@ tbody tr:hover {
     opacity: 0.6;
 }
 
+/* Integrations Dropdown */
+.nav-dropdown {
+    position: relative;
+}
+
+.nav-dropdown-toggle {
+    width: 100%;
+}
+
+.nav-dropdown-arrow {
+    margin-left: auto;
+    font-size: 0.7rem;
+    transition: transform 0.2s ease;
+}
+
+.nav-dropdown.open .nav-dropdown-arrow {
+    transform: rotate(90deg);
+}
+
+.nav-dropdown-content {
+    display: none;
+    padding-left: 20px;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 2px;
+}
+
+.nav-dropdown.open .nav-dropdown-content {
+    display: flex;
+}
+
+.nav-dropdown-item {
+    background: transparent;
+    border: none;
+    color: white;
+    padding: 10px 15px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.9rem;
+    transition: all 0.2s ease;
+    text-align: left;
+    opacity: 0.85;
+}
+
+.nav-dropdown-item:hover {
+    background: rgba(255, 255, 255, 0.12);
+    opacity: 1;
+}
+
+.nav-dropdown-item.active {
+    background: rgba(255, 255, 255, 0.2);
+    opacity: 1;
+    font-weight: 500;
+}
+
+/* Plugin Badges */
+.plugin-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    transition: all 0.2s ease;
+}
+
+.plugin-badge:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+}
+
+.plugin-badge .badge-icon {
+    font-size: 0.85rem;
+}
+
+.plugin-badge.badge-info {
+    background: rgba(59, 130, 246, 0.15);
+    color: var(--info);
+}
+
+.plugin-badge.badge-success {
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--success);
+}
+
+.plugin-badge.badge-warning {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--warning);
+}
+
+.plugin-badge.badge-danger {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--danger);
+}
+
+.plugin-badge.badge-purple {
+    background: rgba(124, 58, 237, 0.15);
+    color: var(--primary);
+}
+
+/* Plugin Badges Container */
+.plugin-badges-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+/* Container Uptime Display */
+.container-uptime {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.8rem;
+    color: var(--text-tertiary);
+}
+
+.container-uptime .uptime-icon {
+    font-size: 0.9rem;
+}
+
+.container-uptime.running {
+    color: var(--success);
+}
+
 /* Sidebar Actions */
 .sidebar-actions {
     padding: 15px;
@@ -6502,6 +6633,11 @@ header {
     color: #0066cc;
     font-family: 'SF Mono', Monaco, 'Courier New', monospace;
     font-size: 0.75rem;
+}
+
+.theme-compact .chip-uptime {
+    background: #d4edda;
+    color: #155724;
 }
 
 .theme-compact .metro-actions {

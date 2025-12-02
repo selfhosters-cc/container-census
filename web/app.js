@@ -1447,6 +1447,7 @@ function renderCompactCard(cont) {
     const stateIcon = isRunning ? '✅' : isStopped ? '⏹️' : isPaused ? '⏸️' : '❓';
     const createdTime = formatDate(cont.created);
     const statusText = cont.status || '-';
+    const uptime = isRunning && cont.started_at ? formatUptime(cont.started_at) : '';
 
     return `
         <div class="container-card-modern theme-compact ${cont.state}">
@@ -1461,7 +1462,7 @@ function renderCompactCard(cont) {
                                 <span class="chip chip-host">📍 ${escapeHtml(cont.host_name)}</span>
                                 <span class="chip chip-state ${cont.state}">${cont.state}</span>
                                 <span class="chip chip-image" title="${escapeHtml(cont.image)}">🏷️ ${escapeHtml(extractImageTag(cont.image, cont.image_tags))}</span>
-                                <span class="chip chip-time">⏱️ ${createdTime}</span>
+                                ${uptime ? `<span class="chip chip-uptime" title="Uptime">⏱️ ${uptime}</span>` : `<span class="chip chip-time">📅 ${createdTime}</span>`}
                             </div>
                         </div>
                     </div>
@@ -1561,6 +1562,7 @@ function renderMaterialCard(cont) {
     const stateIcon = isRunning ? '✅' : isStopped ? '⏹️' : isPaused ? '⏸️' : '❓';
     const createdTime = formatDate(cont.created);
     const statusText = cont.status || '-';
+    const uptime = isRunning && cont.started_at ? formatUptime(cont.started_at) : '';
 
     return `
         <div class="container-card-modern theme-material ${cont.state}">
@@ -1574,7 +1576,7 @@ function renderMaterialCard(cont) {
                             <span class="material-meta-separator">•</span>
                             <span class="material-meta-item" title="${escapeHtml(cont.image)}">🏷️ ${escapeHtml(extractImageTag(cont.image, cont.image_tags))}</span>
                             <span class="material-meta-separator">•</span>
-                            <span class="material-meta-item">⏱️ ${createdTime}</span>
+                            <span class="material-meta-item">${uptime ? `⏱️ ${uptime}` : `📅 ${createdTime}`}</span>
                         </div>
                     </div>
                 </div>
@@ -1686,6 +1688,7 @@ function renderDashboardCard(cont) {
 
     const createdTime = formatDate(cont.created);
     const statusText = cont.status || '-';
+    const uptime = isRunning && cont.started_at ? formatUptime(cont.started_at) : '';
 
     return `
         <div class="container-card-modern theme-dashboard ${cont.state}">
@@ -1695,7 +1698,7 @@ function renderDashboardCard(cont) {
                     <h3 class="dashboard-name">${escapeHtml(cont.name)}</h3>
                     <span class="dashboard-tag">${escapeHtml(cont.host_name)}</span>
                     <span class="dashboard-tag" title="${escapeHtml(cont.image)}">🏷️ ${escapeHtml(extractImageTag(cont.image, cont.image_tags))}</span>
-                    <span class="dashboard-tag time">${createdTime}</span>
+                    <span class="dashboard-tag time">${uptime ? `⏱️ ${uptime}` : createdTime}</span>
                     ${cont.update_available ? '<span class="dashboard-tag alert">⬆️ Update</span>' : ''}
                 </div>
                 <div class="dashboard-actions-menu">

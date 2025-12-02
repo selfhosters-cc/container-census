@@ -370,6 +370,11 @@ func (db *DB) initSchema() error {
 		return err
 	}
 
+	// Initialize plugin schema
+	if err := db.initPluginSchema(); err != nil {
+		return err
+	}
+
 	// Run migrations for existing databases
 	return db.runMigrations()
 }
@@ -843,6 +848,39 @@ func (db *DB) GetContainersByHost(hostID int64) ([]models.Container, error) {
 	defer rows.Close()
 
 	return db.scanContainers(rows)
+}
+
+// GetContainerByID returns a specific container by host ID and container ID
+func (db *DB) GetContainerByID(hostID int64, containerID string) (*models.Container, error) {
+	query := `
+		SELECT c.id, c.name, c.image, c.image_id, c.image_digest, c.image_tags, c.state, c.status,
+		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at,
+		       c.networks, c.volumes, c.links, c.compose_project,
+		       c.cpu_percent, c.memory_usage, c.memory_limit, c.memory_percent,
+		       c.update_available, c.last_update_check
+		FROM containers c
+		INNER JOIN (
+			SELECT MAX(scanned_at) as max_scan
+			FROM containers
+			WHERE host_id = ?
+		) latest ON c.scanned_at = latest.max_scan
+		WHERE c.host_id = ? AND c.id = ?
+	`
+
+	rows, err := db.conn.Query(query, hostID, hostID, containerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	containers, err := db.scanContainers(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(containers) == 0 {
+		return nil, nil
+	}
+	return &containers[0], nil
 }
 
 // GetContainersHistory returns containers within a time range

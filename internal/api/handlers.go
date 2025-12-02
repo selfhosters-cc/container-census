@@ -15,6 +15,7 @@ import (
 	"github.com/container-census/container-census/internal/auth"
 	"github.com/container-census/container-census/internal/models"
 	"github.com/container-census/container-census/internal/notifications"
+	"github.com/container-census/container-census/internal/plugins"
 	"github.com/container-census/container-census/internal/registry"
 	"github.com/container-census/container-census/internal/scanner"
 	"github.com/container-census/container-census/internal/storage"
@@ -40,6 +41,8 @@ type Server struct {
 	notificationService   *notifications.NotificationService
 	vulnScanner           VulnerabilityScanner
 	vulnScheduler         VulnerabilityScheduler
+	pluginManager         *plugins.Manager
+	apiRouter             *mux.Router // Subrouter for /api with auth middleware
 }
 
 // TelemetryScheduler interface for submitting telemetry on demand
@@ -171,6 +174,7 @@ func (s *Server) setupRoutes() {
 	// Protected API routes
 	api := s.router.PathPrefix("/api").Subrouter()
 	api.Use(sessionMiddleware)
+	s.apiRouter = api // Store for plugin route mounting
 
 	// Host endpoints
 	api.HandleFunc("/hosts", s.handleGetHosts).Methods("GET")
@@ -290,6 +294,9 @@ func (s *Server) setupRoutes() {
 
 	// Changelog endpoint
 	api.HandleFunc("/changelog", s.handleGetChangelog).Methods("GET")
+
+	// Plugin endpoints
+	s.setupPluginRoutes(api)
 
 	// Serve static files with selective authentication
 	// Login pages are public, everything else requires auth

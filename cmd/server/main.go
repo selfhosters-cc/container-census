@@ -18,6 +18,8 @@ import (
 	"github.com/container-census/container-census/internal/migration"
 	"github.com/container-census/container-census/internal/models"
 	"github.com/container-census/container-census/internal/notifications"
+	"github.com/container-census/container-census/internal/plugins"
+	"github.com/container-census/container-census/internal/plugins/builtin/npm"
 	"github.com/container-census/container-census/internal/registry"
 	"github.com/container-census/container-census/internal/scanner"
 	"github.com/container-census/container-census/internal/storage"
@@ -235,6 +237,25 @@ func main() {
 
 	// Store API server reference for hot-reload
 	services.apiServer = apiServer
+
+	// Initialize plugin manager
+	containerProvider := &containerProviderImpl{db: db}
+	hostProvider := &hostProviderImpl{db: db}
+	pluginManager := plugins.NewManager(db, containerProvider, hostProvider)
+	pluginManager.SetRouter(apiServer.GetRouter())
+	apiServer.SetPluginManager(pluginManager)
+
+	// Register built-in plugins
+	npm.Register(pluginManager)
+
+	// Load and start plugins
+	if err := pluginManager.LoadBuiltInPlugins(context.Background()); err != nil {
+		log.Printf("Warning: Failed to load built-in plugins: %v", err)
+	}
+	if err := pluginManager.Start(context.Background()); err != nil {
+		log.Printf("Warning: Failed to start plugins: %v", err)
+	}
+	log.Println("Plugin manager initialized")
 
 	server := &http.Server{
 		Addr:         addr,
@@ -915,4 +936,35 @@ func runImageUpdateChecker(ctx context.Context, db *storage.DB, scan *scanner.Sc
 			}
 		}
 	}
+}
+
+// containerProviderImpl implements plugins.ContainerProvider
+type containerProviderImpl struct {
+	db *storage.DB
+}
+
+func (p *containerProviderImpl) GetContainers() []models.Container {
+	containers, err := p.db.GetLatestContainers()
+	if err != nil {
+		log.Printf("Error getting containers for plugin: %v", err)
+		return nil
+	}
+	return containers
+}
+
+func (p *containerProviderImpl) GetContainerByID(hostID int64, containerID string) (*models.Container, error) {
+	return p.db.GetContainerByID(hostID, containerID)
+}
+
+// hostProviderImpl implements plugins.HostProvider
+type hostProviderImpl struct {
+	db *storage.DB
+}
+
+func (p *hostProviderImpl) GetHosts() ([]models.Host, error) {
+	return p.db.GetHosts()
+}
+
+func (p *hostProviderImpl) GetHostByID(id int64) (*models.Host, error) {
+	return p.db.GetHost(id)
 }

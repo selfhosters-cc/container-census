@@ -228,18 +228,34 @@ func (a *Agent) handleListContainers(w http.ResponseWriter, r *http.Request) {
 		// Inspect container for detailed connection info
 		var restartCount int
 		var networks []string
+		var networkDetails []models.NetworkDetail
 		var volumes []models.VolumeMount
 		var links []string
 		var composeProject string
+		var startedAt time.Time
 
 		containerJSON, err := a.dockerClient.ContainerInspect(ctx, c.ID)
 		if err == nil {
 			restartCount = containerJSON.RestartCount
 
-			// Extract network connections
+			// Extract StartedAt for uptime tracking
+			if containerJSON.State != nil && containerJSON.State.StartedAt != "" {
+				if parsed, parseErr := time.Parse(time.RFC3339Nano, containerJSON.State.StartedAt); parseErr == nil {
+					startedAt = parsed
+				}
+			}
+
+			// Extract network connections with details
 			if containerJSON.NetworkSettings != nil && containerJSON.NetworkSettings.Networks != nil {
-				for networkName := range containerJSON.NetworkSettings.Networks {
+				for networkName, networkSettings := range containerJSON.NetworkSettings.Networks {
 					networks = append(networks, networkName)
+					// Add detailed network info for plugin matching
+					networkDetails = append(networkDetails, models.NetworkDetail{
+						NetworkName: networkName,
+						IPAddress:   networkSettings.IPAddress,
+						Gateway:     networkSettings.Gateway,
+						Aliases:     networkSettings.Aliases,
+					})
 				}
 			}
 
@@ -288,9 +304,11 @@ func (a *Agent) handleListContainers(w http.ResponseWriter, r *http.Request) {
 			Created:        time.Unix(c.Created, 0),
 			ScannedAt:      now,
 			Networks:       networks,
+			NetworkDetails: networkDetails,
 			Volumes:        volumes,
 			Links:          links,
 			ComposeProject: composeProject,
+			StartedAt:      startedAt,
 		}
 
 		result = append(result, container)

@@ -53,6 +53,20 @@ type Container struct {
 	// Image update tracking
 	UpdateAvailable   bool      `json:"update_available"`
 	LastUpdateCheck   time.Time `json:"last_update_check,omitempty"`
+	// Container uptime tracking
+	StartedAt time.Time `json:"started_at,omitempty"`
+	// Network details for plugin matching (e.g., NPM integration)
+	NetworkDetails []NetworkDetail `json:"network_details,omitempty"`
+	// Plugin-provided enrichment data
+	PluginData map[string]interface{} `json:"plugin_data,omitempty"`
+}
+
+// NetworkDetail contains per-network container connection info
+type NetworkDetail struct {
+	NetworkName string   `json:"network_name"`
+	IPAddress   string   `json:"ip_address"`
+	Gateway     string   `json:"gateway,omitempty"`
+	Aliases     []string `json:"aliases,omitempty"`
 }
 
 // PortMapping represents a container port mapping
