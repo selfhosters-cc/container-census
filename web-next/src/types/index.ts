@@ -67,17 +67,30 @@ export interface Image {
 }
 
 // Vulnerability types
+export interface SeverityCounts {
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  unknown?: number;
+}
+
 export interface VulnerabilityScan {
+  id?: number;
   image_id: string;
   image_name: string;
   scanned_at: string;
+  scan_duration_ms?: number;
   success: boolean;
   error?: string;
+  trivy_db_version?: string;
   total_vulnerabilities: number;
-  critical_count: number;
-  high_count: number;
-  medium_count: number;
-  low_count: number;
+  severity_counts: SeverityCounts;
+  // Legacy flat fields for backward compatibility
+  critical_count?: number;
+  high_count?: number;
+  medium_count?: number;
+  low_count?: number;
 }
 
 export interface Vulnerability {
@@ -146,10 +159,10 @@ export interface NotificationRule {
 
 export interface NotificationLog {
   id: number;
-  channel_id: number;
-  channel_name: string;
-  rule_id: number;
-  rule_name: string;
+  channel_id?: number;
+  channel_name?: string;
+  rule_id?: number;
+  rule_name?: string;
   event_type: string;
   container_id?: string;
   container_name?: string;
@@ -157,7 +170,9 @@ export interface NotificationLog {
   host_name?: string;
   message: string;
   read: boolean;
-  created_at: string;
+  sent_at: string;
+  success?: boolean;
+  error?: string;
 }
 
 export interface NotificationSilence {

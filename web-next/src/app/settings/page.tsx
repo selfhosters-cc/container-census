@@ -18,9 +18,6 @@ interface Settings {
     threshold_duration: number;
     cooldown_period: number;
   };
-  ui: {
-    card_design: string;
-  };
 }
 
 async function getSettings(): Promise<Settings> {
@@ -56,6 +53,8 @@ export default function SettingsPage() {
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
 
   const loadData = async () => {
     try {
@@ -75,6 +74,19 @@ export default function SettingsPage() {
   useEffect(() => {
     loadData();
   }, []);
+
+  const handleCheckUpdates = async () => {
+    setCheckingUpdates(true);
+    try {
+      const healthData = await getHealth();
+      setHealth(healthData);
+      setShowUpdateModal(true);
+    } catch (error) {
+      console.error('Failed to check for updates:', error);
+    } finally {
+      setCheckingUpdates(false);
+    }
+  };
 
   const handleSave = async (key: string, updatedSettings: Settings) => {
     setSaving(key);
@@ -106,15 +118,6 @@ export default function SettingsPage() {
     handleSave('telemetry_interval', updated);
   };
 
-  const handleCardDesignChange = (value: string) => {
-    if (!settings) return;
-    const updated = {
-      ...settings,
-      ui: { ...settings.ui, card_design: value },
-    };
-    handleSave('card_design', updated);
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -131,26 +134,37 @@ export default function SettingsPage() {
       {health && (
         <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg p-4">
           <h2 className="text-lg font-semibold mb-4">System Information</h2>
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <span className="text-[var(--text-tertiary)]">Version:</span>{' '}
-              <span className="font-medium">v{health.version}</span>
-              {health.update_available && (
-                <a
-                  href={health.release_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="ml-2 text-[var(--accent)]"
-                >
-                  ⬆️ v{health.latest_version} available
-                </a>
-              )}
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <span className="text-[var(--text-secondary)]">Version:</span>{' '}
+                <span className="font-medium">v{health.version}</span>
+                {health.update_available && (
+                  <a
+                    href={health.release_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ml-2 text-[var(--accent)]"
+                  >
+                    ⬆️ v{health.latest_version} available
+                  </a>
+                )}
+              </div>
+              <div>
+                <span className="text-[var(--text-secondary)]">Status:</span>{' '}
+                <span className={`font-medium ${health.status === 'healthy' ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
+                  {health.status}
+                </span>
+              </div>
             </div>
             <div>
-              <span className="text-[var(--text-tertiary)]">Status:</span>{' '}
-              <span className={`font-medium ${health.status === 'healthy' ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
-                {health.status}
-              </span>
+              <button
+                onClick={handleCheckUpdates}
+                disabled={checkingUpdates}
+                className="px-4 py-2 text-sm bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)] transition-colors disabled:opacity-50"
+              >
+                {checkingUpdates ? 'Checking...' : 'Check for Updates'}
+              </button>
             </div>
           </div>
         </div>
@@ -202,36 +216,13 @@ export default function SettingsPage() {
               <option value="168">Weekly</option>
               <option value="720">Monthly</option>
             </select>
-            {saving === 'telemetry_interval' && <span className="text-sm text-[var(--text-tertiary)]">Saving...</span>}
+            {saving === 'telemetry_interval' && <span className="text-sm text-[var(--text-secondary)]">Saving...</span>}
           </div>
         </SettingRow>
-        <div className="text-xs text-[var(--text-tertiary)] mt-2">
+        <div className="text-xs text-[var(--text-secondary)] mt-2">
           Telemetry helps improve Container Census by sharing anonymous usage statistics.
           No container names, images, or sensitive data is collected.
         </div>
-      </div>
-
-      {/* UI Settings */}
-      <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg p-4">
-        <h2 className="text-lg font-semibold mb-4">UI Settings</h2>
-        <SettingRow
-          label="Container Card Design"
-          description="Visual style for container cards in the Containers tab"
-        >
-          <div className="flex items-center gap-2">
-            <select
-              value={settings?.ui.card_design || 'material'}
-              onChange={(e) => handleCardDesignChange(e.target.value)}
-              disabled={saving === 'card_design'}
-              className="bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-3 py-2 text-sm"
-            >
-              <option value="material">Material</option>
-              <option value="compact">Compact</option>
-              <option value="dashboard">Dashboard</option>
-            </select>
-            {saving === 'card_design' && <span className="text-sm text-[var(--text-tertiary)]">Saving...</span>}
-          </div>
-        </SettingRow>
       </div>
 
       {/* Notification Rate Limits */}
@@ -239,23 +230,23 @@ export default function SettingsPage() {
         <h2 className="text-lg font-semibold mb-4">Notification Settings</h2>
         <div className="grid grid-cols-2 gap-4 text-sm">
           <div>
-            <span className="text-[var(--text-tertiary)]">Rate Limit:</span>{' '}
+            <span className="text-[var(--text-secondary)]">Rate Limit:</span>{' '}
             <span className="font-medium">{settings?.notification.rate_limit_max || 100}/hour</span>
           </div>
           <div>
-            <span className="text-[var(--text-tertiary)]">Batch Interval:</span>{' '}
+            <span className="text-[var(--text-secondary)]">Batch Interval:</span>{' '}
             <span className="font-medium">{settings?.notification.rate_limit_batch_interval || 600}s</span>
           </div>
           <div>
-            <span className="text-[var(--text-tertiary)]">Threshold Duration:</span>{' '}
+            <span className="text-[var(--text-secondary)]">Threshold Duration:</span>{' '}
             <span className="font-medium">{settings?.notification.threshold_duration || 120}s</span>
           </div>
           <div>
-            <span className="text-[var(--text-tertiary)]">Cooldown Period:</span>{' '}
+            <span className="text-[var(--text-secondary)]">Cooldown Period:</span>{' '}
             <span className="font-medium">{settings?.notification.cooldown_period || 300}s</span>
           </div>
         </div>
-        <div className="text-xs text-[var(--text-tertiary)] mt-2">
+        <div className="text-xs text-[var(--text-secondary)] mt-2">
           Notification rate limits are configured via environment variables.
         </div>
       </div>
@@ -266,7 +257,7 @@ export default function SettingsPage() {
         <div className="flex items-center justify-between">
           <div>
             <div className="font-medium">Reset All Settings</div>
-            <div className="text-sm text-[var(--text-tertiary)]">Reset all settings to their default values</div>
+            <div className="text-sm text-[var(--text-secondary)]">Reset all settings to their default values</div>
           </div>
           <button
             onClick={() => {
@@ -280,6 +271,60 @@ export default function SettingsPage() {
           </button>
         </div>
       </div>
+
+      {/* Update Modal */}
+      {showUpdateModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg w-full max-w-md p-6">
+            <h2 className="text-xl font-bold mb-4">Software Update</h2>
+            {health?.update_available ? (
+              <>
+                <p className="text-[var(--text-secondary)] mb-4">
+                  A new version of Container Census is available!
+                </p>
+                <div className="space-y-2 mb-6">
+                  <div className="flex justify-between">
+                    <span className="text-[var(--text-secondary)]">Current Version:</span>
+                    <span className="font-medium">v{health.version}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-[var(--text-secondary)]">Latest Version:</span>
+                    <span className="font-medium text-[var(--success)]">v{health.latest_version}</span>
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <a
+                    href={health.release_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 px-4 py-2 text-sm text-center bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)] transition-colors"
+                  >
+                    View Release Notes
+                  </a>
+                  <button
+                    onClick={() => setShowUpdateModal(false)}
+                    className="px-4 py-2 text-sm border border-[var(--border)] rounded hover:bg-[var(--bg-tertiary)] transition-colors"
+                  >
+                    Close
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-[var(--text-secondary)] mb-6">
+                  You are running the latest version of Container Census (v{health?.version}).
+                </p>
+                <button
+                  onClick={() => setShowUpdateModal(false)}
+                  className="w-full px-4 py-2 text-sm bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)] transition-colors"
+                >
+                  Close
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

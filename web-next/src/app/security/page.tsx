@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import {
   getVulnerabilitySummary,
   getVulnerabilityScans,
@@ -11,6 +11,14 @@ import {
 } from '@/lib/api';
 import type { VulnerabilitySummary, VulnerabilityScan, Vulnerability } from '@/types';
 
+// Chart.js type declaration
+declare const Chart: {
+  new (ctx: CanvasRenderingContext2D, config: unknown): {
+    destroy: () => void;
+    update: () => void;
+  };
+};
+
 function SeverityBadge({ severity, count }: { severity: string; count: number }) {
   const colors: Record<string, string> = {
     critical: 'bg-[#ff1744] text-white',
@@ -20,17 +28,20 @@ function SeverityBadge({ severity, count }: { severity: string; count: number })
   };
 
   return (
-    <span className={`px-2 py-0.5 text-xs rounded ${colors[severity] || 'bg-gray-500 text-white'}`}>
-      {count} {severity.toUpperCase()}
+    <span className={`px-2 py-0.5 text-xs rounded font-medium ${colors[severity] || 'bg-gray-500 text-white'}`}>
+      {count}
     </span>
   );
 }
 
-function StatCard({ label, value, color = 'text-[var(--text-primary)]' }: { label: string; value: number | string; color?: string }) {
+function StatCard({ label, value, icon, color = 'text-[var(--text-primary)]' }: { label: string; value: number | string; icon: string; color?: string }) {
   return (
     <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg p-4">
-      <div className="text-sm text-[var(--text-tertiary)]">{label}</div>
-      <div className={`text-2xl font-bold ${color}`}>{value}</div>
+      <div className="flex items-center gap-2 mb-2">
+        <span>{icon}</span>
+        <span className="text-sm text-[var(--text-tertiary)]">{label}</span>
+      </div>
+      <div className={`text-3xl font-bold ${color}`}>{value}</div>
     </div>
   );
 }
@@ -73,6 +84,20 @@ function VulnerabilityDetailsModal({ isOpen, onClose, imageId, imageName }: Vuln
     });
   }, [vulnerabilities, filter, severityFilter]);
 
+  // Compute counts from vulnerabilities array (most accurate)
+  const counts = useMemo(() => {
+    const c = { critical: 0, high: 0, medium: 0, low: 0, total: 0 };
+    vulnerabilities.forEach(v => {
+      c.total++;
+      const sev = v.severity.toLowerCase();
+      if (sev === 'critical') c.critical++;
+      else if (sev === 'high') c.high++;
+      else if (sev === 'medium') c.medium++;
+      else if (sev === 'low') c.low++;
+    });
+    return c;
+  }, [vulnerabilities]);
+
   if (!isOpen) return null;
 
   return (
@@ -92,18 +117,28 @@ function VulnerabilityDetailsModal({ isOpen, onClose, imageId, imageName }: Vuln
           </div>
         ) : (
           <>
-            {/* Summary */}
-            {scan && (
-              <div className="p-4 border-b border-[var(--border)] flex flex-wrap gap-2">
-                <SeverityBadge severity="critical" count={scan.critical_count} />
-                <SeverityBadge severity="high" count={scan.high_count} />
-                <SeverityBadge severity="medium" count={scan.medium_count} />
-                <SeverityBadge severity="low" count={scan.low_count} />
-                <span className="text-sm text-[var(--text-tertiary)] ml-4">
-                  Total: {scan.total_vulnerabilities}
-                </span>
+            {/* Summary with severity badges */}
+            <div className="p-4 border-b border-[var(--border)] flex flex-wrap gap-3 items-center">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-[var(--text-tertiary)]">Critical:</span>
+                <SeverityBadge severity="critical" count={counts.critical} />
               </div>
-            )}
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-[var(--text-tertiary)]">High:</span>
+                <SeverityBadge severity="high" count={counts.high} />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-[var(--text-tertiary)]">Medium:</span>
+                <SeverityBadge severity="medium" count={counts.medium} />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-[var(--text-tertiary)]">Low:</span>
+                <SeverityBadge severity="low" count={counts.low} />
+              </div>
+              <span className="text-sm text-[var(--text-tertiary)] ml-4">
+                Total: <strong>{counts.total}</strong>
+              </span>
+            </div>
 
             {/* Filters */}
             <div className="p-4 border-b border-[var(--border)] flex gap-4">
@@ -168,8 +203,13 @@ export default function SecurityPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [severityFilter, setSeverityFilter] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
   const [detailsModal, setDetailsModal] = useState<{ imageId: string; imageName: string } | null>(null);
+
+  const severityChartRef = useRef<HTMLCanvasElement>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const severityChartInstance = useRef<any>(null);
 
   const loadData = async () => {
     try {
@@ -188,9 +228,92 @@ export default function SecurityPage() {
 
   useEffect(() => {
     loadData();
+
+    // Load Chart.js from CDN
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0';
+    script.async = true;
+    document.body.appendChild(script);
+
     const interval = setInterval(loadData, 30000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      if (script.parentNode) script.parentNode.removeChild(script);
+    };
   }, []);
+
+  // Helper to get severity count from scan (handles both nested and flat formats)
+  const getSeverityCount = (scan: VulnerabilityScan, severity: 'critical' | 'high' | 'medium' | 'low'): number => {
+    // Try nested severity_counts first (current API format)
+    if (scan.severity_counts && typeof scan.severity_counts === 'object') {
+      return scan.severity_counts[severity] || 0;
+    }
+    // Fallback to flat fields (legacy format)
+    const legacyField = `${severity}_count` as keyof VulnerabilityScan;
+    return (scan[legacyField] as number) || 0;
+  };
+
+  // Compute stats from scans (most reliable)
+  const stats = useMemo(() => {
+    let critical = 0, high = 0, medium = 0, low = 0, atRisk = 0;
+    scans.forEach(scan => {
+      if (scan.success) {
+        critical += getSeverityCount(scan, 'critical');
+        high += getSeverityCount(scan, 'high');
+        medium += getSeverityCount(scan, 'medium');
+        low += getSeverityCount(scan, 'low');
+        if (scan.total_vulnerabilities > 0) atRisk++;
+      }
+    });
+    return {
+      total: scans.filter(s => s.success).length,
+      critical,
+      high,
+      medium,
+      low,
+      atRisk,
+    };
+  }, [scans]);
+
+  // Render severity distribution chart
+  useEffect(() => {
+    if (loading || !severityChartRef.current || typeof Chart === 'undefined') return;
+
+    if (severityChartInstance.current) {
+      severityChartInstance.current.destroy();
+    }
+
+    const ctx = severityChartRef.current.getContext('2d');
+    if (!ctx) return;
+
+    severityChartInstance.current = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: ['Critical', 'High', 'Medium', 'Low'],
+        datasets: [{
+          data: [stats.critical, stats.high, stats.medium, stats.low],
+          backgroundColor: ['#ff1744', '#ff9800', '#ffc107', '#4caf50'],
+          borderWidth: 0,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { color: '#94a3b8', padding: 15 },
+          },
+        },
+      },
+    });
+
+    return () => {
+      if (severityChartInstance.current) {
+        severityChartInstance.current.destroy();
+      }
+    };
+  }, [loading, stats]);
 
   const filteredScans = useMemo(() => {
     return scans.filter(scan => {
@@ -199,33 +322,30 @@ export default function SecurityPage() {
         scan.image_id.toLowerCase().includes(searchTerm.toLowerCase());
 
       let matchesStatus = true;
-      if (statusFilter === 'critical') {
-        matchesStatus = scan.critical_count > 0;
-      } else if (statusFilter === 'high') {
-        matchesStatus = scan.high_count > 0;
-      } else if (statusFilter === 'clean') {
-        matchesStatus = scan.total_vulnerabilities === 0;
+      if (statusFilter === 'scanned') {
+        matchesStatus = scan.success === true;
+      } else if (statusFilter === 'remote') {
+        matchesStatus = scan.success !== true && Boolean(scan.error?.includes('not available') || scan.error?.includes('remote'));
       } else if (statusFilter === 'failed') {
-        matchesStatus = !scan.success;
+        matchesStatus = scan.success !== true && !scan.error?.includes('not available');
       }
 
-      return matchesSearch && matchesStatus;
-    });
-  }, [scans, searchTerm, statusFilter]);
+      let matchesSeverity = true;
+      if (severityFilter === 'critical') {
+        matchesSeverity = getSeverityCount(scan, 'critical') > 0;
+      } else if (severityFilter === 'high') {
+        matchesSeverity = getSeverityCount(scan, 'high') > 0;
+      } else if (severityFilter === 'medium') {
+        matchesSeverity = getSeverityCount(scan, 'medium') > 0;
+      } else if (severityFilter === 'low') {
+        matchesSeverity = getSeverityCount(scan, 'low') > 0;
+      } else if (severityFilter === 'clean') {
+        matchesSeverity = scan.total_vulnerabilities === 0 && scan.success === true;
+      }
 
-  const stats = useMemo(() => {
-    // Handle both nested (summary.summary) and direct formats
-    const s = summary?.summary || summary;
-    const severityCounts = (s as { severity_counts?: Record<string, number> })?.severity_counts || {};
-    const totalScanned = (s as { total_images_scanned?: number })?.total_images_scanned || scans.length;
-    const atRiskCount = (s as { images_with_vulnerabilities?: number })?.images_with_vulnerabilities || scans.filter(sc => sc.total_vulnerabilities > 0).length;
-    return {
-      total: totalScanned,
-      critical: severityCounts.critical || 0,
-      high: severityCounts.high || 0,
-      atRisk: atRiskCount,
-    };
-  }, [summary, scans]);
+      return matchesSearch && matchesStatus && matchesSeverity;
+    });
+  }, [scans, searchTerm, statusFilter, severityFilter]);
 
   const handleScanAll = async () => {
     setActionLoading(true);
@@ -260,6 +380,27 @@ export default function SecurityPage() {
     }
   };
 
+  // Determine status badge for a scan
+  const getStatusBadge = (scan: VulnerabilityScan) => {
+    if (!scan.success) {
+      const isRemote = scan.error?.includes('not available') || scan.error?.includes('remote');
+      if (isRemote) {
+        return <span className="px-2 py-1 text-xs rounded bg-[var(--info)] text-white">🌐 Remote</span>;
+      }
+      return <span className="px-2 py-1 text-xs rounded bg-[var(--danger)] text-white" title={scan.error}>⚠️ Failed</span>;
+    }
+    if (scan.total_vulnerabilities === 0) {
+      return <span className="px-2 py-1 text-xs rounded bg-[var(--success)] text-white">✓ Clean</span>;
+    }
+    if (getSeverityCount(scan, 'critical') > 0) {
+      return <span className="px-2 py-1 text-xs rounded bg-[#ff1744] text-white">🚨 Critical</span>;
+    }
+    if (getSeverityCount(scan, 'high') > 0) {
+      return <span className="px-2 py-1 text-xs rounded bg-[#ff9800] text-white">⚠️ High</span>;
+    }
+    return <span className="px-2 py-1 text-xs rounded bg-[#ffc107] text-black">⚡ Vuln</span>;
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -271,7 +412,10 @@ export default function SecurityPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Security</h1>
+        <div>
+          <h1 className="text-2xl font-bold">🛡️ Security</h1>
+          <p className="text-sm text-[var(--text-tertiary)]">Monitor and track security vulnerabilities across all container images</p>
+        </div>
         <div className="flex items-center gap-2">
           <button
             onClick={handleScanAll}
@@ -291,18 +435,76 @@ export default function SecurityPage() {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Scanned Images" value={stats.total} />
-        <StatCard label="Critical" value={stats.critical} color={stats.critical > 0 ? 'text-[#ff1744]' : ''} />
-        <StatCard label="High" value={stats.high} color={stats.high > 0 ? 'text-[#ff9800]' : ''} />
-        <StatCard label="At Risk Images" value={stats.atRisk} color={stats.atRisk > 0 ? 'text-[var(--warning)]' : ''} />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <StatCard icon="📊" label="Scanned Images" value={stats.total} />
+        <StatCard icon="🚨" label="Critical" value={stats.critical} color={stats.critical > 0 ? 'text-[#ff1744]' : ''} />
+        <StatCard icon="⚠️" label="High" value={stats.high} color={stats.high > 0 ? 'text-[#ff9800]' : ''} />
+        <StatCard icon="🛡️" label="At Risk Images" value={stats.atRisk} color={stats.atRisk > 0 ? 'text-[var(--warning)]' : ''} />
       </div>
+
+      {/* Charts Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Severity Distribution Chart */}
+        <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg p-4">
+          <h3 className="text-lg font-medium mb-2">Severity Distribution</h3>
+          <p className="text-xs text-[var(--text-tertiary)] mb-4">Current vulnerability breakdown</p>
+          <div className="h-64">
+            <canvas ref={severityChartRef}></canvas>
+          </div>
+        </div>
+
+        {/* Severity Counts */}
+        <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg p-4">
+          <h3 className="text-lg font-medium mb-2">Vulnerability Counts</h3>
+          <p className="text-xs text-[var(--text-tertiary)] mb-4">Total vulnerabilities by severity</p>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between p-3 bg-[var(--bg-tertiary)] rounded">
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full bg-[#ff1744]"></span>
+                <span>Critical</span>
+              </div>
+              <span className="text-xl font-bold text-[#ff1744]">{stats.critical}</span>
+            </div>
+            <div className="flex items-center justify-between p-3 bg-[var(--bg-tertiary)] rounded">
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full bg-[#ff9800]"></span>
+                <span>High</span>
+              </div>
+              <span className="text-xl font-bold text-[#ff9800]">{stats.high}</span>
+            </div>
+            <div className="flex items-center justify-between p-3 bg-[var(--bg-tertiary)] rounded">
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full bg-[#ffc107]"></span>
+                <span>Medium</span>
+              </div>
+              <span className="text-xl font-bold text-[#ffc107]">{stats.medium}</span>
+            </div>
+            <div className="flex items-center justify-between p-3 bg-[var(--bg-tertiary)] rounded">
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full bg-[#4caf50]"></span>
+                <span>Low</span>
+              </div>
+              <span className="text-xl font-bold text-[#4caf50]">{stats.low}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Queue Status */}
+      {summary?.queue_status && (summary.queue_status.in_progress > 0 || summary.queue_status.pending > 0) && (
+        <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg p-4 flex items-center gap-4">
+          <span className="text-xl">⏳</span>
+          <span className="text-sm">
+            <strong>Scanning in progress:</strong> {summary.queue_status.in_progress} scanning, {summary.queue_status.pending} queued
+          </span>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap gap-4">
         <input
           type="text"
-          placeholder="Search images..."
+          placeholder="🔍 Search images..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           className="flex-1 min-w-[200px] bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg px-4 py-2 text-[var(--text-primary)] placeholder-[var(--text-tertiary)] focus:outline-none focus:border-[var(--accent)]"
@@ -313,10 +515,21 @@ export default function SecurityPage() {
           className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg px-4 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
         >
           <option value="">All Status</option>
-          <option value="critical">Critical Issues</option>
-          <option value="high">High Issues</option>
+          <option value="scanned">Scanned Only</option>
+          <option value="remote">Remote Only</option>
+          <option value="failed">Failed Only</option>
+        </select>
+        <select
+          value={severityFilter}
+          onChange={(e) => setSeverityFilter(e.target.value)}
+          className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg px-4 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
+        >
+          <option value="">All Severities</option>
+          <option value="critical">Critical</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
           <option value="clean">Clean</option>
-          <option value="failed">Failed Scans</option>
         </select>
       </div>
 
@@ -327,73 +540,71 @@ export default function SecurityPage() {
         </div>
       ) : (
         <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg overflow-hidden">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-[var(--bg-tertiary)]">
-                <th className="text-left px-4 py-3 text-sm font-medium">Image</th>
-                <th className="text-left px-4 py-3 text-sm font-medium">Status</th>
-                <th className="text-left px-4 py-3 text-sm font-medium">Critical</th>
-                <th className="text-left px-4 py-3 text-sm font-medium">High</th>
-                <th className="text-left px-4 py-3 text-sm font-medium">Medium</th>
-                <th className="text-left px-4 py-3 text-sm font-medium">Low</th>
-                <th className="text-left px-4 py-3 text-sm font-medium">Total</th>
-                <th className="text-left px-4 py-3 text-sm font-medium">Last Scan</th>
-                <th className="text-left px-4 py-3 text-sm font-medium">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredScans.map(scan => (
-                <tr
-                  key={scan.image_id}
-                  className="border-t border-[var(--border)] hover:bg-[var(--bg-tertiary)] cursor-pointer"
-                  onClick={() => setDetailsModal({ imageId: scan.image_id, imageName: scan.image_name })}
-                >
-                  <td className="px-4 py-3">
-                    <code className="text-sm">{scan.image_name}</code>
-                  </td>
-                  <td className="px-4 py-3">
-                    {scan.success ? (
-                      <span className="px-2 py-1 text-xs rounded bg-[var(--success)] text-white">✓</span>
-                    ) : (
-                      <span className="px-2 py-1 text-xs rounded bg-[var(--danger)] text-white" title={scan.error}>✗</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={scan.critical_count > 0 ? 'text-[#ff1744] font-bold' : ''}>
-                      {scan.critical_count}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={scan.high_count > 0 ? 'text-[#ff9800] font-bold' : ''}>
-                      {scan.high_count}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={scan.medium_count > 0 ? 'text-[#ffc107]' : ''}>
-                      {scan.medium_count}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">{scan.low_count}</td>
-                  <td className="px-4 py-3">{scan.total_vulnerabilities}</td>
-                  <td className="px-4 py-3 text-sm text-[var(--text-tertiary)]">
-                    {new Date(scan.scanned_at).toLocaleString()}
-                  </td>
-                  <td className="px-4 py-3">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleScanImage(scan.image_id);
-                      }}
-                      className="p-1.5 rounded hover:bg-[var(--bg-secondary)] transition-colors"
-                      title="Rescan"
-                    >
-                      🔄
-                    </button>
-                  </td>
+          <div className="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between">
+            <h3 className="font-medium">Vulnerability Scans</h3>
+            <span className="text-sm text-[var(--text-tertiary)]">{filteredScans.length} scans</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-[var(--bg-tertiary)]">
+                  <th className="text-left px-4 py-3 text-sm font-medium">Image</th>
+                  <th className="text-left px-4 py-3 text-sm font-medium">Status</th>
+                  <th className="text-center px-4 py-3 text-sm font-medium">Critical</th>
+                  <th className="text-center px-4 py-3 text-sm font-medium">High</th>
+                  <th className="text-center px-4 py-3 text-sm font-medium">Medium</th>
+                  <th className="text-center px-4 py-3 text-sm font-medium">Low</th>
+                  <th className="text-center px-4 py-3 text-sm font-medium">Total</th>
+                  <th className="text-left px-4 py-3 text-sm font-medium">Last Scan</th>
+                  <th className="text-left px-4 py-3 text-sm font-medium">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {filteredScans.map(scan => (
+                  <tr
+                    key={scan.image_id}
+                    className="border-t border-[var(--border)] hover:bg-[var(--bg-tertiary)] cursor-pointer"
+                    onClick={() => setDetailsModal({ imageId: scan.image_id, imageName: scan.image_name })}
+                  >
+                    <td className="px-4 py-3">
+                      <code className="text-sm">{scan.image_name}</code>
+                    </td>
+                    <td className="px-4 py-3">
+                      {getStatusBadge(scan)}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <SeverityBadge severity="critical" count={getSeverityCount(scan, 'critical')} />
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <SeverityBadge severity="high" count={getSeverityCount(scan, 'high')} />
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <SeverityBadge severity="medium" count={getSeverityCount(scan, 'medium')} />
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <SeverityBadge severity="low" count={getSeverityCount(scan, 'low')} />
+                    </td>
+                    <td className="px-4 py-3 text-center font-medium">{scan.total_vulnerabilities}</td>
+                    <td className="px-4 py-3 text-sm text-[var(--text-tertiary)]">
+                      {new Date(scan.scanned_at).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleScanImage(scan.image_id);
+                        }}
+                        className="px-2 py-1 text-sm rounded hover:bg-[var(--bg-secondary)] transition-colors"
+                        title="Rescan"
+                      >
+                        🔄
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

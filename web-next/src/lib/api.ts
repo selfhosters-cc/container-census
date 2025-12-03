@@ -116,14 +116,14 @@ export const getNotificationLog = (limit?: number, unread?: boolean) => {
   const params = new URLSearchParams();
   if (limit) params.set('limit', String(limit));
   if (unread) params.set('unread', 'true');
-  return fetchApi<import('@/types').NotificationLog[]>(`/notifications/log?${params}`);
+  return fetchApi<import('@/types').NotificationLog[]>(`/notifications/logs?${params}`);
 };
 export const markNotificationRead = (id: number) =>
-  fetchApi<void>(`/notifications/log/${id}/read`, { method: 'PUT' });
+  fetchApi<void>(`/notifications/logs/${id}/read`, { method: 'PUT' });
 export const markAllNotificationsRead = () =>
-  fetchApi<void>('/notifications/log/read-all', { method: 'POST' });
+  fetchApi<void>('/notifications/logs/read-all', { method: 'PUT' });
 export const clearOldNotifications = () =>
-  fetchApi<void>('/notifications/log/clear', { method: 'DELETE' });
+  fetchApi<void>('/notifications/logs/clear', { method: 'DELETE' });
 
 export const getNotificationSilences = () =>
   fetchApi<import('@/types').NotificationSilence[]>('/notifications/silences');
@@ -160,3 +160,40 @@ export const getMetrics = async () => {
   const response = await fetch('/metrics');
   return response.text();
 };
+
+// Scan
+export const triggerScan = () =>
+  fetchApi<void>('/scan', { method: 'POST' });
+
+// Telemetry
+export const submitTelemetry = () =>
+  fetchApi<void>('/telemetry/submit', { method: 'POST' });
+
+// Container logs
+export const getContainerLogs = (hostId: number, containerId: string, tail?: number) =>
+  fetchApi<{ logs: string }>(`/containers/${hostId}/${containerId}/logs${tail ? `?tail=${tail}` : ''}`);
+
+// Container updates (uses container name, not ID)
+export const checkContainerUpdate = (hostId: number, containerName: string) =>
+  fetchApi<{ available: boolean; message?: string }>(`/containers/${hostId}/${encodeURIComponent(containerName)}/check-update`, { method: 'POST' });
+export const updateContainer = (hostId: number, containerName: string) =>
+  fetchApi<{ success: boolean; message?: string; new_container_id?: string }>(`/containers/${hostId}/${encodeURIComponent(containerName)}/update`, { method: 'POST' });
+
+// Bulk update operations
+export const bulkCheckUpdates = (containers: Array<{ host_id: number; container_id: string }>) =>
+  fetchApi<Record<string, { available: boolean; message?: string }>>('/containers/bulk-check-updates', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ containers }),
+  });
+
+export const bulkUpdate = (containers: Array<{ host_id: number; container_id: string }>) =>
+  fetchApi<Record<string, { success: boolean; error?: string; new_container_id?: string }>>('/containers/bulk-update', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ containers }),
+  });
+
+// Vulnerability trends
+export const getVulnerabilityTrends = () =>
+  fetchApi<{ date: string; critical: number; high: number; medium: number; low: number }[]>('/vulnerabilities/trends');

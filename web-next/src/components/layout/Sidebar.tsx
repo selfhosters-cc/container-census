@@ -18,7 +18,6 @@ const mainNavItems: NavItem[] = [
   { href: '/containers', label: 'Containers', icon: '📦' },
   { href: '/hosts', label: 'Hosts', icon: '🖥️' },
   { href: '/security', label: 'Security', icon: '🛡️' },
-  { href: '/monitoring', label: 'Monitoring', icon: '📈' },
 ];
 
 const bottomNavItems: NavItem[] = [

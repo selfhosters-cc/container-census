@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getContainers, getHosts, getVulnerabilitySummary, getNotificationStatus } from '@/lib/api';
-import type { Container, Host, VulnerabilitySummary } from '@/types';
+import { getContainers, getHosts, getNotificationStatus } from '@/lib/api';
+import type { Container, Host } from '@/types';
 
 function StatCard({ label, value, icon, color = 'text-[var(--text-primary)]' }: {
   label: string;
@@ -158,22 +158,19 @@ function RecentContainers({ containers }: { containers: Container[] }) {
 export default function DashboardPage() {
   const [containers, setContainers] = useState<Container[]>([]);
   const [hosts, setHosts] = useState<Host[]>([]);
-  const [vulnSummary, setVulnSummary] = useState<VulnerabilitySummary | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadData() {
       try {
-        const [containersData, hostsData, vulnData, notifStatus] = await Promise.all([
+        const [containersData, hostsData, notifStatus] = await Promise.all([
           getContainers(),
           getHosts(),
-          getVulnerabilitySummary().catch(() => null),
           getNotificationStatus().catch(() => ({ unread_count: 0 })),
         ]);
         setContainers(containersData);
         setHosts(hostsData);
-        setVulnSummary(vulnData);
         setUnreadCount(notifStatus.unread_count);
       } catch (error) {
         console.error('Failed to load dashboard data:', error);
@@ -221,35 +218,6 @@ export default function DashboardPage() {
           color="text-[var(--danger)]"
         />
       </div>
-
-      {/* Vulnerability Stats */}
-      {vulnSummary && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard
-            label="Critical Vulnerabilities"
-            value={vulnSummary.critical_count ?? 0}
-            icon="🚨"
-            color={(vulnSummary.critical_count ?? 0) > 0 ? 'text-[var(--danger)]' : 'text-[var(--text-primary)]'}
-          />
-          <StatCard
-            label="High Vulnerabilities"
-            value={vulnSummary.high_count ?? 0}
-            icon="⚠️"
-            color={(vulnSummary.high_count ?? 0) > 0 ? 'text-[var(--warning)]' : 'text-[var(--text-primary)]'}
-          />
-          <StatCard
-            label="Scanned Images"
-            value={`${vulnSummary.scanned_images ?? 0}/${vulnSummary.total_images ?? 0}`}
-            icon="🔍"
-          />
-          <StatCard
-            label="Unread Notifications"
-            value={unreadCount}
-            icon="🔔"
-            color={unreadCount > 0 ? 'text-[var(--accent)]' : 'text-[var(--text-primary)]'}
-          />
-        </div>
-      )}
 
       {/* Charts and Lists */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

@@ -30,7 +30,10 @@ import type {
 type Tab = 'log' | 'rules' | 'channels' | 'silences';
 
 function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleString();
+  if (!dateStr) return 'Unknown';
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return 'Unknown';
+  return date.toLocaleString();
 }
 
 function EventTypeBadge({ type }: { type: string }) {
@@ -77,7 +80,7 @@ function NotificationLogList({ logs, onMarkRead }: NotificationLogListProps) {
             <div className="flex-1">
               <div className="flex items-center gap-2 mb-1">
                 <EventTypeBadge type={log.event_type} />
-                <span className="text-xs text-[var(--text-tertiary)]">{formatDate(log.created_at)}</span>
+                <span className="text-xs text-[var(--text-tertiary)]">{formatDate(log.sent_at)}</span>
               </div>
               <div className="font-medium">{log.container_name || 'System'}</div>
               <div className="text-sm text-[var(--text-tertiary)]">{log.message}</div>

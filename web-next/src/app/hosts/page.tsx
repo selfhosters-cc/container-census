@@ -315,7 +315,7 @@ export default function HostsPage() {
                 <th className="text-left px-4 py-3 text-sm font-medium">Address</th>
                 <th className="text-left px-4 py-3 text-sm font-medium">Status</th>
                 <th className="text-left px-4 py-3 text-sm font-medium">Stats</th>
-                <th className="text-left px-4 py-3 text-sm font-medium">Containers</th>
+                <th className="text-left px-4 py-3 text-sm font-medium">Running</th>
                 <th className="text-left px-4 py-3 text-sm font-medium">Last Seen</th>
                 <th className="text-left px-4 py-3 text-sm font-medium">Actions</th>
               </tr>
@@ -364,7 +364,7 @@ export default function HostsPage() {
                   </td>
                   <td className="px-4 py-3">
                     <span className="text-sm">
-                      {host.running_count ?? 0}/{host.container_count ?? 0}
+                      {host.running_count ?? 0}/{host.container_count ?? 0} running
                     </span>
                   </td>
                   <td className="px-4 py-3 text-sm text-[var(--text-tertiary)]">

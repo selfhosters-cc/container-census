@@ -301,7 +301,11 @@ func (s *Server) setupRoutes() {
 	// Serve static files with selective authentication
 	// Login pages are public, everything else requires auth
 	// Add cache control headers for JS files to ensure updates are seen
-	staticFileServer := http.FileServer(http.Dir("./web"))
+	webDir := os.Getenv("WEB_DIR")
+	if webDir == "" {
+		webDir = "./web"
+	}
+	staticFileServer := http.FileServer(http.Dir(webDir))
 	noCacheFileServer := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// For JS files, set cache headers to force revalidation
 		if strings.HasSuffix(r.URL.Path, ".js") {
