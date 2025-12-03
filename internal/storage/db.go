@@ -609,18 +609,21 @@ func (db *DB) AddHost(host models.Host) (int64, error) {
 // GetHosts returns all hosts
 func (db *DB) GetHosts() ([]models.Host, error) {
 	rows, err := db.conn.Query(`
+		WITH latest_scan_per_host AS (
+			SELECT host_id, MAX(scanned_at) as max_scanned_at
+			FROM containers
+			GROUP BY host_id
+		)
 		SELECT
 			h.id, h.name, h.address, h.description, h.host_type, h.agent_token, h.agent_status,
 			h.agent_version, h.last_seen, h.enabled, h.collect_stats, h.created_at, h.updated_at,
-			COUNT(DISTINCT c.id) as container_count,
-			COUNT(DISTINCT CASE WHEN c.state = 'running' THEN c.id END) as running_count
+			COUNT(c.id) as container_count,
+			COUNT(CASE WHEN c.state = 'running' THEN c.id END) as running_count
 		FROM hosts h
-		LEFT JOIN (
-			SELECT host_id, id, state
-			FROM containers
-			WHERE scanned_at = (SELECT MAX(scanned_at) FROM containers c2 WHERE c2.id = containers.id AND c2.host_id = containers.host_id)
-		) c ON h.id = c.host_id
-		GROUP BY h.id
+		LEFT JOIN latest_scan_per_host ls ON h.id = ls.host_id
+		LEFT JOIN containers c ON c.host_id = h.id AND c.scanned_at = ls.max_scanned_at
+		GROUP BY h.id, h.name, h.address, h.description, h.host_type, h.agent_token, h.agent_status,
+			h.agent_version, h.last_seen, h.enabled, h.collect_stats, h.created_at, h.updated_at
 		ORDER BY h.name
 	`)
 	if err != nil {
