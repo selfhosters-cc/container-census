@@ -10,31 +10,14 @@ interface AppLayoutProps {
 }
 
 export default function AppLayout({ children }: AppLayoutProps) {
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
-
-  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
-  };
-
   const handleScan = async () => {
-    try {
-      await triggerScan();
-      showToast('Scan triggered successfully');
-    } catch (error) {
-      console.error('Failed to trigger scan:', error);
-      showToast('Failed to trigger scan', 'error');
-    }
+    // Scan progress is now handled by Header component's toast system
+    await triggerScan();
   };
 
   const handleTelemetry = async () => {
-    try {
-      await submitTelemetry();
-      showToast('Telemetry submitted successfully');
-    } catch (error) {
-      console.error('Failed to submit telemetry:', error);
-      showToast('Failed to submit telemetry', 'error');
-    }
+    // Telemetry feedback could be added to Header's toast system if needed
+    await submitTelemetry();
   };
 
   return (
@@ -46,17 +29,6 @@ export default function AppLayout({ children }: AppLayoutProps) {
           {children}
         </main>
       </div>
-
-      {/* Toast notification */}
-      {toast && (
-        <div
-          className={`fixed bottom-4 right-4 px-4 py-2 rounded-lg text-white shadow-lg z-50 transition-opacity ${
-            toast.type === 'success' ? 'bg-[var(--success)]' : 'bg-[var(--danger)]'
-          }`}
-        >
-          {toast.message}
-        </div>
-      )}
     </div>
   );
 }

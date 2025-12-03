@@ -17,6 +17,8 @@ export default function Header({ onScan, onTelemetry }: HeaderProps) {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [scanToasts, setScanToasts] = useState<{ id: number; message: string; type: 'info' | 'success' | 'error' }[]>([]);
+  const toastIdCounter = useRef(0);
   const notificationRef = useRef<HTMLDivElement>(null);
   const helpRef = useRef<HTMLDivElement>(null);
 
@@ -54,10 +56,31 @@ export default function Header({ onScan, onTelemetry }: HeaderProps) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const addToast = (message: string, type: 'info' | 'success' | 'error', duration: number = 3000) => {
+    const id = toastIdCounter.current++;
+    setScanToasts(prev => [...prev, { id, message, type }]);
+
+    setTimeout(() => {
+      setScanToasts(prev => prev.filter(toast => toast.id !== id));
+    }, duration);
+
+    return id;
+  };
+
+  const removeToast = (id: number) => {
+    setScanToasts(prev => prev.filter(toast => toast.id !== id));
+  };
+
   const handleScan = async () => {
     setScanning(true);
+    const scanningToastId = addToast('Scanning all hosts...', 'info', 60000); // Long duration, will be replaced
     try {
       await onScan();
+      removeToast(scanningToastId); // Remove scanning toast immediately
+      addToast('Scan completed successfully!', 'success', 3000);
+    } catch (error) {
+      removeToast(scanningToastId); // Remove scanning toast immediately
+      addToast('Scan failed. Please try again.', 'error', 5000);
     } finally {
       setScanning(false);
     }
@@ -218,6 +241,44 @@ export default function Header({ onScan, onTelemetry }: HeaderProps) {
           )}
         </div>
       </div>
+
+      {/* Toast Notifications Stack */}
+      <div className="fixed bottom-4 right-4 z-50 flex flex-col-reverse gap-2 pointer-events-none">
+        {scanToasts.map((toast, index) => (
+          <div
+            key={toast.id}
+            className={`px-4 py-3 rounded-lg shadow-lg pointer-events-auto transition-all duration-300 ease-in-out ${
+              toast.type === 'success' ? 'bg-green-600 text-white' :
+              toast.type === 'error' ? 'bg-red-600 text-white' :
+              'bg-blue-600 text-white'
+            }`}
+            style={{
+              animation: 'slideInRight 0.3s ease-out',
+              opacity: 1,
+            }}
+          >
+            <div className="flex items-center gap-2">
+              {toast.type === 'info' && <span className="animate-spin">⏳</span>}
+              {toast.type === 'success' && <span>✅</span>}
+              {toast.type === 'error' && <span>❌</span>}
+              <span>{toast.message}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <style jsx>{`
+        @keyframes slideInRight {
+          from {
+            transform: translateX(100%);
+            opacity: 0;
+          }
+          to {
+            transform: translateX(0);
+            opacity: 1;
+          }
+        }
+      `}</style>
     </header>
   );
 }
