@@ -197,3 +197,15 @@ export const bulkUpdate = (containers: Array<{ host_id: number; container_id: st
 // Vulnerability trends
 export const getVulnerabilityTrends = () =>
   fetchApi<{ date: string; critical: number; high: number; medium: number; low: number }[]>('/vulnerabilities/trends');
+
+// Container lifecycle
+export const getContainerLifecycleEvents = (hostId: number, containerName: string) =>
+  fetchApi<import('@/types').ContainerLifecycleEvent[]>(
+    `/containers/lifecycle/${hostId}/${encodeURIComponent(containerName)}`
+  );
+
+export const getContainerLifecycleSummaries = (limit: number = 200, hostId?: number) => {
+  const params = new URLSearchParams({ limit: limit.toString() });
+  if (hostId) params.append('host_id', hostId.toString());
+  return fetchApi<import('@/types').ContainerLifecycleSummary[]>(`/containers/lifecycle?${params}`);
+};

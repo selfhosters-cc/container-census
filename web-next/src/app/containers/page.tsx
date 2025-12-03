@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
-import { getContainers, getHosts, startContainer, stopContainer, restartContainer, removeContainer, getContainerLogs, getContainerStats, updateContainer, bulkCheckUpdates, bulkUpdate } from '@/lib/api';
-import type { Container, Host, ContainerStatsPoint } from '@/types';
+import { getContainers, getHosts, startContainer, stopContainer, restartContainer, removeContainer, getContainerLogs, getContainerStats, updateContainer, bulkCheckUpdates, bulkUpdate, getContainerLifecycleEvents, getContainerLifecycleSummaries } from '@/lib/api';
+import type { Container, Host, ContainerStatsPoint, ContainerLifecycleEvent, ContainerLifecycleSummary } from '@/types';
 
 // Chart.js imports (will be loaded from CDN in production, this is for types)
 declare const Chart: {
@@ -13,17 +13,17 @@ declare const Chart: {
   getChart: (id: string | HTMLCanvasElement) => { destroy: () => void } | undefined;
 };
 
-function formatUptime(startedAt: string | undefined): string {
+function formatUptime(startedAt: string | undefined, endAt?: string): string {
   if (!startedAt) return '';
 
-  const now = new Date();
+  const end = endAt ? new Date(endAt) : new Date();
   const started = new Date(startedAt);
 
   if (isNaN(started.getTime()) || started.getFullYear() < 2000) {
     return '';
   }
 
-  const diff = now.getTime() - started.getTime();
+  const diff = end.getTime() - started.getTime();
   if (diff < 0) return '';
 
   const seconds = Math.floor(diff / 1000);
@@ -450,6 +450,225 @@ function StatsModal({ container, onClose }: { container: Container | null; onClo
                 <div className="h-48">
                   <canvas ref={memChartRef}></canvas>
                 </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// History Modal Component
+function HistoryModal({ container, onClose }: { container: Container | null; onClose: () => void }) {
+  const [events, setEvents] = useState<ContainerLifecycleEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  // Fetch lifecycle events when container changes
+  useEffect(() => {
+    if (container) {
+      setLoading(true);
+      setError('');
+      getContainerLifecycleEvents(container.host_id, container.name)
+        .then(data => {
+          setEvents(data || []);
+        })
+        .catch(err => {
+          console.error('[HistoryModal] Error fetching events:', err);
+          setError(err.message || 'Failed to load history');
+        })
+        .finally(() => setLoading(false));
+    }
+  }, [container]);
+
+  // Helper function to get event icon
+  const getEventIcon = (eventType: string) => {
+    switch (eventType) {
+      case 'first_seen': return '🎉';
+      case 'started': case 'resumed': return '▶️';
+      case 'stopped': return '⏹️';
+      case 'paused': return '⏸️';
+      case 'restarted': return '⟳';
+      case 'image_updated': return '📦';
+      case 'disappeared': return '👻';
+      case 'reappeared': return '✨';
+      case 'state_change': return '🔄';
+      case 'last_seen': return '📍';
+      default: return '•';
+    }
+  };
+
+  // Helper function to get event color
+  const getEventColor = (eventType: string) => {
+    if (['started', 'resumed', 'reappeared'].includes(eventType)) return 'text-green-500';
+    if (['stopped', 'disappeared'].includes(eventType)) return 'text-red-500';
+    if (['paused', 'restarted'].includes(eventType)) return 'text-yellow-500';
+    if (['image_updated', 'first_seen'].includes(eventType)) return 'text-blue-500';
+    return 'text-gray-500';
+  };
+
+  // Calculate summary stats
+  const summaryStats = useMemo(() => {
+    const stateChanges = events.filter(e =>
+      ['started', 'stopped', 'paused', 'resumed', 'restarted'].includes(e.event_type)
+    ).length;
+
+    const imageUpdates = events.filter(e => e.event_type === 'image_updated').length;
+
+    // Calculate uptime from first to last event
+    const firstEvent = events[events.length - 1]; // Oldest (events are reverse chronological)
+    const lastEvent = events[0]; // Newest
+    const uptimeDuration = firstEvent && lastEvent
+      ? new Date(lastEvent.timestamp).getTime() - new Date(firstEvent.timestamp).getTime()
+      : 0;
+
+    return {
+      totalEvents: events.length,
+      stateChanges,
+      imageUpdates,
+      uptimeDuration
+    };
+  }, [events]);
+
+  // Format uptime duration
+  const formatDuration = (ms: number) => {
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (days > 0) {
+      const remainingHours = hours % 24;
+      return `${days}d ${remainingHours}h`;
+    }
+    if (hours > 0) {
+      const remainingMins = minutes % 60;
+      return `${hours}h ${remainingMins}m`;
+    }
+    if (minutes > 0) {
+      return `${minutes}m`;
+    }
+    return `${seconds}s`;
+  };
+
+  // Format timestamp
+  const formatTimestamp = (timestamp: string) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const seconds = Math.floor(diff / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    let relative = '';
+    if (days > 0) relative = `${days}d ago`;
+    else if (hours > 0) relative = `${hours}h ago`;
+    else if (minutes > 0) relative = `${minutes}m ago`;
+    else relative = `${seconds}s ago`;
+
+    const absolute = date.toLocaleString();
+
+    return { relative, absolute };
+  };
+
+  if (!container) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg w-full max-w-4xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="p-4 border-b border-[var(--border)] flex justify-between items-center">
+          <div>
+            <h2 className="text-xl font-bold">Container History</h2>
+            <div className="text-sm text-[var(--text-tertiary)]">{container.name}</div>
+          </div>
+          <button onClick={onClose} className="text-2xl hover:opacity-70">×</button>
+        </div>
+
+        {/* Body - Summary Stats + Timeline */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-6">
+          {loading && (
+            <div className="text-[var(--text-tertiary)]">Loading history...</div>
+          )}
+          {error && (
+            <div className="text-red-500">Error: {error}</div>
+          )}
+          {!loading && !error && (
+            <>
+              {/* Summary Stats Grid */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="bg-[var(--bg-tertiary)] rounded-lg p-3">
+                  <div className="text-2xl font-bold">{summaryStats.totalEvents}</div>
+                  <div className="text-sm text-[var(--text-secondary)]">Total Events</div>
+                </div>
+                <div className="bg-[var(--bg-tertiary)] rounded-lg p-3">
+                  <div className="text-2xl font-bold">{summaryStats.stateChanges}</div>
+                  <div className="text-sm text-[var(--text-secondary)]">State Changes</div>
+                </div>
+                <div className="bg-[var(--bg-tertiary)] rounded-lg p-3">
+                  <div className="text-2xl font-bold">{summaryStats.uptimeDuration > 0 ? formatDuration(summaryStats.uptimeDuration) : 'N/A'}</div>
+                  <div className="text-sm text-[var(--text-secondary)]">Lifetime</div>
+                </div>
+                <div className="bg-[var(--bg-tertiary)] rounded-lg p-3">
+                  <div className="text-2xl font-bold">{summaryStats.imageUpdates}</div>
+                  <div className="text-sm text-[var(--text-secondary)]">Image Updates</div>
+                </div>
+              </div>
+
+              {/* Timeline */}
+              <div>
+                <h3 className="text-lg font-semibold mb-3">Event Timeline ({events.length} events)</h3>
+                {events.length === 0 ? (
+                  <div className="text-[var(--text-tertiary)] bg-[var(--bg-tertiary)] rounded-lg p-4 text-center">
+                    No events recorded for this container
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {events.map((event, idx) => {
+                      const time = formatTimestamp(event.timestamp);
+                      const icon = getEventIcon(event.event_type);
+                      const color = getEventColor(event.event_type);
+
+                      return (
+                        <div key={idx} className="bg-[var(--bg-tertiary)] rounded-lg p-3 hover:bg-[var(--bg-hover)] transition-colors">
+                          <div className="flex items-start gap-3">
+                            <div className={`text-2xl ${color}`}>{icon}</div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className={`font-medium ${color}`}>{event.event_type.replace(/_/g, ' ').toUpperCase()}</span>
+                                <span className="text-xs text-[var(--text-tertiary)]" title={time.absolute}>
+                                  {time.relative}
+                                </span>
+                              </div>
+                              {event.description && (
+                                <div className="text-sm text-[var(--text-secondary)] mt-1">
+                                  {event.description}
+                                </div>
+                              )}
+                              {event.old_state && event.new_state && (
+                                <div className="text-xs text-[var(--text-tertiary)] mt-1">
+                                  State: {event.old_state} → {event.new_state}
+                                </div>
+                              )}
+                              {event.old_image_tag && event.new_image_tag && (
+                                <div className="text-xs text-[var(--text-tertiary)] mt-1">
+                                  Image: {event.old_image_tag} → {event.new_image_tag}
+                                </div>
+                              )}
+                              {event.restart_count !== undefined && event.restart_count > 0 && (
+                                <div className="text-xs text-[var(--text-tertiary)] mt-1">
+                                  Restart count: {event.restart_count}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </>
           )}
@@ -895,13 +1114,15 @@ function UpdateModal({ container, onClose, onUpdate }: { container: Container | 
 
 interface ContainerCardProps {
   container: Container;
+  lifecycleSummary?: ContainerLifecycleSummary;
   onAction: () => void;
   onViewLogs: (container: Container) => void;
   onViewStats: (container: Container) => void;
+  onViewHistory: (container: Container) => void;
   onViewUpdate: (container: Container) => void;
 }
 
-function ContainerCard({ container, onAction, onViewLogs, onViewStats, onViewUpdate }: ContainerCardProps) {
+function ContainerCard({ container, lifecycleSummary, onAction, onViewLogs, onViewStats, onViewHistory, onViewUpdate }: ContainerCardProps) {
   const [loading, setLoading] = useState<string | null>(null);
 
   const isRunning = container.state === 'running';
@@ -915,7 +1136,17 @@ function ContainerCard({ container, onAction, onViewLogs, onViewStats, onViewUpd
   const memoryPercent = (container.memory_percent ?? 0) > 0 ? (container.memory_percent ?? 0).toFixed(1) : '0';
 
   const stateIcon = isRunning ? '✅' : isStopped ? '⏹️' : isPaused ? '⏸️' : '❓';
-  const uptime = isRunning && container.started_at ? formatUptime(container.started_at) : '';
+
+  // Calculate current uptime (time since container started running)
+  let uptime = '';
+  if (isRunning && lifecycleSummary?.last_started) {
+    uptime = formatUptime(lifecycleSummary.last_started);
+  }
+
+  // Calculate lifetime from lifecycle data (total time tracked, from first_seen to now)
+  const lifetime = lifecycleSummary && lifecycleSummary.first_seen
+    ? formatUptime(lifecycleSummary.first_seen)
+    : null;
 
   const handleStart = async () => {
     setLoading('start');
@@ -986,7 +1217,13 @@ function ContainerCard({ container, onAction, onViewLogs, onViewStats, onViewUpd
                 {uptime && (
                   <>
                     <span>•</span>
-                    <span>⏱️ {uptime}</span>
+                    <span title="Current uptime">⏱️ {uptime}</span>
+                  </>
+                )}
+                {lifetime && (
+                  <>
+                    <span>•</span>
+                    <span title="Total lifetime (first seen to last seen)">📅 {lifetime}</span>
                   </>
                 )}
               </div>
@@ -1093,6 +1330,14 @@ function ContainerCard({ container, onAction, onViewLogs, onViewStats, onViewUpd
           </button>
         )}
 
+        {/* History button - always available */}
+        <button
+          onClick={() => onViewHistory(container)}
+          className="px-3 py-1.5 text-sm border border-[var(--border)] text-[var(--text-secondary)] rounded hover:bg-[var(--bg-tertiary)] transition-colors"
+        >
+          📜 History
+        </button>
+
         {isRunning && (
           <>
             <button
@@ -1155,23 +1400,27 @@ function ContainerCard({ container, onAction, onViewLogs, onViewStats, onViewUpd
 export default function ContainersPage() {
   const [containers, setContainers] = useState<Container[]>([]);
   const [hosts, setHosts] = useState<Host[]>([]);
+  const [lifecycleSummaries, setLifecycleSummaries] = useState<ContainerLifecycleSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [hostFilter, setHostFilter] = useState('');
   const [stateFilter, setStateFilter] = useState('');
   const [logsContainer, setLogsContainer] = useState<Container | null>(null);
   const [statsContainer, setStatsContainer] = useState<Container | null>(null);
+  const [historyContainer, setHistoryContainer] = useState<Container | null>(null);
   const [updateContainer, setUpdateContainer] = useState<Container | null>(null);
   const [showBulkUpdateModal, setShowBulkUpdateModal] = useState(false);
 
   const loadData = async () => {
     try {
-      const [containersData, hostsData] = await Promise.all([
+      const [containersData, hostsData, lifecycleData] = await Promise.all([
         getContainers(),
         getHosts(),
+        getContainerLifecycleSummaries().catch(() => []), // Don't fail if lifecycle data unavailable
       ]);
       setContainers(containersData);
       setHosts(hostsData);
+      setLifecycleSummaries(lifecycleData);
     } catch (error) {
       console.error('Failed to load data:', error);
     } finally {
@@ -1221,6 +1470,16 @@ export default function ContainersPage() {
     stopped: containers.filter(c => c.state === 'exited').length,
     paused: containers.filter(c => c.state === 'paused').length,
   }), [containers]);
+
+  // Create a lookup map for lifecycle data by container name and host
+  const lifecycleMap = useMemo(() => {
+    const map = new Map<string, ContainerLifecycleSummary>();
+    lifecycleSummaries.forEach(summary => {
+      const key = `${summary.host_id}-${summary.container_name}`;
+      map.set(key, summary);
+    });
+    return map;
+  }, [lifecycleSummaries]);
 
   if (loading) {
     return (
@@ -1288,22 +1547,30 @@ export default function ContainersPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
-          {filteredContainers.map(container => (
-            <ContainerCard
-              key={`${container.host_id}-${container.id}`}
-              container={container}
-              onAction={loadData}
-              onViewLogs={setLogsContainer}
-              onViewStats={setStatsContainer}
-              onViewUpdate={setUpdateContainer}
-            />
-          ))}
+          {filteredContainers.map(container => {
+            const lifecycleKey = `${container.host_id}-${container.name}`;
+            const lifecycleSummary = lifecycleMap.get(lifecycleKey);
+
+            return (
+              <ContainerCard
+                key={`${container.host_id}-${container.id}`}
+                container={container}
+                lifecycleSummary={lifecycleSummary}
+                onAction={loadData}
+                onViewLogs={setLogsContainer}
+                onViewStats={setStatsContainer}
+                onViewHistory={setHistoryContainer}
+                onViewUpdate={setUpdateContainer}
+              />
+            );
+          })}
         </div>
       )}
 
       {/* Modals */}
       <LogsModal container={logsContainer} onClose={() => setLogsContainer(null)} />
       <StatsModal container={statsContainer} onClose={() => setStatsContainer(null)} />
+      <HistoryModal container={historyContainer} onClose={() => setHistoryContainer(null)} />
       <UpdateModal container={updateContainer} onClose={() => setUpdateContainer(null)} onUpdate={loadData} />
       <BulkUpdateModal isOpen={showBulkUpdateModal} onClose={() => setShowBulkUpdateModal(false)} containers={containers} onUpdate={loadData} />
     </div>

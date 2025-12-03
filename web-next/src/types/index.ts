@@ -248,3 +248,36 @@ export interface DashboardStats {
   high_vulnerabilities: number;
   unread_notifications: number;
 }
+
+// Container lifecycle types
+export interface ContainerLifecycleSummary {
+  container_id: string;
+  container_name: string;
+  image: string;
+  host_id: number;
+  host_name: string;
+  first_seen: string;
+  last_seen: string;
+  last_started?: string;  // Time container last entered running state
+  current_state: string;
+  state_changes: number;
+  image_updates: number;
+  restart_events: number;
+  is_active: boolean;
+  total_scans: number;
+}
+
+export interface ContainerLifecycleEvent {
+  timestamp: string;
+  event_type: 'first_seen' | 'started' | 'stopped' | 'paused' | 'resumed' |
+              'restarted' | 'image_updated' | 'disappeared' | 'reappeared' |
+              'state_change' | 'last_seen';
+  old_state?: string;
+  new_state?: string;
+  old_image_tag?: string;
+  new_image_tag?: string;
+  old_image_sha?: string;
+  new_image_sha?: string;
+  description?: string;
+  restart_count?: number;
+}

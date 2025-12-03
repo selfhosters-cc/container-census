@@ -7,19 +7,21 @@ import (
 
 // Host represents a Docker host to scan
 type Host struct {
-	ID           int64     `json:"id"`
-	Name         string    `json:"name"`
-	Address      string    `json:"address"`      // e.g., "tcp://host:2376", "ssh://user@host", "agent://host:9876"
-	Description  string    `json:"description"`
-	HostType     string    `json:"host_type"`    // unix, tcp, ssh, agent
-	AgentToken   string    `json:"agent_token,omitempty"` // API token for agent authentication
-	AgentStatus  string    `json:"agent_status,omitempty"` // online, offline, unknown
-	AgentVersion string    `json:"agent_version,omitempty"` // version of the census agent
-	LastSeen     time.Time `json:"last_seen,omitempty"`
-	Enabled      bool      `json:"enabled"`
-	CollectStats bool      `json:"collect_stats"` // whether to collect CPU/memory stats for this host
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID             int64     `json:"id"`
+	Name           string    `json:"name"`
+	Address        string    `json:"address"`      // e.g., "tcp://host:2376", "ssh://user@host", "agent://host:9876"
+	Description    string    `json:"description"`
+	HostType       string    `json:"host_type"`    // unix, tcp, ssh, agent
+	AgentToken     string    `json:"agent_token,omitempty"` // API token for agent authentication
+	AgentStatus    string    `json:"agent_status,omitempty"` // online, offline, unknown
+	AgentVersion   string    `json:"agent_version,omitempty"` // version of the census agent
+	LastSeen       time.Time `json:"last_seen,omitempty"`
+	Enabled        bool      `json:"enabled"`
+	CollectStats   bool      `json:"collect_stats"` // whether to collect CPU/memory stats for this host
+	ContainerCount int       `json:"container_count,omitempty"` // total containers on this host
+	RunningCount   int       `json:"running_count,omitempty"`   // running containers on this host
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // Container represents a Docker container found on a host
@@ -395,6 +397,7 @@ type ContainerLifecycleSummary struct {
 	HostName        string    `json:"host_name"`
 	FirstSeen       time.Time `json:"first_seen"`
 	LastSeen        time.Time `json:"last_seen"`
+	LastStarted     time.Time `json:"last_started,omitempty"`     // Time container last entered running state
 	CurrentState    string    `json:"current_state"`
 	StateChanges    int       `json:"state_changes"`
 	ImageUpdates    int       `json:"image_updates"`

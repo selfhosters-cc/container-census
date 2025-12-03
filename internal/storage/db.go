@@ -609,9 +609,19 @@ func (db *DB) AddHost(host models.Host) (int64, error) {
 // GetHosts returns all hosts
 func (db *DB) GetHosts() ([]models.Host, error) {
 	rows, err := db.conn.Query(`
-		SELECT id, name, address, description, host_type, agent_token, agent_status, agent_version, last_seen, enabled, collect_stats, created_at, updated_at
-		FROM hosts
-		ORDER BY name
+		SELECT
+			h.id, h.name, h.address, h.description, h.host_type, h.agent_token, h.agent_status,
+			h.agent_version, h.last_seen, h.enabled, h.collect_stats, h.created_at, h.updated_at,
+			COUNT(DISTINCT c.id) as container_count,
+			COUNT(DISTINCT CASE WHEN c.state = 'running' THEN c.id END) as running_count
+		FROM hosts h
+		LEFT JOIN (
+			SELECT host_id, id, state
+			FROM containers
+			WHERE scanned_at = (SELECT MAX(scanned_at) FROM containers c2 WHERE c2.id = containers.id AND c2.host_id = containers.host_id)
+		) c ON h.id = c.host_id
+		GROUP BY h.id
+		ORDER BY h.name
 	`)
 	if err != nil {
 		return nil, err
@@ -624,8 +634,9 @@ func (db *DB) GetHosts() ([]models.Host, error) {
 		var lastSeen sql.NullTime
 		var agentToken, agentStatus, agentVersion sql.NullString
 		var collectStats sql.NullBool
+		var containerCount, runningCount int
 
-		if err := rows.Scan(&h.ID, &h.Name, &h.Address, &h.Description, &h.HostType, &agentToken, &agentStatus, &agentVersion, &lastSeen, &h.Enabled, &collectStats, &h.CreatedAt, &h.UpdatedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.Name, &h.Address, &h.Description, &h.HostType, &agentToken, &agentStatus, &agentVersion, &lastSeen, &h.Enabled, &collectStats, &h.CreatedAt, &h.UpdatedAt, &containerCount, &runningCount); err != nil {
 			return nil, err
 		}
 
@@ -646,6 +657,9 @@ func (db *DB) GetHosts() ([]models.Host, error) {
 		} else {
 			h.CollectStats = true // Default to true
 		}
+
+		h.ContainerCount = containerCount
+		h.RunningCount = runningCount
 
 		hosts = append(hosts, h)
 	}
@@ -1310,6 +1324,25 @@ func (db *DB) GetContainerLifecycleSummaries(limit int, hostFilter int64) ([]mod
 			SELECT host_id, MAX(scanned_at) as max_scan
 			FROM containers
 			GROUP BY host_id
+		),
+		state_changes AS (
+			SELECT
+				name,
+				host_id,
+				state,
+				scanned_at,
+				LAG(state) OVER (PARTITION BY name, host_id ORDER BY scanned_at) as prev_state
+			FROM containers
+			WHERE (? = 0 OR host_id = ?)
+		),
+		last_started AS (
+			SELECT
+				name,
+				host_id,
+				MAX(scanned_at) as last_start_time
+			FROM state_changes
+			WHERE state = 'running' AND (prev_state IS NULL OR prev_state != 'running')
+			GROUP BY name, host_id
 		)
 		SELECT
 			l.id,
@@ -1319,6 +1352,7 @@ func (db *DB) GetContainerLifecycleSummaries(limit int, hostFilter int64) ([]mod
 			l.host_name,
 			MIN(c.scanned_at) as first_seen,
 			MAX(c.scanned_at) as last_seen,
+			ls.last_start_time as last_started,
 			l.state as current_state,
 			COUNT(*) as total_scans,
 			COUNT(DISTINCT c.state) - 1 as state_changes,
@@ -1328,13 +1362,14 @@ func (db *DB) GetContainerLifecycleSummaries(limit int, hostFilter int64) ([]mod
 		FROM containers c
 		INNER JOIN latest_per_name l ON c.name = l.name AND c.host_id = l.host_id AND l.rn = 1
 		INNER JOIN host_latest h ON c.host_id = h.host_id
+		LEFT JOIN last_started ls ON c.name = ls.name AND c.host_id = ls.host_id
 		WHERE (? = 0 OR c.host_id = ?)
-		GROUP BY c.name, c.host_id, l.id, l.image, l.host_name, l.state, h.max_scan
+		GROUP BY c.name, c.host_id, l.id, l.image, l.host_name, l.state, h.max_scan, ls.last_start_time
 		ORDER BY last_seen DESC
 		LIMIT ?
 	`
 
-	rows, err := db.conn.Query(query, hostFilter, hostFilter, hostFilter, hostFilter, limit)
+	rows, err := db.conn.Query(query, hostFilter, hostFilter, hostFilter, hostFilter, hostFilter, hostFilter, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1344,12 +1379,12 @@ func (db *DB) GetContainerLifecycleSummaries(limit int, hostFilter int64) ([]mod
 	for rows.Next() {
 		var s models.ContainerLifecycleSummary
 		var isActive int
-		var firstSeenStr, lastSeenStr interface{}
+		var firstSeenStr, lastSeenStr, lastStartedStr interface{}
 
 		err := rows.Scan(
 			&s.ContainerID, &s.ContainerName, &s.Image,
 			&s.HostID, &s.HostName,
-			&firstSeenStr, &lastSeenStr, &s.CurrentState,
+			&firstSeenStr, &lastSeenStr, &lastStartedStr, &s.CurrentState,
 			&s.TotalScans,
 			&s.StateChanges, &s.ImageUpdates, &s.RestartEvents,
 			&isActive,
@@ -1381,6 +1416,21 @@ func (db *DB) GetContainerLifecycleSummaries(limit int, hostFilter int64) ([]mod
 			}
 		case time.Time:
 			s.LastSeen = v
+		}
+
+		switch v := lastStartedStr.(type) {
+		case string:
+			for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05.999999999-07:00", "2006-01-02 15:04:05"} {
+				if t, err := time.Parse(layout, v); err == nil {
+					s.LastStarted = t
+					break
+				}
+			}
+		case time.Time:
+			s.LastStarted = v
+		case nil:
+			// LastStarted can be NULL if container has never transitioned to running
+			s.LastStarted = time.Time{}
 		}
 
 		s.IsActive = isActive == 1
