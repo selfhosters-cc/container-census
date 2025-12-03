@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,7 +33,7 @@ type NPMInstance struct {
 	Name      string    `json:"name"`
 	URL       string    `json:"url"`
 	Email     string    `json:"email"`
-	Password  string    `json:"-"` // Don't expose password in JSON
+	Password  string    `json:"password,omitempty"` // Omit when empty, manually excluded in GET responses
 	Enabled   bool      `json:"enabled"`
 	LastSync  time.Time `json:"last_sync,omitempty"`
 	LastError string    `json:"last_error,omitempty"`
@@ -379,11 +380,28 @@ func (p *Plugin) rebuildMappings() {
 
 // matchContainer checks if a container matches an NPM proxy host
 func (p *Plugin) matchContainer(container models.Container, host ProxyHost) bool {
-	// Match by container IP + port
+	// Match by container IP + private port (Docker bridge network)
 	for _, nd := range container.NetworkDetails {
 		for _, port := range container.Ports {
 			if nd.IPAddress == host.ForwardHost && port.PrivatePort == host.ForwardPort {
 				return true
+			}
+		}
+	}
+
+	// Get the host's IP address(es) from the agent or local host
+	// This requires access to the host information
+	hostObj, err := p.deps.Hosts.GetHostByID(container.HostID)
+	if err == nil && hostObj != nil {
+		// Extract IP from address (e.g., "http://192.168.5.3:9876" -> "192.168.5.3")
+		hostIP := extractIPFromAddress(hostObj.Address)
+
+		// Match by host IP + public port (when NPM forwards to host:port)
+		if hostIP == host.ForwardHost {
+			for _, port := range container.Ports {
+				if port.PublicPort == host.ForwardPort {
+					return true
+				}
 			}
 		}
 	}
@@ -405,21 +423,63 @@ func (p *Plugin) matchContainer(container models.Container, host ProxyHost) bool
 	return false
 }
 
+// extractIPFromAddress extracts the IP address from various address formats
+func extractIPFromAddress(address string) string {
+	// Handle formats like:
+	// - "http://192.168.5.3:9876" -> "192.168.5.3"
+	// - "agent://192.168.5.3:9876" -> "192.168.5.3"
+	// - "192.168.5.3" -> "192.168.5.3"
+	// - "unix:///var/run/docker.sock" -> "" (not an IP)
+
+	// Remove protocol prefix
+	address = strings.TrimPrefix(address, "http://")
+	address = strings.TrimPrefix(address, "https://")
+	address = strings.TrimPrefix(address, "agent://")
+	address = strings.TrimPrefix(address, "tcp://")
+
+	// If it's a unix socket, return empty
+	if strings.HasPrefix(address, "unix://") {
+		return ""
+	}
+
+	// Split by colon to remove port
+	if idx := strings.Index(address, ":"); idx != -1 {
+		address = address[:idx]
+	}
+
+	return address
+}
+
 // HTTP Handlers
 
 func (p *Plugin) handleGetInstances(w http.ResponseWriter, r *http.Request) {
 	p.mu.RLock()
-	instances := make([]*NPMInstance, 0, len(p.instances))
+	type InstanceResponse struct {
+		ID             int64     `json:"id"`
+		Name           string    `json:"name"`
+		URL            string    `json:"url"`
+		Email          string    `json:"email"`
+		Enabled        bool      `json:"enabled"`
+		LastSync       time.Time `json:"last_sync,omitempty"`
+		LastError      string    `json:"last_error,omitempty"`
+		ProxyHostCount int       `json:"proxy_host_count"`
+	}
+
+	instances := make([]*InstanceResponse, 0, len(p.instances))
 	for _, inst := range p.instances {
+		// Count proxy hosts for this instance
+		proxyHostCount := len(p.proxyHosts[inst.ID])
+
 		// Don't include password
-		safe := &NPMInstance{
-			ID:        inst.ID,
-			Name:      inst.Name,
-			URL:       inst.URL,
-			Email:     inst.Email,
-			Enabled:   inst.Enabled,
-			LastSync:  inst.LastSync,
-			LastError: inst.LastError,
+		safe := &InstanceResponse{
+			ID:             inst.ID,
+			Name:           inst.Name,
+			URL:            inst.URL,
+			Email:          inst.Email,
+			Enabled:        inst.Enabled,
+			LastSync:       inst.LastSync,
+			LastError:      inst.LastError,
+			ProxyHostCount: proxyHostCount,
 		}
 		instances = append(instances, safe)
 	}
@@ -623,14 +683,27 @@ func (p *Plugin) handleGetProxyHosts(w http.ResponseWriter, r *http.Request) {
 	defer p.mu.RUnlock()
 
 	allHosts := make([]map[string]interface{}, 0)
+	containers := p.deps.Containers.GetContainers()
+
 	for instanceID, hosts := range p.proxyHosts {
 		inst := p.instances[instanceID]
 		for _, host := range hosts {
-			allHosts = append(allHosts, map[string]interface{}{
+			result := map[string]interface{}{
 				"instance_id":   instanceID,
 				"instance_name": inst.Name,
 				"host":          host,
-			})
+			}
+
+			// Try to find a matching container for this proxy host
+			for _, container := range containers {
+				if p.matchContainer(container, host) {
+					result["container_name"] = container.Name
+					result["host_name"] = container.HostName
+					break // Only match the first container found
+				}
+			}
+
+			allHosts = append(allHosts, result)
 		}
 	}
 

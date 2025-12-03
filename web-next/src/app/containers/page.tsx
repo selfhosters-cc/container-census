@@ -1445,6 +1445,9 @@ export default function ContainersPage() {
   }, []);
 
   const filteredContainers = useMemo(() => {
+    if (!Array.isArray(hosts) || !Array.isArray(containers)) {
+      return [];
+    }
     const validHostIds = new Set(hosts.map(h => h.id));
     return containers.filter(container => {
       // Filter out containers from deleted hosts
@@ -1464,20 +1467,27 @@ export default function ContainersPage() {
     });
   }, [containers, hosts, searchTerm, hostFilter, stateFilter]);
 
-  const stats = useMemo(() => ({
-    total: containers.length,
-    running: containers.filter(c => c.state === 'running').length,
-    stopped: containers.filter(c => c.state === 'exited').length,
-    paused: containers.filter(c => c.state === 'paused').length,
-  }), [containers]);
+  const stats = useMemo(() => {
+    if (!Array.isArray(containers)) {
+      return { total: 0, running: 0, stopped: 0, paused: 0 };
+    }
+    return {
+      total: containers.length,
+      running: containers.filter(c => c.state === 'running').length,
+      stopped: containers.filter(c => c.state === 'exited').length,
+      paused: containers.filter(c => c.state === 'paused').length,
+    };
+  }, [containers]);
 
   // Create a lookup map for lifecycle data by container name and host
   const lifecycleMap = useMemo(() => {
     const map = new Map<string, ContainerLifecycleSummary>();
-    lifecycleSummaries.forEach(summary => {
-      const key = `${summary.host_id}-${summary.container_name}`;
-      map.set(key, summary);
-    });
+    if (Array.isArray(lifecycleSummaries)) {
+      lifecycleSummaries.forEach(summary => {
+        const key = `${summary.host_id}-${summary.container_name}`;
+        map.set(key, summary);
+      });
+    }
     return map;
   }, [lifecycleSummaries]);
 
