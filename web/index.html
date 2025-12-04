@@ -1099,6 +1099,47 @@
                     </div>
                 </div>
 
+                <div class="settings-card">
+                    <h3>🔌 External Plugins</h3>
+                    <p class="settings-description">
+                        Install and manage external plugins to extend Container Census functionality.
+                        Plugins can add custom tabs, badges, API routes, and more.
+                    </p>
+
+                    <div class="plugin-install-section" style="margin-bottom: 25px; padding: 20px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px;">
+                        <h4 style="margin-top: 0;">Install New Plugin</h4>
+                        <p style="font-size: 14px; color: #6c757d; margin-bottom: 15px;">
+                            Provide a GitHub repository URL to install a plugin. The repository must contain a valid <code>plugin.yaml</code> file and release binaries.
+                        </p>
+                        <div style="display: flex; gap: 10px; align-items: flex-start;">
+                            <div style="flex: 1;">
+                                <input type="text" id="pluginRepoUrl" placeholder="https://github.com/username/census-plugin-example"
+                                       style="width: 100%; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; font-size: 14px;">
+                                <div style="font-size: 12px; color: #6c757d; margin-top: 5px;">
+                                    Example: <code>https://github.com/selfhosters-cc/container-census-plugin-graph</code>
+                                </div>
+                            </div>
+                            <button onclick="installPlugin()" class="btn btn-primary" style="white-space: nowrap;">
+                                Install Plugin
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="installed-plugins-section">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                            <h4 style="margin: 0;">Installed Plugins</h4>
+                            <button onclick="refreshPluginList()" class="btn btn-secondary" style="font-size: 13px; padding: 6px 12px;">
+                                🔄 Refresh
+                            </button>
+                        </div>
+                        <div id="pluginList" class="plugin-list">
+                            <div style="text-align: center; padding: 30px; color: #6c757d;">
+                                Loading plugins...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="settings-card" style="border: 2px solid #dc3545;">
                     <h3 style="color: #dc3545;">⚠️ Danger Zone</h3>
                     <p class="settings-description">
@@ -1762,6 +1803,11 @@
     <!-- Shepherd.js for onboarding tour -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/shepherd.js@11.2.0/dist/css/shepherd.css"/>
     <script src="https://cdn.jsdelivr.net/npm/shepherd.js@11.2.0/dist/js/shepherd.min.js"></script>
+
+    <!-- External plugin support -->
+    <script src="plugin-sdk.js?v=1"></script>
+    <script src="plugin-loader.js?v=1"></script>
+    <script src="plugin-management.js?v=1"></script>
 
     <script src="notifications.js?v=5"></script>
     <script src="onboarding.js?v=1"></script>

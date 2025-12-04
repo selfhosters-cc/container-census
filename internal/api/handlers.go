@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -297,6 +298,9 @@ func (s *Server) setupRoutes() {
 
 	// Plugin endpoints
 	s.setupPluginRoutes(api)
+
+	// Plugin asset serving (protected)
+	api.HandleFunc("/plugin-assets/{plugin_id}/{asset:.*}", s.handlePluginAsset).Methods("GET")
 
 	// Serve static files with selective authentication
 	// Login pages are public, everything else requires auth
@@ -2068,4 +2072,72 @@ func (s *Server) handleBulkUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, results)
+}
+
+// handlePluginAsset serves frontend assets for external plugins
+func (s *Server) handlePluginAsset(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	pluginID := vars["plugin_id"]
+	assetPath := vars["asset"]
+
+	// Prevent directory traversal
+	if strings.Contains(assetPath, "..") {
+		http.Error(w, "Invalid asset path", http.StatusBadRequest)
+		return
+	}
+
+	// Determine plugins directory (same logic as plugin manager)
+	pluginsDir := "/app/data/plugins"
+	if dataDir := os.Getenv("DATA_DIR"); dataDir != "" {
+		pluginsDir = dataDir + "/plugins"
+	} else if _, err := os.Stat("/app/data"); os.IsNotExist(err) {
+		// Running locally, not in Docker container
+		pluginsDir = "./data/plugins"
+	}
+
+	// Construct full path
+	fullPath := filepath.Join(pluginsDir, pluginID, "frontend", assetPath)
+
+	// Debug logging
+	log.Printf("[PluginAsset] Requested: plugin_id=%s, asset=%s", pluginID, assetPath)
+	log.Printf("[PluginAsset] Looking for file: %s", fullPath)
+
+	// Check if file exists
+	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		log.Printf("[PluginAsset] File not found: %s", fullPath)
+		http.Error(w, "Asset not found", http.StatusNotFound)
+		return
+	}
+
+	log.Printf("[PluginAsset] File found, serving: %s", fullPath)
+
+	// Set appropriate content type based on extension
+	ext := filepath.Ext(assetPath)
+	contentType := "application/octet-stream"
+	switch ext {
+	case ".js":
+		contentType = "application/javascript"
+	case ".css":
+		contentType = "text/css"
+	case ".html":
+		contentType = "text/html"
+	case ".json":
+		contentType = "application/json"
+	case ".png":
+		contentType = "image/png"
+	case ".jpg", ".jpeg":
+		contentType = "image/jpeg"
+	case ".svg":
+		contentType = "image/svg+xml"
+	case ".woff", ".woff2":
+		contentType = "font/woff2"
+	case ".ttf":
+		contentType = "font/ttf"
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	// Set CSP headers for security
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline';")
+
+	http.ServeFile(w, r, fullPath)
 }

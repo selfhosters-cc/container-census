@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"encoding/json"
 	"time"
 )
 
@@ -15,6 +16,19 @@ type PluginRecord struct {
 	Enabled     bool      `json:"enabled"`
 	InstalledAt time.Time `json:"installed_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	TabConfig   string    `json:"tab_config,omitempty"` // JSON string of tab configuration
+}
+
+// ExternalPluginRecord represents an external plugin with additional metadata
+type ExternalPluginRecord struct {
+	PluginRecord
+	BinaryPath      string            `json:"binary_path,omitempty"`
+	GRPCPort        int               `json:"grpc_port,omitempty"`
+	ProcessStatus   string            `json:"process_status,omitempty"` // running, stopped, failed
+	Permissions     []string          `json:"permissions,omitempty"`
+	FrontendBundle  string            `json:"frontend_bundle,omitempty"`
+	FrontendCSS     string            `json:"frontend_css,omitempty"`
+	TabConfig       map[string]string `json:"tab_config,omitempty"`
 }
 
 // initPluginSchema creates the plugin-related database tables
@@ -29,7 +43,15 @@ func (db *DB) initPluginSchema() error {
 		source_url TEXT,
 		enabled BOOLEAN NOT NULL DEFAULT 1,
 		installed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		-- External plugin fields
+		binary_path TEXT,
+		grpc_port INTEGER,
+		process_status TEXT,
+		permissions TEXT,
+		frontend_bundle TEXT,
+		frontend_css TEXT,
+		tab_config TEXT
 	);
 
 	-- Plugin key-value data storage (scoped per plugin)
@@ -59,7 +81,27 @@ func (db *DB) initPluginSchema() error {
 	`
 
 	_, err := db.conn.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Migration: Add columns if they don't exist (for existing databases)
+	migrations := []string{
+		`ALTER TABLE plugins ADD COLUMN binary_path TEXT`,
+		`ALTER TABLE plugins ADD COLUMN grpc_port INTEGER`,
+		`ALTER TABLE plugins ADD COLUMN process_status TEXT`,
+		`ALTER TABLE plugins ADD COLUMN permissions TEXT`,
+		`ALTER TABLE plugins ADD COLUMN frontend_bundle TEXT`,
+		`ALTER TABLE plugins ADD COLUMN frontend_css TEXT`,
+		`ALTER TABLE plugins ADD COLUMN tab_config TEXT`,
+	}
+
+	for _, migration := range migrations {
+		// Ignore errors - column may already exist
+		db.conn.Exec(migration)
+	}
+
+	return nil
 }
 
 // GetPlugin retrieves a plugin by ID
@@ -122,7 +164,7 @@ func (db *DB) SavePlugin(record *PluginRecord) error {
 // GetAllPlugins retrieves all plugin records
 func (db *DB) GetAllPlugins() ([]*PluginRecord, error) {
 	query := `
-		SELECT id, name, version, source_type, COALESCE(source_url, ''), enabled, installed_at, updated_at
+		SELECT id, name, version, source_type, COALESCE(source_url, ''), enabled, installed_at, updated_at, COALESCE(tab_config, '')
 		FROM plugins
 		ORDER BY name
 	`
@@ -145,6 +187,7 @@ func (db *DB) GetAllPlugins() ([]*PluginRecord, error) {
 			&record.Enabled,
 			&record.InstalledAt,
 			&record.UpdatedAt,
+			&record.TabConfig,
 		)
 		if err != nil {
 			return nil, err
@@ -311,4 +354,125 @@ func (db *DB) DeletePlugin(pluginID string) error {
 	}
 
 	return tx.Commit()
+}
+
+// GetExternalPlugin retrieves an external plugin with additional metadata
+func (db *DB) GetExternalPlugin(id string) (*ExternalPluginRecord, error) {
+	query := `
+		SELECT id, name, version, source_type, COALESCE(source_url, ''), enabled,
+		       installed_at, updated_at,
+		       COALESCE(binary_path, ''), COALESCE(grpc_port, 0), COALESCE(process_status, ''),
+		       COALESCE(permissions, ''), COALESCE(frontend_bundle, ''),
+		       COALESCE(frontend_css, ''), COALESCE(tab_config, '')
+		FROM plugins
+		WHERE id = ?
+	`
+
+	var record ExternalPluginRecord
+	var permissionsJSON, tabConfigJSON string
+
+	err := db.conn.QueryRow(query, id).Scan(
+		&record.ID,
+		&record.Name,
+		&record.Version,
+		&record.SourceType,
+		&record.SourceURL,
+		&record.Enabled,
+		&record.InstalledAt,
+		&record.UpdatedAt,
+		&record.BinaryPath,
+		&record.GRPCPort,
+		&record.ProcessStatus,
+		&permissionsJSON,
+		&record.FrontendBundle,
+		&record.FrontendCSS,
+		&tabConfigJSON,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse JSON fields
+	if permissionsJSON != "" {
+		if err := json.Unmarshal([]byte(permissionsJSON), &record.Permissions); err != nil {
+			// If unmarshal fails, log but continue with empty permissions
+			record.Permissions = []string{}
+		}
+	} else {
+		record.Permissions = []string{}
+	}
+
+	if tabConfigJSON != "" {
+		if err := json.Unmarshal([]byte(tabConfigJSON), &record.TabConfig); err != nil {
+			// If unmarshal fails, log but continue with empty config
+			record.TabConfig = make(map[string]string)
+		}
+	} else {
+		record.TabConfig = make(map[string]string)
+	}
+
+	return &record, nil
+}
+
+// SaveExternalPlugin saves or updates an external plugin record
+func (db *DB) SaveExternalPlugin(record *ExternalPluginRecord) error {
+	query := `
+		INSERT INTO plugins (
+			id, name, version, source_type, source_url, enabled, installed_at, updated_at,
+			binary_path, grpc_port, process_status, permissions, frontend_bundle, frontend_css, tab_config
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			name = excluded.name,
+			version = excluded.version,
+			source_type = excluded.source_type,
+			source_url = excluded.source_url,
+			binary_path = excluded.binary_path,
+			grpc_port = excluded.grpc_port,
+			process_status = excluded.process_status,
+			permissions = excluded.permissions,
+			frontend_bundle = excluded.frontend_bundle,
+			frontend_css = excluded.frontend_css,
+			tab_config = excluded.tab_config,
+			updated_at = excluded.updated_at
+	`
+
+	// Convert arrays/maps to JSON
+	permissionsJSON := ""
+	if len(record.Permissions) > 0 {
+		if permData, err := json.Marshal(record.Permissions); err == nil {
+			permissionsJSON = string(permData)
+		}
+	}
+
+	tabConfigJSON := ""
+	if len(record.TabConfig) > 0 {
+		if tabData, err := json.Marshal(record.TabConfig); err == nil {
+			tabConfigJSON = string(tabData)
+		}
+	}
+
+	_, err := db.conn.Exec(query,
+		record.ID,
+		record.Name,
+		record.Version,
+		record.SourceType,
+		record.SourceURL,
+		record.Enabled,
+		record.InstalledAt,
+		record.UpdatedAt,
+		record.BinaryPath,
+		record.GRPCPort,
+		record.ProcessStatus,
+		permissionsJSON,
+		record.FrontendBundle,
+		record.FrontendCSS,
+		tabConfigJSON,
+	)
+
+	return err
 }

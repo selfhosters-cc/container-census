@@ -202,7 +202,7 @@ export interface PluginInfo {
   version: string;
   author?: string;
   homepage?: string;
-  capabilities: string[];
+  capabilities: string[] | null | undefined;
   built_in: boolean;
   enabled: boolean;
 }

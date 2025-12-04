@@ -1,0 +1,358 @@
+syntax = "proto3";
+
+package census.plugin;
+option go_package = "github.com/selfhosters-cc/container-census/internal/plugins/proto";
+
+// Plugin service - implemented by external plugin processes
+service Plugin {
+  // Lifecycle methods
+  rpc Init(InitRequest) returns (InitResponse);
+  rpc Start(StartRequest) returns (StartResponse);
+  rpc Stop(StopRequest) returns (StopResponse);
+  rpc Healthcheck(HealthcheckRequest) returns (HealthcheckResponse);
+
+  // Capability methods
+  rpc GetInfo(InfoRequest) returns (InfoResponse);
+  rpc GetTab(TabRequest) returns (TabResponse);
+  rpc GetBadges(BadgesRequest) returns (BadgesResponse);
+  rpc HandleRoute(RouteRequest) returns (RouteResponse);
+  rpc EnrichContainer(EnrichRequest) returns (EnrichResponse);
+  rpc HandleEvent(EventRequest) returns (EventResponse);
+  rpc GetSettings(SettingsRequest) returns (SettingsResponse);
+  rpc UpdateSettings(UpdateSettingsRequest) returns (UpdateSettingsResponse);
+}
+
+// Census API service - implemented by main server (callback API for plugins)
+service CensusAPI {
+  rpc GetContainers(GetContainersRequest) returns (GetContainersResponse);
+  rpc GetContainer(GetContainerRequest) returns (GetContainerResponse);
+  rpc GetHosts(GetHostsRequest) returns (GetHostsResponse);
+  rpc GetHost(GetHostRequest) returns (GetHostResponse);
+  rpc GetPluginData(GetPluginDataRequest) returns (GetPluginDataResponse);
+  rpc SetPluginData(SetPluginDataRequest) returns (SetPluginDataResponse);
+  rpc DeletePluginData(DeletePluginDataRequest) returns (DeletePluginDataResponse);
+  rpc Log(LogRequest) returns (LogResponse);
+  rpc SendEvent(SendEventRequest) returns (SendEventResponse);
+}
+
+// ============================================================================
+// Plugin Service Messages
+// ============================================================================
+
+// Init - Called when plugin is first loaded
+message InitRequest {
+  string plugin_id = 1;
+  map<string, string> config = 2;
+  string census_api_address = 3;  // gRPC address for callbacks (e.g., "localhost:50052")
+  string census_version = 4;
+}
+
+message InitResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+// Start - Called to start plugin operations
+message StartRequest {
+  string plugin_id = 1;
+}
+
+message StartResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+// Stop - Called to gracefully stop plugin
+message StopRequest {
+  string plugin_id = 1;
+}
+
+message StopResponse {
+  bool success = 1;
+}
+
+// Healthcheck - Called periodically to verify plugin is alive
+message HealthcheckRequest {
+  string plugin_id = 1;
+}
+
+message HealthcheckResponse {
+  bool healthy = 1;
+  string status = 2;  // "running", "degraded", "failed"
+  map<string, string> metrics = 3;  // Optional metrics
+}
+
+// GetInfo - Returns plugin metadata
+message InfoRequest {
+  string plugin_id = 1;
+}
+
+message InfoResponse {
+  string id = 1;
+  string name = 2;
+  string version = 3;
+  string description = 4;
+  string author = 5;
+  string homepage = 6;
+  repeated string capabilities = 7;  // "ui_tab", "ui_badge", "container_enrichment", etc.
+}
+
+// GetTab - Returns UI tab configuration
+message TabRequest {
+  string plugin_id = 1;
+}
+
+message TabResponse {
+  bool has_tab = 1;
+  string id = 2;
+  string label = 3;
+  string icon = 4;
+  int32 order = 5;
+  string script_url = 6;  // URL to frontend bundle
+  string css_url = 7;     // URL to frontend CSS
+  string init_func = 8;   // JavaScript function name to call
+}
+
+// GetBadges - Returns badges to display on container cards
+message BadgesRequest {
+  string plugin_id = 1;
+  Container container = 2;
+}
+
+message BadgesResponse {
+  repeated Badge badges = 1;
+}
+
+message Badge {
+  string id = 1;
+  string label = 2;
+  string icon = 3;
+  string color = 4;
+  string tooltip = 5;
+  string link = 6;
+  int32 priority = 7;
+}
+
+// HandleRoute - Handles HTTP requests to plugin routes
+message RouteRequest {
+  string plugin_id = 1;
+  string method = 2;  // GET, POST, PUT, DELETE, etc.
+  string path = 3;    // Path after /api/p/{plugin-id}/
+  map<string, string> headers = 4;
+  bytes body = 5;
+  map<string, string> query_params = 6;
+  map<string, string> path_params = 7;
+}
+
+message RouteResponse {
+  int32 status_code = 1;
+  map<string, string> headers = 2;
+  bytes body = 3;
+}
+
+// EnrichContainer - Adds custom data to containers
+message EnrichRequest {
+  string plugin_id = 1;
+  Container container = 2;
+}
+
+message EnrichResponse {
+  map<string, string> plugin_data = 1;  // Data to add to container.plugin_data
+}
+
+// HandleEvent - Receives system events
+message EventRequest {
+  string plugin_id = 1;
+  string event_type = 2;  // "scan_complete", "container_state_change", "image_updated", etc.
+  string timestamp = 3;
+  map<string, string> data = 4;
+}
+
+message EventResponse {
+  bool handled = 1;
+}
+
+// GetSettings - Returns plugin settings schema
+message SettingsRequest {
+  string plugin_id = 1;
+}
+
+message SettingsResponse {
+  string schema_json = 1;  // JSON schema for settings
+  string values_json = 2;  // Current setting values as JSON
+}
+
+// UpdateSettings - Updates plugin settings
+message UpdateSettingsRequest {
+  string plugin_id = 1;
+  string values_json = 2;  // New settings as JSON
+}
+
+message UpdateSettingsResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+// ============================================================================
+// Census API Service Messages
+// ============================================================================
+
+// GetContainers - Fetch all containers
+message GetContainersRequest {
+  string plugin_id = 1;
+  bool latest_only = 2;  // If true, only return latest scan results
+  int64 host_id = 3;     // If > 0, filter by host
+}
+
+message GetContainersResponse {
+  repeated Container containers = 1;
+}
+
+// GetContainer - Fetch specific container
+message GetContainerRequest {
+  string plugin_id = 1;
+  string container_id = 2;
+  int64 host_id = 3;
+}
+
+message GetContainerResponse {
+  Container container = 1;
+  bool found = 2;
+}
+
+// GetHosts - Fetch all hosts
+message GetHostsRequest {
+  string plugin_id = 1;
+}
+
+message GetHostsResponse {
+  repeated Host hosts = 1;
+}
+
+// GetHost - Fetch specific host
+message GetHostRequest {
+  string plugin_id = 1;
+  int64 host_id = 2;
+}
+
+message GetHostResponse {
+  Host host = 1;
+  bool found = 2;
+}
+
+// GetPluginData - Fetch plugin-specific data from storage
+message GetPluginDataRequest {
+  string plugin_id = 1;
+  string key = 2;
+}
+
+message GetPluginDataResponse {
+  string value = 1;
+  bool found = 2;
+}
+
+// SetPluginData - Store plugin-specific data
+message SetPluginDataRequest {
+  string plugin_id = 1;
+  string key = 2;
+  string value = 3;
+}
+
+message SetPluginDataResponse {
+  bool success = 1;
+}
+
+// DeletePluginData - Delete plugin-specific data
+message DeletePluginDataRequest {
+  string plugin_id = 1;
+  string key = 2;
+}
+
+message DeletePluginDataResponse {
+  bool success = 1;
+}
+
+// Log - Send log message to Census server
+message LogRequest {
+  string plugin_id = 1;
+  string level = 2;  // "debug", "info", "warn", "error"
+  string message = 3;
+  map<string, string> fields = 4;
+}
+
+message LogResponse {
+  bool success = 1;
+}
+
+// SendEvent - Send event to other plugins
+message SendEventRequest {
+  string plugin_id = 1;
+  string event_type = 2;
+  map<string, string> data = 3;
+}
+
+message SendEventResponse {
+  bool success = 1;
+}
+
+// ============================================================================
+// Data Models
+// ============================================================================
+
+message Container {
+  string id = 1;
+  string name = 2;
+  string image = 3;
+  string image_id = 4;
+  string state = 5;
+  string status = 6;
+  int64 host_id = 7;
+  string host_name = 8;
+  string created = 9;
+  string started_at = 10;
+  string finished_at = 11;
+  repeated Port ports = 12;
+  repeated string networks = 13;
+  repeated Volume volumes = 14;
+  repeated string links = 15;
+  map<string, string> labels = 16;
+  map<string, string> env = 17;
+  string compose_project = 18;
+
+  // Resource stats
+  double cpu_percent = 19;
+  int64 memory_usage = 20;
+  int64 memory_limit = 21;
+  double memory_percent = 22;
+
+  // Plugin data
+  map<string, string> plugin_data = 23;
+}
+
+message Port {
+  int32 container_port = 1;
+  int32 host_port = 2;
+  string protocol = 3;
+  string host_ip = 4;
+}
+
+message Volume {
+  string type = 1;         // "bind", "volume", "tmpfs"
+  string name = 2;         // Volume name (for named volumes)
+  string source = 3;       // Host path
+  string destination = 4;  // Container path
+  string mode = 5;         // "rw", "ro"
+}
+
+message Host {
+  int64 id = 1;
+  string name = 2;
+  string address = 3;
+  string host_type = 4;  // "unix", "agent", "tcp", "ssh"
+  string description = 5;
+  bool enabled = 6;
+  bool collect_stats = 7;
+  string last_seen = 8;
+  string agent_version = 9;
+  string agent_status = 10;  // "online", "offline", "auth_failed"
+}

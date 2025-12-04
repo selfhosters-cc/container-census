@@ -20,6 +20,18 @@ interface Settings {
   };
 }
 
+interface Plugin {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  author: string;
+  repository: string;
+  enabled: boolean;
+  status: string;
+  installed_at: string;
+}
+
 async function getSettings(): Promise<Settings> {
   const response = await fetch('/api/settings', { credentials: 'include' });
   if (!response.ok) throw new Error('Failed to load settings');

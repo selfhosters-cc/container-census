@@ -31,6 +31,13 @@ func (s *Server) setupPluginRoutes(api *mux.Router) {
 	api.HandleFunc("/plugins/{id}/disable", s.handleDisablePlugin).Methods("PUT")
 	api.HandleFunc("/plugins/{id}/settings", s.handleGetPluginSettings).Methods("GET")
 	api.HandleFunc("/plugins/{id}/settings", s.handleUpdatePluginSettings).Methods("PUT")
+
+	// External plugin installation endpoints
+	api.HandleFunc("/plugins/install", s.handleInstallPlugin).Methods("POST")
+	api.HandleFunc("/plugins/{id}/update", s.handleUpdatePlugin).Methods("POST")
+	api.HandleFunc("/plugins/{id}/uninstall", s.handleUninstallPlugin).Methods("DELETE")
+	api.HandleFunc("/plugins/{id}/logs", s.handleGetPluginLogs).Methods("GET")
+	api.HandleFunc("/plugins/{id}/status", s.handleGetPluginStatus).Methods("GET")
 }
 
 // handleGetPlugins returns all registered plugins
@@ -54,11 +61,23 @@ func (s *Server) handleGetPlugins(w http.ResponseWriter, r *http.Request) {
 
 	result := make([]PluginWithStatus, len(infos))
 	for i, info := range infos {
-		// Check if loaded (loaded means enabled)
-		_, loaded := s.pluginManager.GetPlugin(info.ID)
+		// For built-in plugins, check if loaded
+		// For external plugins, check database
+		enabled := false
+		if info.BuiltIn {
+			_, loaded := s.pluginManager.GetPlugin(info.ID)
+			enabled = loaded
+		} else {
+			// External plugin - get enabled status from database
+			record, err := s.db.GetPlugin(info.ID)
+			if err == nil && record != nil {
+				enabled = record.Enabled
+			}
+		}
+
 		result[i] = PluginWithStatus{
 			PluginInfo: info,
-			Enabled:    loaded,
+			Enabled:    enabled,
 		}
 	}
 
@@ -279,4 +298,122 @@ func (s *Server) handleUpdatePluginSettings(w http.ResponseWriter, r *http.Reque
 		"success": true,
 		"message": "Settings updated",
 	})
+}
+
+// handleInstallPlugin installs a new external plugin from GitHub URL
+func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RepositoryURL string `json:"repository_url"`
+		Version       string `json:"version"` // optional, defaults to "latest"
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if req.RepositoryURL == "" {
+		respondError(w, http.StatusBadRequest, "repository_url is required")
+		return
+	}
+
+	if s.pluginManager == nil {
+		respondError(w, http.StatusInternalServerError, "Plugin manager not initialized")
+		return
+	}
+
+	// Install plugin using the plugin manager
+	if err := s.pluginManager.InstallExternalPlugin(r.Context(), req.RepositoryURL, req.Version); err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "Plugin installation started",
+	})
+}
+
+// handleUpdatePlugin updates an external plugin to the latest version
+func (s *Server) handleUpdatePlugin(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	pluginID := vars["id"]
+
+	if s.pluginManager == nil {
+		respondError(w, http.StatusInternalServerError, "Plugin manager not initialized")
+		return
+	}
+
+	if err := s.pluginManager.UpdateExternalPlugin(r.Context(), pluginID); err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "Plugin update started",
+	})
+}
+
+// handleUninstallPlugin removes an external plugin
+func (s *Server) handleUninstallPlugin(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	pluginID := vars["id"]
+
+	if s.pluginManager == nil {
+		respondError(w, http.StatusInternalServerError, "Plugin manager not initialized")
+		return
+	}
+
+	if err := s.pluginManager.UninstallExternalPlugin(pluginID); err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "Plugin uninstalled successfully",
+	})
+}
+
+// handleGetPluginLogs returns recent log output from an external plugin
+func (s *Server) handleGetPluginLogs(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	pluginID := vars["id"]
+
+	if s.pluginManager == nil {
+		respondError(w, http.StatusInternalServerError, "Plugin manager not initialized")
+		return
+	}
+
+	stdout, stderr, err := s.pluginManager.GetExternalPluginLogs(pluginID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"plugin_id": pluginID,
+		"stdout":    stdout,
+		"stderr":    stderr,
+	})
+}
+
+// handleGetPluginStatus returns the runtime status of an external plugin
+func (s *Server) handleGetPluginStatus(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	pluginID := vars["id"]
+
+	if s.pluginManager == nil {
+		respondError(w, http.StatusInternalServerError, "Plugin manager not initialized")
+		return
+	}
+
+	status, err := s.pluginManager.GetExternalPluginStatus(pluginID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, status)
 }

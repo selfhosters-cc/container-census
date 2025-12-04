@@ -7687,3 +7687,30 @@ header {
     color: #333;
     user-select: none;
 }
+
+/* External Plugin Management Styles */
+.plugin-list {
+  margin-top: 15px;
+}
+
+.plugin-card {
+  transition: box-shadow 0.2s ease;
+}
+
+.plugin-card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.plugin-install-section input[type="text"]:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+}
+
+.plugin-card .btn {
+  transition: background-color 0.2s ease, transform 0.1s ease;
+}
+
+.plugin-card .btn:active {
+  transform: scale(0.98);
+}
