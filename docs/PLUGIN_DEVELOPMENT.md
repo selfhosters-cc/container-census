@@ -510,16 +510,43 @@ The Census server will:
 
 ## Example: Graph Visualizer Plugin
 
-See the complete example plugin at: https://github.com/selfhosters-cc/container-census-plugin-graph
+See the complete example plugin at: https://github.com/selfhosters-cc/cc-graph
 
 This plugin demonstrates:
-- Backend gRPC server implementation
+- Backend gRPC server implementation (Go)
 - Querying container data via Census API
-- Graph data processing
-- Frontend React component with Cytoscape.js
+- Graph data processing and relationship mapping
+- Frontend visualization with Cytoscape.js
+- Color-coded containers (status and compose project modes)
+- Interactive filtering (networks, volumes, stopped containers)
+- Multiple layout algorithms (force-directed, hierarchical, etc.)
 - Dynamic route handling
-- Frontend asset bundling
+- Frontend asset bundling with webpack
 - Multi-platform builds and GitHub releases
+
+### Key Features Demonstrated
+
+**Backend (`main.go`)**:
+- gRPC Plugin service implementation
+- Census API client for fetching container data
+- Graph building algorithm (nodes and edges)
+- Network and volume relationship detection
+- Compose project grouping
+- HTTP route handler for `/graph-data` endpoint
+
+**Frontend (`frontend/src/index.js`)**:
+- Vanilla JavaScript (no React) for minimal dependencies
+- Cytoscape.js integration for graph visualization
+- Dynamic color modes (status vs project)
+- Interactive filters with real-time graph updates
+- Custom legend generation
+- SDK integration with fetch proxy and toast notifications
+
+**Build Process**:
+- Backend: Cross-compilation for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64
+- Frontend: Webpack bundle (single bundle.js file)
+- GitHub Actions for automated releases
+- Semantic versioning from `.version` file
 
 ## Troubleshooting
 
