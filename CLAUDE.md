@@ -46,6 +46,15 @@ make lint                   # Vet code
 make test                   # Run tests
 ```
 
+**IMPORTANT - Local Development Paths**:
+When using `./scripts/run-local.sh`, the server uses these paths:
+- **Database**: `/opt/docker-compose/census-server/census/server/census.db` (NOT `data/census.db`)
+- **Config**: `/opt/docker-compose/census-server/census/config/config.yaml`
+- **Plugins**: `/opt/docker-compose/census-server/census/plugins/` (configurable via DATABASE_PATH)
+- **Binary**: `/tmp/census-server` (built by `./scripts/server-build.sh`)
+
+Always check `scripts/run-local.sh` for the actual environment variables being used.
+
 ### Docker Development
 ```bash
 # Single container

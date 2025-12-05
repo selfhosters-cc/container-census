@@ -31,6 +31,23 @@ if [[ "$BUILD_FRONTEND" == "true" ]]; then
     echo "Static files available in: $PROJECT_ROOT/web-next/out/"
 fi
 
+# Build Graph Plugin Frontend
+GRAPH_PLUGIN_DIR="$PROJECT_ROOT/internal/plugins/builtin/graph/frontend"
+if [ -d "$GRAPH_PLUGIN_DIR/src" ]; then
+    echo -e "${YELLOW}Building Graph Plugin frontend...${NC}"
+
+    # Check if node_modules exists, if not install dependencies
+    if [ ! -d "$GRAPH_PLUGIN_DIR/node_modules" ]; then
+        echo "Installing Graph Plugin npm dependencies..."
+        (cd "$GRAPH_PLUGIN_DIR" && npm install)
+    fi
+
+    # Build the webpack bundle
+    (cd "$GRAPH_PLUGIN_DIR" && npm run build)
+
+    echo -e "${GREEN}Graph Plugin frontend built successfully!${NC}"
+fi
+
 # Build Go server
 echo -e "${YELLOW}Building Go server...${NC}"
 cd "$PROJECT_ROOT"

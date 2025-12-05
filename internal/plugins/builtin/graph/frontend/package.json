@@ -1,0 +1,25 @@
+{
+  "name": "census-graph-visualizer-plugin",
+  "version": "1.0.0",
+  "description": "Frontend for Container Census Graph Visualizer Plugin",
+  "main": "dist/bundle.js",
+  "scripts": {
+    "build": "webpack --mode production",
+    "dev": "webpack --mode development --watch"
+  },
+  "keywords": ["container-census", "plugin", "graph", "visualization"],
+  "author": "Container Census Team",
+  "license": "MIT",
+  "dependencies": {
+    "cytoscape": "^3.29.2",
+    "cytoscape-dagre": "^2.5.0",
+    "dagre": "^0.8.5"
+  },
+  "devDependencies": {
+    "@types/cytoscape": "^3.19.16",
+    "css-loader": "^6.8.1",
+    "style-loader": "^3.3.3",
+    "webpack": "^5.89.0",
+    "webpack-cli": "^5.1.4"
+  }
+}

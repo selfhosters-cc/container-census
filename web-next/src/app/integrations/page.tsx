@@ -1,10 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { getPlugins, getPluginTabs, enablePlugin, disablePlugin } from '@/lib/api';
 import type { PluginInfo, PluginTab } from '@/types';
 
 export default function IntegrationsPage() {
+  const router = useRouter();
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [tabs, setTabs] = useState<PluginTab[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,6 +43,8 @@ export default function IntegrationsPage() {
         await disablePlugin(pluginId);
       }
       await loadData();
+      // Refresh the router to update sidebar navigation
+      router.refresh();
     } catch (error) {
       console.error('Failed to toggle plugin:', error);
     } finally {
@@ -72,6 +76,8 @@ export default function IntegrationsPage() {
 
       setPluginRepoUrl('');
       await loadData();
+      // Refresh the router to update sidebar navigation
+      router.refresh();
     } catch (error) {
       setPluginError(error instanceof Error ? error.message : 'Installation failed');
     } finally {
@@ -86,13 +92,15 @@ export default function IntegrationsPage() {
 
     setActionLoading(pluginId);
     try {
-      const response = await fetch(`/api/plugins/${pluginId}`, {
+      const response = await fetch(`/api/plugins/${pluginId}/uninstall`, {
         method: 'DELETE',
         credentials: 'include',
       });
 
       if (response.ok) {
         await loadData();
+        // Refresh the router to update sidebar navigation
+        router.refresh();
       }
     } catch (error) {
       console.error('Failed to uninstall plugin:', error);

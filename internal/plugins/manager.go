@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -167,6 +168,12 @@ func (m *Manager) LoadExternalPlugins(ctx context.Context) error {
 
 		if !mounted {
 			log.Printf("Warning: Plugin %s started but routes not mounted", record.ID)
+		} else {
+			// Fetch and save tab configuration after successful route mounting
+			if err := m.FetchAndSaveTabConfig(ctx, record.ID); err != nil {
+				log.Printf("Warning: Failed to fetch tab config for %s: %v", record.ID, err)
+				// Continue anyway - tab can be fetched later if needed
+			}
 		}
 
 		log.Printf("Loaded external plugin: %s v%s", record.Name, record.Version)
@@ -424,15 +431,33 @@ func (m *Manager) GetAllTabs() []TabDefinition {
 				continue
 			}
 
-			// Parse tab_config from database
+			// Parse tab_config from database (it's stored as JSON string)
 			if record.TabConfig != "" {
-				var tab TabDefinition
-				if err := json.Unmarshal([]byte(record.TabConfig), &tab); err == nil {
-					log.Printf("[DEBUG] GetAllTabs: Successfully parsed tab for %s: %+v", record.ID, tab)
-					tabs = append(tabs, tab)
-				} else {
+				// Unmarshal JSON string to map
+				var tabConfig map[string]string
+				if err := json.Unmarshal([]byte(record.TabConfig), &tabConfig); err != nil {
 					log.Printf("[DEBUG] GetAllTabs: Failed to unmarshal tab_config for %s: %v", record.ID, err)
+					continue
 				}
+
+				// Convert map to TabDefinition
+				tab := TabDefinition{
+					ID:        tabConfig["id"],
+					Label:     tabConfig["label"],
+					Icon:      tabConfig["icon"],
+					ScriptURL: tabConfig["script_url"],
+					InitFunc:  tabConfig["init_func"],
+				}
+
+				// Parse order from string
+				if orderStr := tabConfig["order"]; orderStr != "" {
+					if order, err := strconv.Atoi(orderStr); err == nil {
+						tab.Order = order
+					}
+				}
+
+				log.Printf("[DEBUG] GetAllTabs: Successfully parsed tab for %s: %+v", record.ID, tab)
+				tabs = append(tabs, tab)
 			} else {
 				log.Printf("[DEBUG] GetAllTabs: Empty tab_config for plugin %s", record.ID)
 			}
@@ -610,7 +635,66 @@ func (s *scopedPluginDB) GetAllSettings() (map[string]string, error) {
 // InstallExternalPlugin installs a plugin from a GitHub repository URL
 func (m *Manager) InstallExternalPlugin(ctx context.Context, repoURL, version string) error {
 	log.Printf("[PluginManager] Installing external plugin from %s", repoURL)
-	return m.installer.Install(ctx, repoURL, version)
+
+	// Install the plugin files and save to database
+	if err := m.installer.Install(ctx, repoURL, version); err != nil {
+		return err
+	}
+
+	// Get the plugin ID from the installer
+	// The plugin ID is extracted during install, we need to get the plugin record
+	plugins, err := m.db.GetAllPlugins()
+	if err != nil {
+		return fmt.Errorf("failed to get plugins after install: %w", err)
+	}
+
+	// Find the newly installed plugin (it will be enabled and from the repo URL)
+	var pluginID string
+	for _, p := range plugins {
+		if p.SourceURL == repoURL && p.Enabled {
+			pluginID = p.ID
+			break
+		}
+	}
+
+	if pluginID == "" {
+		return fmt.Errorf("could not find installed plugin from %s", repoURL)
+	}
+
+	log.Printf("[PluginManager] Starting installed plugin %s", pluginID)
+
+	// Start the plugin process
+	if err := m.StartExternalPlugin(ctx, pluginID); err != nil {
+		log.Printf("[PluginManager] Failed to start plugin %s: %v", pluginID, err)
+		return fmt.Errorf("plugin installed but failed to start: %w", err)
+	}
+
+	// Mount routes with retry
+	mounted := false
+	for attempt := 1; attempt <= 5; attempt++ {
+		if attempt > 1 {
+			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+		}
+		if err := m.MountPluginRoutes(pluginID); err != nil {
+			if attempt < 5 {
+				log.Printf("[PluginManager] Attempt %d/5: Failed to mount routes for %s, retrying...", attempt, pluginID)
+				continue
+			}
+			log.Printf("Failed to mount routes for plugin %s after 5 attempts: %v", pluginID, err)
+		} else {
+			mounted = true
+			break
+		}
+	}
+
+	if mounted {
+		// Fetch and save tab configuration
+		if err := m.FetchAndSaveTabConfig(ctx, pluginID); err != nil {
+			log.Printf("Warning: Failed to fetch tab config for %s: %v", pluginID, err)
+		}
+	}
+
+	return nil
 }
 
 // UpdateExternalPlugin updates an external plugin to the latest version
@@ -681,6 +765,69 @@ func (m *Manager) StopExternalPlugin(pluginID string) error {
 	// Unregister from Census API
 	m.censusAPIServer.UnregisterPlugin(pluginID)
 
+	return nil
+}
+
+// FetchAndSaveTabConfig retrieves tab configuration from a plugin via gRPC and saves it to the database
+func (m *Manager) FetchAndSaveTabConfig(ctx context.Context, pluginID string) error {
+	log.Printf("[PluginManager] Fetching tab config for plugin %s", pluginID)
+
+	// Get the gRPC client from supervisor
+	client, err := m.supervisor.GetGRPCClient(pluginID)
+	if err != nil {
+		return fmt.Errorf("failed to get plugin gRPC client: %w", err)
+	}
+
+	// Call GetTab via gRPC with timeout
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	resp, err := client.GetTab(ctx, &pb.TabRequest{
+		PluginId: pluginID,
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to call GetTab: %w", err)
+	}
+
+	// If plugin doesn't have a tab, skip
+	if !resp.HasTab {
+		log.Printf("[PluginManager] Plugin %s does not provide a tab", pluginID)
+		return nil
+	}
+
+	// Create TabDefinition structure
+	tabDef := TabDefinition{
+		ID:        resp.Id,
+		Label:     resp.Label,
+		Icon:      resp.Icon,
+		Order:     int(resp.Order),
+		ScriptURL: resp.ScriptUrl,
+		InitFunc:  resp.InitFunc,
+	}
+
+	// Get existing plugin record
+	plugin, err := m.db.GetExternalPlugin(pluginID)
+	if err != nil {
+		return fmt.Errorf("failed to get plugin record: %w", err)
+	}
+
+	// Update tab_config field as map[string]string
+	plugin.TabConfig = map[string]string{
+		"id":         tabDef.ID,
+		"label":      tabDef.Label,
+		"icon":       tabDef.Icon,
+		"order":      fmt.Sprintf("%d", tabDef.Order),
+		"script_url": tabDef.ScriptURL,
+		"init_func":  tabDef.InitFunc,
+	}
+
+	// Save back to database
+	if err := m.db.SaveExternalPlugin(plugin); err != nil {
+		return fmt.Errorf("failed to save tab config: %w", err)
+	}
+
+	log.Printf("[PluginManager] Successfully saved tab config for %s: %s", pluginID, tabDef.Label)
 	return nil
 }
 

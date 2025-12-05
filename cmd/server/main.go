@@ -22,6 +22,7 @@ import (
 	"github.com/container-census/container-census/internal/models"
 	"github.com/container-census/container-census/internal/notifications"
 	"github.com/container-census/container-census/internal/plugins"
+	"github.com/container-census/container-census/internal/plugins/builtin/graph"
 	"github.com/container-census/container-census/internal/plugins/builtin/npm"
 	pb "github.com/container-census/container-census/internal/plugins/proto"
 	"github.com/container-census/container-census/internal/registry"
@@ -251,6 +252,7 @@ func main() {
 
 	// Register built-in plugins
 	npm.Register(pluginManager)
+	graph.Register(pluginManager)
 
 	// Load and start plugins
 	if err := pluginManager.LoadBuiltInPlugins(context.Background()); err != nil {

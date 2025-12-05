@@ -472,7 +472,11 @@ function HistoryModal({ container, onClose }: { container: Container | null; onC
       setError('');
       getContainerLifecycleEvents(container.host_id, container.name)
         .then(data => {
-          setEvents(data || []);
+          // Sort events by timestamp descending (most recent first)
+          const sorted = (data || []).sort((a, b) =>
+            new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+          );
+          setEvents(sorted);
         })
         .catch(err => {
           console.error('[HistoryModal] Error fetching events:', err);
@@ -516,11 +520,12 @@ function HistoryModal({ container, onClose }: { container: Container | null; onC
 
     const imageUpdates = events.filter(e => e.event_type === 'image_updated').length;
 
-    // Calculate uptime from first to last event
-    const firstEvent = events[events.length - 1]; // Oldest (events are reverse chronological)
-    const lastEvent = events[0]; // Newest
-    const uptimeDuration = firstEvent && lastEvent
-      ? new Date(lastEvent.timestamp).getTime() - new Date(firstEvent.timestamp).getTime()
+    // Calculate lifetime from first to last event
+    // Events are sorted newest first, so first event is most recent, last is oldest
+    const newestEvent = events[0];
+    const oldestEvent = events[events.length - 1];
+    const uptimeDuration = oldestEvent && newestEvent
+      ? new Date(newestEvent.timestamp).getTime() - new Date(oldestEvent.timestamp).getTime()
       : 0;
 
     return {
@@ -1256,7 +1261,11 @@ function ContainerCard({ container, lifecycleSummary, onAction, onViewLogs, onVi
           <div>
             <div className="text-xs text-[var(--text-tertiary)] mb-1">Ports</div>
             <div className="flex flex-wrap gap-1">
-              {container.ports.filter(p => (p.public_port ?? 0) > 0).map((p, idx) => (
+              {Array.from(new Map(
+                container.ports
+                  .filter(p => (p.public_port ?? 0) > 0)
+                  .map(p => [`${p.public_port}:${p.private_port}`, p])
+              ).values()).map((p, idx) => (
                 <span key={idx} className="text-xs bg-[var(--bg-tertiary)] px-2 py-1 rounded text-[var(--text-primary)]">
                   {p.public_port}:{p.private_port}
                 </span>

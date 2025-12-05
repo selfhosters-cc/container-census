@@ -37,7 +37,7 @@ export default function PluginPageClient() {
 
         // Load the plugin's JavaScript bundle with cache busting
         const script = document.createElement('script');
-        script.src = `/api/plugin-assets/${actualPluginId}/bundle.js?v=${Date.now()}`;
+        script.src = `/api/p/${actualPluginId}/bundle.js?v=${Date.now()}`;
         script.async = true;
         script.onload = () => {
           console.log('[PluginPage] Plugin script loaded successfully');

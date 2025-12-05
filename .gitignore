@@ -35,6 +35,7 @@ Thumbs.db
 
 # Dependencies
 vendor/
+node_modules/
 
 # Local things
 local/
