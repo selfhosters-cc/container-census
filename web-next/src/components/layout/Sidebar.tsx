@@ -28,7 +28,6 @@ const bottomNavItems: NavItem[] = [
 export default function Sidebar() {
   const pathname = usePathname();
   const [pluginTabs, setPluginTabs] = useState<PluginTab[]>([]);
-  const [integrationsOpen, setIntegrationsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [health, setHealth] = useState<HealthStatus | null>(null);
 
@@ -109,52 +108,41 @@ export default function Sidebar() {
           ))}
         </div>
 
-        {/* Integrations dropdown */}
-        <div className="mt-4">
-          <button
-            onClick={() => setIntegrationsOpen(!integrationsOpen)}
-            className={`w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-              pathname.startsWith('/integrations')
-                ? 'bg-[var(--accent)] text-white'
-                : 'text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]'
-            }`}
-          >
-            <span className="flex items-center gap-3">
-              <span className="text-lg">🔌</span>
-              <span>Integrations</span>
-            </span>
-            <span className="text-xs">{integrationsOpen ? '▾' : '▸'}</span>
-          </button>
-          {integrationsOpen && (
-            <div className="ml-4 mt-1 space-y-1">
-              <Link
-                href="/integrations"
-                className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
-                  pathname === '/integrations'
-                    ? 'bg-[var(--bg-tertiary)] text-[var(--text-primary)]'
-                    : 'text-[var(--text-tertiary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]'
-                }`}
-              >
-                <span>📋</span>
-                <span>All Plugins</span>
-              </Link>
+        {/* Integrations section - always expanded */}
+        {pluginTabs.length > 0 && (
+          <div className="mt-4">
+            <div className="px-3 py-2 text-xs font-semibold text-[var(--text-tertiary)] uppercase tracking-wider">
+              Integrations
+            </div>
+            <div className="space-y-1">
               {pluginTabs.map((tab) => (
                 <Link
                   key={tab.id}
                   href={`/integrations/${tab.id}`}
-                  className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+                  className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                     pathname === `/integrations/${tab.id}`
-                      ? 'bg-[var(--bg-tertiary)] text-[var(--text-primary)]'
-                      : 'text-[var(--text-tertiary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]'
+                      ? 'bg-[var(--accent)] text-white'
+                      : 'text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]'
                   }`}
                 >
-                  <span>{tab.icon}</span>
+                  <span className="text-lg">{tab.icon}</span>
                   <span>{tab.label}</span>
                 </Link>
               ))}
+              <Link
+                href="/integrations"
+                className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  pathname === '/integrations'
+                    ? 'bg-[var(--accent)] text-white'
+                    : 'text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                <span className="text-lg">⚙️</span>
+                <span>Manage Plugins</span>
+              </Link>
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Bottom navigation */}
         <div className="mt-4 pt-4 border-t border-[var(--border)] space-y-1">
