@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,8 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"google.golang.org/grpc"
-
 	"github.com/container-census/container-census/internal/api"
 	"github.com/container-census/container-census/internal/auth"
 	"github.com/container-census/container-census/internal/migration"
@@ -24,7 +21,6 @@ import (
 	"github.com/container-census/container-census/internal/plugins"
 	"github.com/container-census/container-census/internal/plugins/builtin/graph"
 	"github.com/container-census/container-census/internal/plugins/builtin/npm"
-	pb "github.com/container-census/container-census/internal/plugins/proto"
 	"github.com/container-census/container-census/internal/registry"
 	"github.com/container-census/container-census/internal/scanner"
 	"github.com/container-census/container-census/internal/storage"
@@ -258,24 +254,10 @@ func main() {
 	if err := pluginManager.LoadBuiltInPlugins(context.Background()); err != nil {
 		log.Printf("Warning: Failed to load built-in plugins: %v", err)
 	}
-	if err := pluginManager.LoadExternalPlugins(context.Background()); err != nil {
-		log.Printf("Warning: Failed to load external plugins: %v", err)
-	}
 	if err := pluginManager.Start(context.Background()); err != nil {
 		log.Printf("Warning: Failed to start plugins: %v", err)
 	}
 	log.Println("Plugin manager initialized")
-
-	// Start Census API gRPC server for plugin callbacks
-	censusAPIAddr := os.Getenv("CENSUS_API_ADDRESS")
-	if censusAPIAddr == "" {
-		censusAPIAddr = "localhost:50052"
-	}
-	go func() {
-		if err := startCensusAPIServer(censusAPIAddr, pluginManager); err != nil {
-			log.Printf("Warning: Failed to start Census API gRPC server: %v", err)
-		}
-	}()
 
 	server := &http.Server{
 		Addr:         addr,
@@ -956,27 +938,6 @@ func runImageUpdateChecker(ctx context.Context, db *storage.DB, scan *scanner.Sc
 			}
 		}
 	}
-}
-
-// startCensusAPIServer starts the gRPC server for plugin callbacks
-func startCensusAPIServer(addr string, pluginManager *plugins.Manager) error {
-	lis, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", addr, err)
-	}
-
-	grpcServer := grpc.NewServer()
-	censusAPIServer := pluginManager.GetCensusAPIServer()
-
-	pb.RegisterCensusAPIServer(grpcServer, censusAPIServer)
-
-	log.Printf("Census API gRPC server listening on %s", addr)
-
-	if err := grpcServer.Serve(lis); err != nil {
-		return fmt.Errorf("failed to serve: %w", err)
-	}
-
-	return nil
 }
 
 // containerProviderImpl implements plugins.ContainerProvider

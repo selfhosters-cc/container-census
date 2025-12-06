@@ -413,6 +413,9 @@ internal/
 ├── config/         # YAML configuration loading
 ├── models/         # Shared data structures across all apps
 ├── notifications/  # Notification system (webhooks, ntfy, in-app)
+├── plugins/        # Plugin system and built-in plugins
+│   ├── builtin/npm/   # NPM (Nginx Proxy Manager) enrichment plugin
+│   └── builtin/graph/ # Graph visualizer plugin with frontend
 ├── scanner/        # Multi-protocol Docker scanning (unix/agent/tcp/ssh)
 ├── storage/        # SQLite operations for census server
 ├── telemetry/      # Telemetry collection, scheduling, submission
@@ -427,6 +430,58 @@ cmd/
 web/                # Static files for census server UI
 web/analytics/      # Static files for telemetry dashboard
 ```
+
+### Plugin Architecture
+
+Container Census uses a built-in plugin system to extend functionality. Plugins are compiled directly into the server binary and share the same process space.
+
+**Built-in Plugins:**
+- **NPM Plugin** (`internal/plugins/builtin/npm`): Enriches Nginx Proxy Manager containers with host/domain information
+- **Graph Plugin** (`internal/plugins/builtin/graph`): Provides interactive network graph visualization of container relationships
+
+**Plugin Interface** (`internal/plugins/plugins.go`):
+```go
+type Plugin interface {
+    Info() PluginInfo                          // Plugin metadata
+    Init(ctx, deps) error                       // Initialize plugin
+    Start(ctx) error                            // Start plugin services
+    Stop(ctx) error                             // Stop plugin services
+    Routes() []Route                            // HTTP routes to mount under /api/p/{plugin-id}/
+    Tab() *TabDefinition                        // UI tab configuration
+    Badges() []BadgeProvider                    // Container badge providers
+    ContainerEnricher() ContainerEnricher       // Container data enrichment
+    Settings() *SettingsDefinition              // Plugin settings schema
+    NotificationChannelFactory() ChannelFactory  // Notification channel factory
+}
+```
+
+**Plugin Lifecycle:**
+1. **Registration**: Plugins register in `cmd/server/main.go` via `pluginManager.RegisterBuiltIn()`
+2. **Discovery**: Manager loads all registered plugins on startup
+3. **Initialization**: Each plugin receives dependencies (DB, logger, scanner, etc.)
+4. **Route Mounting**: HTTP routes mounted under `/api/p/{plugin-id}/`
+5. **Frontend Loading**: UI loads plugin bundles from `/api/p/{plugin-id}/bundle.js`
+
+**Frontend Integration:**
+- Plugins can provide static assets (JavaScript bundles, CSS) via HTTP routes
+- Frontend bundles use `//go:embed` to embed compiled assets at build time
+- Example: Graph plugin uses webpack to build `frontend/bundle.js` (embedded in binary)
+- Plugins expose global init functions (e.g., `window.initGraphVisualizer()`)
+- UI dynamically loads and initializes plugins based on tab configuration
+
+**Build Process:**
+- Graph plugin frontend is built during `./scripts/server-build.sh`
+- Webpack bundles source code from `internal/plugins/builtin/graph/frontend/src/`
+- Compiled bundle.js embedded via `//go:embed frontend/bundle.js`
+- No runtime compilation - all assets compiled into Go binary
+
+**Implementation Files:**
+- `internal/plugins/plugins.go` - Plugin interface and types
+- `internal/plugins/manager.go` - Plugin lifecycle management
+- `internal/plugins/builtin/npm/` - NPM plugin implementation
+- `internal/plugins/builtin/graph/` - Graph plugin implementation
+- `internal/api/plugins.go` - Plugin API endpoints
+- `cmd/server/main.go` - Plugin registration
 
 ## Configuration
 
