@@ -911,9 +911,18 @@ function ContainerCard({ container, lifecycleSummary, onAction, onViewLogs, onVi
     setLoading('start');
     try {
       await startContainer(container.host_id, container.id);
+
+      // Trigger host rescan to get updated state
+      try {
+        await scanHost(container.host_id);
+      } catch (scanError) {
+        console.warn('[Card] Host rescan failed (non-critical):', scanError);
+      }
+
       onAction();
     } catch (error) {
       console.error('Failed to start container:', error);
+      alert(`Failed to start container:\n\n${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setLoading(null);
     }
@@ -923,9 +932,18 @@ function ContainerCard({ container, lifecycleSummary, onAction, onViewLogs, onVi
     setLoading('stop');
     try {
       await stopContainer(container.host_id, container.id);
+
+      // Trigger host rescan to get updated state
+      try {
+        await scanHost(container.host_id);
+      } catch (scanError) {
+        console.warn('[Card] Host rescan failed (non-critical):', scanError);
+      }
+
       onAction();
     } catch (error) {
       console.error('Failed to stop container:', error);
+      alert(`Failed to stop container:\n\n${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setLoading(null);
     }
@@ -935,9 +953,18 @@ function ContainerCard({ container, lifecycleSummary, onAction, onViewLogs, onVi
     setLoading('restart');
     try {
       await restartContainer(container.host_id, container.id);
+
+      // Trigger host rescan to get updated state
+      try {
+        await scanHost(container.host_id);
+      } catch (scanError) {
+        console.warn('[Card] Host rescan failed (non-critical):', scanError);
+      }
+
       onAction();
     } catch (error) {
       console.error('Failed to restart container:', error);
+      alert(`Failed to restart container:\n\n${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setLoading(null);
     }
@@ -950,9 +977,18 @@ function ContainerCard({ container, lifecycleSummary, onAction, onViewLogs, onVi
     setLoading('remove');
     try {
       await removeContainer(container.host_id, container.id);
+
+      // Trigger host rescan to get updated state
+      try {
+        await scanHost(container.host_id);
+      } catch (scanError) {
+        console.warn('[Card] Host rescan failed (non-critical):', scanError);
+      }
+
       onAction();
     } catch (error) {
       console.error('Failed to remove container:', error);
+      alert(`Failed to remove container:\n\n${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setLoading(null);
     }
@@ -1177,9 +1213,9 @@ export default function ContainersPage() {
   // View toggle state
   const [view, setView] = useState<'cards' | 'table'>(() => {
     if (typeof window !== 'undefined') {
-      return (localStorage.getItem('containerView') as 'cards' | 'table') || 'cards';
+      return (localStorage.getItem('containerView') as 'cards' | 'table') || 'table';
     }
-    return 'cards';
+    return 'table';
   });
 
   // Bulk selection state
