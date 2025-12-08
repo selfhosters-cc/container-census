@@ -186,6 +186,7 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/hosts/{id}", s.handleGetHost).Methods("GET")
 	api.HandleFunc("/hosts/{id}", s.handleUpdateHost).Methods("PUT")
 	api.HandleFunc("/hosts/{id}", s.handleDeleteHost).Methods("DELETE")
+	api.HandleFunc("/hosts/{id}/scan", s.handleScanHost).Methods("POST")
 	api.HandleFunc("/hosts/agent", s.handleAddAgentHost).Methods("POST")
 	api.HandleFunc("/hosts/agent/test", s.handleTestAgentConnection).Methods("POST")
 	api.HandleFunc("/hosts/agent/{id}/info", s.handleGetAgentInfo).Methods("GET")
@@ -774,6 +775,67 @@ func (s *Server) handleTriggerScan(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	respondJSON(w, http.StatusAccepted, map[string]string{"message": "Scan triggered"})
+}
+
+func (s *Server) handleScanHost(w http.ResponseWriter, r *http.Request) {
+	// Get host ID from URL
+	vars := mux.Vars(r)
+	hostIDStr := vars["id"]
+	hostID, err := strconv.ParseInt(hostIDStr, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid host ID")
+		return
+	}
+
+	// Get the host from database
+	host, err := s.db.GetHost(hostID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Host not found: "+err.Error())
+		return
+	}
+
+	if !host.Enabled {
+		respondError(w, http.StatusBadRequest, "Host is disabled")
+		return
+	}
+
+	// Trigger scan in background
+	go func() {
+		ctx := context.Background()
+
+		result := models.ScanResult{
+			HostID:    host.ID,
+			HostName:  host.Name,
+			StartedAt: time.Now(),
+		}
+
+		containers, err := s.scanner.ScanHost(ctx, *host)
+		result.CompletedAt = time.Now()
+
+		if err != nil {
+			result.Success = false
+			result.Error = err.Error()
+			log.Printf("Scan failed for host %s: %v", host.Name, err)
+		} else {
+			result.Success = true
+			result.ContainersFound = len(containers)
+
+			// Save containers
+			if err := s.db.SaveContainers(containers); err != nil {
+				log.Printf("Failed to save containers for host %s: %v", host.Name, err)
+			}
+		}
+
+		// Save scan result
+		if _, err := s.db.SaveScanResult(result); err != nil {
+			log.Printf("Failed to save scan result for host %s: %v", host.Name, err)
+		}
+	}()
+
+	respondJSON(w, http.StatusAccepted, map[string]string{
+		"message": fmt.Sprintf("Scan triggered for host %s", host.Name),
+		"host_id": hostIDStr,
+	})
 }
 
 func (s *Server) handleGetScanResults(w http.ResponseWriter, r *http.Request) {
