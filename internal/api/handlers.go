@@ -799,42 +799,52 @@ func (s *Server) handleScanHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Trigger scan in background
-	go func() {
-		ctx := context.Background()
+	// Perform scan synchronously - wait for completion before responding
+	ctx := context.Background()
 
-		result := models.ScanResult{
-			HostID:    host.ID,
-			HostName:  host.Name,
-			StartedAt: time.Now(),
+	result := models.ScanResult{
+		HostID:    host.ID,
+		HostName:  host.Name,
+		StartedAt: time.Now(),
+	}
+
+	containers, err := s.scanner.ScanHost(ctx, *host)
+	result.CompletedAt = time.Now()
+
+	if err != nil {
+		result.Success = false
+		result.Error = err.Error()
+		log.Printf("Scan failed for host %s: %v", host.Name, err)
+
+		// Save failed scan result
+		if _, saveErr := s.db.SaveScanResult(result); saveErr != nil {
+			log.Printf("Failed to save scan result for host %s: %v", host.Name, saveErr)
 		}
 
-		containers, err := s.scanner.ScanHost(ctx, *host)
-		result.CompletedAt = time.Now()
+		respondError(w, http.StatusInternalServerError, fmt.Sprintf("Scan failed: %v", err))
+		return
+	}
 
-		if err != nil {
-			result.Success = false
-			result.Error = err.Error()
-			log.Printf("Scan failed for host %s: %v", host.Name, err)
-		} else {
-			result.Success = true
-			result.ContainersFound = len(containers)
+	result.Success = true
+	result.ContainersFound = len(containers)
 
-			// Save containers
-			if err := s.db.SaveContainers(containers); err != nil {
-				log.Printf("Failed to save containers for host %s: %v", host.Name, err)
-			}
-		}
+	// Save containers
+	if err := s.db.SaveContainers(containers); err != nil {
+		log.Printf("Failed to save containers for host %s: %v", host.Name, err)
+		respondError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save containers: %v", err))
+		return
+	}
 
-		// Save scan result
-		if _, err := s.db.SaveScanResult(result); err != nil {
-			log.Printf("Failed to save scan result for host %s: %v", host.Name, err)
-		}
-	}()
+	// Save scan result
+	if _, err := s.db.SaveScanResult(result); err != nil {
+		log.Printf("Failed to save scan result for host %s: %v", host.Name, err)
+	}
 
-	respondJSON(w, http.StatusAccepted, map[string]string{
-		"message": fmt.Sprintf("Scan triggered for host %s", host.Name),
-		"host_id": hostIDStr,
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"message":          fmt.Sprintf("Scan completed for host %s", host.Name),
+		"host_id":          hostIDStr,
+		"containers_found": len(containers),
+		"success":          true,
 	})
 }
 
