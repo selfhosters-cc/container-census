@@ -1394,6 +1394,13 @@ export default function ContainersPage() {
               onShowHistory={setHistoryContainer}
               onAction={async (container, action) => {
                 try {
+                  console.log(`[Container Action] ${action} on container:`, {
+                    name: container.name,
+                    id: container.id,
+                    hostId: container.host_id,
+                    url: `/api/containers/${container.host_id}/${container.id}/${action}`
+                  });
+
                   if (action === 'start') {
                     await startContainer(container.host_id, container.id);
                   } else if (action === 'stop') {
@@ -1407,14 +1414,35 @@ export default function ContainersPage() {
                     await removeContainer(container.host_id, container.id);
                   }
 
+                  console.log(`[Container Action] ${action} completed, triggering host rescan...`);
+
                   // Trigger a rescan of the specific host to get updated status
                   await scanHost(container.host_id);
 
+                  console.log(`[Container Action] Host rescan completed, reloading data...`);
+
                   // Reload all data to show the updated status
                   await loadData();
+
+                  console.log(`[Container Action] All done!`);
                 } catch (error) {
-                  console.error(`Failed to ${action} container "${container.name}":`, error);
-                  alert(`Failed to ${action} container: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                  console.error(`[Container Action] Failed to ${action} container "${container.name}":`, error);
+
+                  let errorMsg = 'Unknown error';
+                  if (error instanceof Error) {
+                    errorMsg = error.message;
+                    // Check if it's an API error with status
+                    if ('status' in error) {
+                      const status = (error as any).status;
+                      errorMsg = `HTTP ${status}: ${error.message}`;
+
+                      if (status === 404) {
+                        errorMsg += `\n\nThe API endpoint may not exist. Check that the backend server is running and the endpoint is implemented:\n/api/containers/${container.host_id}/${container.id}/${action}`;
+                      }
+                    }
+                  }
+
+                  alert(`Failed to ${action} container "${container.name}":\n\n${errorMsg}`);
                 }
               }}
               onUpdate={setUpdateContainer}
