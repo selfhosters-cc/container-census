@@ -3,264 +3,18 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { getContainers, getHosts, startContainer, stopContainer, restartContainer, removeContainer, getContainerLogs, getContainerStats, updateContainer, bulkCheckUpdates, bulkUpdate, getContainerLifecycleEvents, getContainerLifecycleSummaries } from '@/lib/api';
 import type { Container, Host, ContainerStatsPoint, ContainerLifecycleEvent, ContainerLifecycleSummary } from '@/types';
+import { formatUptime, extractImageTag, formatCpu, formatMemory as formatMemoryUtil, getStateIcon } from '@/lib/containerUtils';
+import InlineChart from '@/components/containers/InlineChart';
+import ViewToggle from '@/components/containers/ViewToggle';
+import ContainerTable from '@/components/containers/ContainerTable';
 
-// Chart.js imports (will be loaded from CDN in production, this is for types)
+// Chart.js declaration for StatsModal
 declare const Chart: {
   new (ctx: CanvasRenderingContext2D, config: unknown): {
     destroy: () => void;
     update: () => void;
   };
-  getChart: (id: string | HTMLCanvasElement) => { destroy: () => void } | undefined;
 };
-
-function formatUptime(startedAt: string | undefined, endAt?: string): string {
-  if (!startedAt) return '';
-
-  const end = endAt ? new Date(endAt) : new Date();
-  const started = new Date(startedAt);
-
-  if (isNaN(started.getTime()) || started.getFullYear() < 2000) {
-    return '';
-  }
-
-  const diff = end.getTime() - started.getTime();
-  if (diff < 0) return '';
-
-  const seconds = Math.floor(diff / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-
-  if (days > 0) {
-    const remainingHours = hours % 24;
-    return `${days}d ${remainingHours}h`;
-  }
-  if (hours > 0) {
-    const remainingMins = minutes % 60;
-    return `${hours}h ${remainingMins}m`;
-  }
-  if (minutes > 0) {
-    return `${minutes}m`;
-  }
-  return `${seconds}s`;
-}
-
-function extractImageTag(image: string, imageTags?: string[]): string {
-  if (imageTags && imageTags.length > 0) {
-    const tag = imageTags[0];
-    const parts = tag.split(':');
-    return parts[parts.length - 1] || 'latest';
-  }
-  const parts = image.split(':');
-  return parts[parts.length - 1] || 'latest';
-}
-
-// Inline sparkline chart component for container cards
-function InlineChart({ hostId, containerId }: { hostId: number; containerId: string }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const chartRef = useRef<ReturnType<typeof Chart.prototype.constructor> | null>(null);
-  const [hasData, setHasData] = useState<boolean | null>(null); // null = loading
-  const [chartLoaded, setChartLoaded] = useState(false);
-
-  // Wait for Chart.js to load
-  useEffect(() => {
-    let attempts = 0;
-    const maxAttempts = 50; // 5 seconds total
-
-    const checkChartJs = () => {
-      if (typeof Chart !== 'undefined') {
-        console.log('[InlineChart] Chart.js loaded successfully');
-        setChartLoaded(true);
-      } else if (attempts < maxAttempts) {
-        attempts++;
-        setTimeout(checkChartJs, 100);
-      } else {
-        console.error('[InlineChart] Chart.js failed to load after 5 seconds');
-        setHasData(false);
-      }
-    };
-    checkChartJs();
-  }, []);
-
-  useEffect(() => {
-    if (!chartLoaded) return;
-
-    let mounted = true;
-
-    const loadAndRender = async () => {
-      try {
-        const stats = await getContainerStats(hostId, containerId, '1h');
-        console.log(`[InlineChart] Stats for ${containerId}:`, stats?.length || 0, 'points');
-
-        if (!mounted) return;
-
-        if (!stats || stats.length === 0) {
-          console.log(`[InlineChart] No stats data for ${containerId}`);
-          setHasData(false);
-          return;
-        }
-
-        console.log(`[InlineChart] Rendering chart for ${containerId}`);
-
-        const canvas = canvasRef.current;
-        if (!canvas) {
-          console.log(`[InlineChart] Canvas ref is null for ${containerId}`);
-          return;
-        }
-
-        // Destroy existing chart
-        if (chartRef.current) {
-          chartRef.current.destroy();
-          chartRef.current = null;
-        }
-
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          console.log(`[InlineChart] Could not get 2d context for ${containerId}`);
-          return;
-        }
-
-        // Take last 20 points for sparkline
-        const recentStats = stats.slice(-20);
-        const cpuData = recentStats.map((s: ContainerStatsPoint) => s.cpu_percent || 0);
-        const memoryData = recentStats.map((s: ContainerStatsPoint) => (s.memory_usage || 0) / 1024 / 1024);
-
-        // Set canvas dimensions explicitly
-        const parentWidth = canvas.parentElement?.offsetWidth || 500;
-        canvas.width = parentWidth;
-        canvas.height = 128;
-        console.log(`[InlineChart] Canvas dimensions for ${containerId}: ${canvas.width}x${canvas.height}`);
-
-        chartRef.current = new Chart(ctx, {
-          type: 'line',
-          data: {
-            labels: recentStats.map(() => ''),
-            datasets: [
-              {
-                label: 'CPU %',
-                data: cpuData,
-                borderColor: 'rgb(75, 192, 192)',
-                backgroundColor: 'rgba(75, 192, 192, 0.1)',
-                borderWidth: 2,
-                pointRadius: 0,
-                tension: 0.4,
-                yAxisID: 'y',
-                fill: true,
-              },
-              {
-                label: 'Memory MB',
-                data: memoryData,
-                borderColor: 'rgb(255, 99, 132)',
-                backgroundColor: 'rgba(255, 99, 132, 0.1)',
-                borderWidth: 2,
-                pointRadius: 0,
-                tension: 0.4,
-                yAxisID: 'y1',
-                fill: true,
-              },
-            ],
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: {
-              mode: 'index',
-              intersect: false,
-            },
-            plugins: {
-              legend: {
-                display: true,
-                position: 'top',
-                labels: {
-                  boxWidth: 10,
-                  padding: 6,
-                  font: { size: 10 },
-                  color: '#94a3b8',
-                },
-              },
-              tooltip: {
-                enabled: true,
-                mode: 'index',
-                intersect: false,
-                callbacks: {
-                  label: function(context: { dataset: { label?: string; yAxisID?: string }; parsed: { y: number | null } }) {
-                    let label = context.dataset.label || '';
-                    if (label) label += ': ';
-                    if (context.parsed.y !== null) {
-                      label += context.parsed.y.toFixed(2);
-                      if (context.dataset.yAxisID === 'y') {
-                        label += '%';
-                      } else {
-                        label += ' MB';
-                      }
-                    }
-                    return label;
-                  },
-                },
-              },
-            },
-            scales: {
-              x: { display: false },
-              y: {
-                display: true,
-                beginAtZero: true,
-                position: 'left',
-                title: { display: true, text: 'CPU %', font: { size: 9 }, color: '#94a3b8' },
-                ticks: { font: { size: 8 }, color: '#94a3b8' },
-                grid: { color: 'rgba(148, 163, 184, 0.1)' },
-              },
-              y1: {
-                display: true,
-                beginAtZero: true,
-                position: 'right',
-                title: { display: true, text: 'Memory MB', font: { size: 9 }, color: '#94a3b8' },
-                ticks: { font: { size: 8 }, color: '#94a3b8' },
-                grid: { drawOnChartArea: false },
-              },
-            },
-          },
-        });
-
-        console.log(`[InlineChart] Chart created successfully for ${containerId}`);
-        setHasData(true);
-      } catch (error) {
-        console.error('Error loading inline chart:', error);
-        if (mounted) setHasData(false);
-      }
-    };
-
-    loadAndRender();
-
-    return () => {
-      mounted = false;
-      if (chartRef.current) {
-        chartRef.current.destroy();
-        chartRef.current = null;
-      }
-    };
-  }, [chartLoaded, hostId, containerId]);
-
-  return (
-    <div className="h-32 relative">
-      <canvas ref={canvasRef} className="w-full h-full"></canvas>
-      {!chartLoaded && (
-        <div className="absolute inset-0 flex items-center justify-center text-xs text-[var(--text-secondary)] bg-[var(--bg-tertiary)]">
-          Loading Chart.js...
-        </div>
-      )}
-      {chartLoaded && hasData === null && (
-        <div className="absolute inset-0 flex items-center justify-center text-xs text-[var(--text-secondary)] bg-[var(--bg-tertiary)]">
-          Loading chart data...
-        </div>
-      )}
-      {chartLoaded && hasData === false && (
-        <div className="absolute inset-0 flex items-center justify-center text-xs text-[var(--text-secondary)] bg-[var(--bg-tertiary)]">
-          No stats data available
-        </div>
-      )}
-    </div>
-  );
-}
 
 // Logs Modal Component
 function LogsModal({ container, onClose }: { container: Container | null; onClose: () => void }) {
@@ -1420,6 +1174,54 @@ export default function ContainersPage() {
   const [updateContainer, setUpdateContainer] = useState<Container | null>(null);
   const [showBulkUpdateModal, setShowBulkUpdateModal] = useState(false);
 
+  // View toggle state
+  const [view, setView] = useState<'cards' | 'table'>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('containerView') as 'cards' | 'table') || 'cards';
+    }
+    return 'cards';
+  });
+
+  // Bulk selection state
+  const [selectedContainers, setSelectedContainers] = useState<Set<string>>(new Set());
+
+  // Mobile detection
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  const handleViewChange = (newView: 'cards' | 'table') => {
+    setView(newView);
+    localStorage.setItem('containerView', newView);
+  };
+
+  const toggleSelection = (containerId: string) => {
+    setSelectedContainers(prev => {
+      const next = new Set(prev);
+      if (next.has(containerId)) {
+        next.delete(containerId);
+      } else {
+        next.add(containerId);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedContainers.size === filteredContainers.length) {
+      setSelectedContainers(new Set());
+    } else {
+      setSelectedContainers(new Set(filteredContainers.map(c => c.id)));
+    }
+  };
+
+  const clearSelection = () => setSelectedContainers(new Set());
+
   const loadData = async () => {
     try {
       const [containersData, hostsData, lifecycleData] = await Promise.all([
@@ -1488,17 +1290,23 @@ export default function ContainersPage() {
     };
   }, [containers]);
 
-  // Create a lookup map for lifecycle data by container name and host
+  // Create a lookup map for lifecycle data by container id and host
   const lifecycleMap = useMemo(() => {
     const map = new Map<string, ContainerLifecycleSummary>();
     if (Array.isArray(lifecycleSummaries)) {
       lifecycleSummaries.forEach(summary => {
-        const key = `${summary.host_id}-${summary.container_name}`;
-        map.set(key, summary);
+        // Try to find matching container by name and host
+        const matchingContainer = containers.find(
+          c => c.name === summary.container_name && c.host_id === summary.host_id
+        );
+        if (matchingContainer) {
+          const key = `${matchingContainer.id}-${matchingContainer.host_id}`;
+          map.set(key, summary);
+        }
       });
     }
     return map;
-  }, [lifecycleSummaries]);
+  }, [lifecycleSummaries, containers]);
 
   if (loading) {
     return (
@@ -1529,61 +1337,107 @@ export default function ContainersPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap gap-4">
-        <input
-          type="text"
-          placeholder="Search containers..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="flex-1 min-w-[200px] bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg px-4 py-2 text-[var(--text-primary)] placeholder-[var(--text-tertiary)] focus:outline-none focus:border-[var(--accent)]"
-        />
-        <select
-          value={hostFilter}
-          onChange={(e) => setHostFilter(e.target.value)}
-          className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg px-4 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
-        >
-          <option value="">All Hosts</option>
-          {hosts.map(host => (
-            <option key={host.id} value={host.id.toString()}>{host.name}</option>
-          ))}
-        </select>
-        <select
-          value={stateFilter}
-          onChange={(e) => setStateFilter(e.target.value)}
-          className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg px-4 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
-        >
-          <option value="">All States</option>
-          <option value="running">Running</option>
-          <option value="exited">Stopped</option>
-          <option value="paused">Paused</option>
-        </select>
+      <div className="flex flex-wrap gap-4 items-center justify-between">
+        <div className="flex flex-wrap gap-4">
+          <input
+            type="text"
+            placeholder="Search containers..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="flex-1 min-w-[200px] bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg px-4 py-2 text-[var(--text-primary)] placeholder-[var(--text-tertiary)] focus:outline-none focus:border-[var(--accent)]"
+          />
+          <select
+            value={hostFilter}
+            onChange={(e) => setHostFilter(e.target.value)}
+            className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg px-4 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
+          >
+            <option value="">All Hosts</option>
+            {hosts.map(host => (
+              <option key={host.id} value={host.id.toString()}>{host.name}</option>
+            ))}
+          </select>
+          <select
+            value={stateFilter}
+            onChange={(e) => setStateFilter(e.target.value)}
+            className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg px-4 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
+          >
+            <option value="">All States</option>
+            <option value="running">Running</option>
+            <option value="exited">Stopped</option>
+            <option value="paused">Paused</option>
+          </select>
+        </div>
+
+        {/* View Toggle - hide on mobile */}
+        {!isMobile && (
+          <ViewToggle view={view} onChange={handleViewChange} />
+        )}
       </div>
 
-      {/* Container Grid */}
+      {/* Container Grid or Table */}
       {filteredContainers.length === 0 ? (
         <div className="text-center py-12 text-[var(--text-tertiary)]">
           No containers found
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
-          {filteredContainers.map(container => {
-            const lifecycleKey = `${container.host_id}-${container.name}`;
-            const lifecycleSummary = lifecycleMap.get(lifecycleKey);
+        <>
+          {/* Effective view - force cards on mobile */}
+          {(!isMobile && view === 'table') ? (
+            <ContainerTable
+              containers={filteredContainers}
+              lifecycleSummaries={lifecycleMap}
+              selectedContainers={selectedContainers}
+              onToggleSelection={toggleSelection}
+              onToggleSelectAll={toggleSelectAll}
+              onShowLogs={setLogsContainer}
+              onShowStats={setStatsContainer}
+              onShowHistory={setHistoryContainer}
+              onAction={async (container, action) => {
+                try {
+                  if (action === 'start') {
+                    await startContainer(container.host_id, container.id);
+                    await loadData();
+                  } else if (action === 'stop') {
+                    await stopContainer(container.host_id, container.id);
+                    await loadData();
+                  } else if (action === 'restart') {
+                    await restartContainer(container.host_id, container.id);
+                    await loadData();
+                  } else if (action === 'remove') {
+                    if (confirm(`Are you sure you want to remove container "${container.name}"?`)) {
+                      await removeContainer(container.host_id, container.id);
+                      await loadData();
+                    }
+                  }
+                } catch (error) {
+                  console.error(`Failed to ${action} container "${container.name}":`, error);
+                  alert(`Failed to ${action} container: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                }
+              }}
+              onUpdate={setUpdateContainer}
+            />
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+              {filteredContainers.map(container => {
+                const lifecycleKey = `${container.host_id}-${container.name}`;
+                const lifecycleSummary = lifecycleMap.get(lifecycleKey);
 
-            return (
-              <ContainerCard
-                key={`${container.host_id}-${container.id}`}
-                container={container}
-                lifecycleSummary={lifecycleSummary}
-                onAction={loadData}
-                onViewLogs={setLogsContainer}
-                onViewStats={setStatsContainer}
-                onViewHistory={setHistoryContainer}
-                onViewUpdate={setUpdateContainer}
-              />
-            );
-          })}
-        </div>
+                return (
+                  <ContainerCard
+                    key={`${container.host_id}-${container.id}`}
+                    container={container}
+                    lifecycleSummary={lifecycleSummary}
+                    onAction={loadData}
+                    onViewLogs={setLogsContainer}
+                    onViewStats={setStatsContainer}
+                    onViewHistory={setHistoryContainer}
+                    onViewUpdate={setUpdateContainer}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
 
       {/* Modals */}
