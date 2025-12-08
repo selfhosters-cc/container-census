@@ -43,6 +43,24 @@ export default function ContainerTable({
   onUpdate,
 }: ContainerTableProps) {
   const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: SortDirection } | null>(null);
+  const [loadingActions, setLoadingActions] = useState<Map<string, string>>(new Map()); // Map<containerId, action>
+
+  const handleAction = async (container: Container, action: 'start' | 'stop' | 'restart' | 'remove') => {
+    // Set loading state
+    setLoadingActions(prev => new Map(prev).set(container.id, action));
+
+    try {
+      // Call the parent handler
+      await onAction(container, action);
+    } finally {
+      // Clear loading state
+      setLoadingActions(prev => {
+        const next = new Map(prev);
+        next.delete(container.id);
+        return next;
+      });
+    }
+  };
 
   const handleSort = (key: SortKey) => {
     setSortConfig((prev) => {
@@ -241,62 +259,70 @@ export default function ContainerTable({
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => onShowLogs(container)}
-                            className="btn-icon"
-                            title="View logs"
-                          >
-                            📄
-                          </button>
-                          {isRunning && (
-                            <button
-                              onClick={() => onShowStats(container)}
-                              className="btn-icon"
-                              title="View stats"
-                            >
-                              📊
-                            </button>
-                          )}
-                          <button
-                            onClick={() => onShowHistory(container)}
-                            className="btn-icon"
-                            title="View history"
-                          >
-                            📜
-                          </button>
-                          {isRunning ? (
-                            <>
-                              <button
-                                onClick={() => onAction(container, 'restart')}
-                                className="btn-icon"
-                                title="Restart"
-                              >
-                                🔄
-                              </button>
-                              <button
-                                onClick={() => onAction(container, 'stop')}
-                                className="btn-icon"
-                                title="Stop"
-                              >
-                                ⏹️
-                              </button>
-                            </>
+                          {loadingActions.get(container.id) ? (
+                            <span className="text-xs text-[var(--text-secondary)] animate-pulse">
+                              {loadingActions.get(container.id)}...
+                            </span>
                           ) : (
                             <>
                               <button
-                                onClick={() => onAction(container, 'start')}
+                                onClick={() => onShowLogs(container)}
                                 className="btn-icon"
-                                title="Start"
+                                title="View logs"
                               >
-                                ▶️
+                                📄
                               </button>
+                              {isRunning && (
+                                <button
+                                  onClick={() => onShowStats(container)}
+                                  className="btn-icon"
+                                  title="View stats"
+                                >
+                                  📊
+                                </button>
+                              )}
                               <button
-                                onClick={() => onAction(container, 'remove')}
-                                className="btn-icon text-red-600 dark:text-red-400"
-                                title="Remove"
+                                onClick={() => onShowHistory(container)}
+                                className="btn-icon"
+                                title="View history"
                               >
-                                🗑️
+                                📜
                               </button>
+                              {isRunning ? (
+                                <>
+                                  <button
+                                    onClick={() => handleAction(container, 'restart')}
+                                    className="btn-icon"
+                                    title="Restart"
+                                  >
+                                    🔄
+                                  </button>
+                                  <button
+                                    onClick={() => handleAction(container, 'stop')}
+                                    className="btn-icon"
+                                    title="Stop"
+                                  >
+                                    ⏹️
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={() => handleAction(container, 'start')}
+                                    className="btn-icon"
+                                    title="Start"
+                                  >
+                                    ▶️
+                                  </button>
+                                  <button
+                                    onClick={() => handleAction(container, 'remove')}
+                                    className="btn-icon text-red-600 dark:text-red-400"
+                                    title="Remove"
+                                  >
+                                    🗑️
+                                  </button>
+                                </>
+                              )}
                             </>
                           )}
                         </div>

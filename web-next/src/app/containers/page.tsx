@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
-import { getContainers, getHosts, startContainer, stopContainer, restartContainer, removeContainer, getContainerLogs, getContainerStats, updateContainer, bulkCheckUpdates, bulkUpdate, getContainerLifecycleEvents, getContainerLifecycleSummaries } from '@/lib/api';
+import { getContainers, getHosts, startContainer, stopContainer, restartContainer, removeContainer, getContainerLogs, getContainerStats, updateContainer, bulkCheckUpdates, bulkUpdate, getContainerLifecycleEvents, getContainerLifecycleSummaries, scanHost } from '@/lib/api';
 import type { Container, Host, ContainerStatsPoint, ContainerLifecycleEvent, ContainerLifecycleSummary } from '@/types';
 import { formatUptime, extractImageTag, formatCpu, formatMemory as formatMemoryUtil, getStateIcon } from '@/lib/containerUtils';
 import InlineChart from '@/components/containers/InlineChart';
@@ -1396,19 +1396,22 @@ export default function ContainersPage() {
                 try {
                   if (action === 'start') {
                     await startContainer(container.host_id, container.id);
-                    await loadData();
                   } else if (action === 'stop') {
                     await stopContainer(container.host_id, container.id);
-                    await loadData();
                   } else if (action === 'restart') {
                     await restartContainer(container.host_id, container.id);
-                    await loadData();
                   } else if (action === 'remove') {
-                    if (confirm(`Are you sure you want to remove container "${container.name}"?`)) {
-                      await removeContainer(container.host_id, container.id);
-                      await loadData();
+                    if (!confirm(`Are you sure you want to remove container "${container.name}"?`)) {
+                      return; // User cancelled
                     }
+                    await removeContainer(container.host_id, container.id);
                   }
+
+                  // Trigger a rescan of the specific host to get updated status
+                  await scanHost(container.host_id);
+
+                  // Reload all data to show the updated status
+                  await loadData();
                 } catch (error) {
                   console.error(`Failed to ${action} container "${container.name}":`, error);
                   alert(`Failed to ${action} container: ${error instanceof Error ? error.message : 'Unknown error'}`);
