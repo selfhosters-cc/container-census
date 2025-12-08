@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/container-census/container-census/internal/models"
@@ -2450,6 +2451,30 @@ func (db *DB) SetPreference(key, value string) error {
 	`, key, value, value)
 	if err != nil {
 		return fmt.Errorf("failed to set preference: %w", err)
+	}
+	return nil
+}
+
+// DeletePreference removes one or more user preferences
+func (db *DB) DeletePreference(keys ...string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+
+	// Build placeholders for IN clause
+	placeholders := make([]string, len(keys))
+	args := make([]interface{}, len(keys))
+	for i, key := range keys {
+		placeholders[i] = "?"
+		args[i] = key
+	}
+
+	query := fmt.Sprintf(`DELETE FROM user_preferences WHERE key IN (%s)`,
+		strings.Join(placeholders, ","))
+
+	_, err := db.conn.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to delete preferences: %w", err)
 	}
 	return nil
 }

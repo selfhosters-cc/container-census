@@ -64,13 +64,14 @@ export default function PluginPageClient() {
               }
             };
 
-            // Call the plugin's init function
-            const initFn = (window as any).initGraphVisualizer;
+            // Call the plugin's init function (use init_func from tab metadata)
+            const initFuncName = matchingTab.init_func || 'initGraphVisualizer';
+            const initFn = (window as any)[initFuncName];
             if (typeof initFn === 'function') {
-              console.log('[PluginPage] Calling plugin init function');
+              console.log(`[PluginPage] Calling plugin init function: ${initFuncName}`);
               initFn(container, sdk);
             } else {
-              console.error('[PluginPage] Plugin init function not found');
+              console.error(`[PluginPage] Plugin init function not found: ${initFuncName}`);
               setError('Plugin initialization function not found');
             }
           };

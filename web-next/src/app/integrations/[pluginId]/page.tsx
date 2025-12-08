@@ -4,9 +4,11 @@ import PluginPageClient from './PluginPageClient';
 export async function generateStaticParams() {
   // For static export, we need to pre-define known plugin routes
   // External plugins installed at runtime won't have pages pre-generated
+  // Note: npm has its own static page at /integrations/npm/page.tsx
   return [
     { pluginId: 'graph' },
     { pluginId: 'graph-visualizer' },
+    { pluginId: 'security' },
   ];
 }
 

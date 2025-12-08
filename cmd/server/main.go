@@ -21,6 +21,7 @@ import (
 	"github.com/container-census/container-census/internal/plugins"
 	"github.com/container-census/container-census/internal/plugins/builtin/graph"
 	"github.com/container-census/container-census/internal/plugins/builtin/npm"
+	"github.com/container-census/container-census/internal/plugins/builtin/security"
 	"github.com/container-census/container-census/internal/registry"
 	"github.com/container-census/container-census/internal/scanner"
 	"github.com/container-census/container-census/internal/storage"
@@ -249,6 +250,7 @@ func main() {
 	// Register built-in plugins
 	npm.Register(pluginManager)
 	graph.Register(pluginManager)
+	security.Register(pluginManager)
 
 	// Load and start plugins
 	if err := pluginManager.LoadBuiltInPlugins(context.Background()); err != nil {
@@ -306,11 +308,8 @@ func main() {
 		}
 	}
 
-	// Check for updates on startup
-	go checkForUpdates()
-
-	// Start daily version check
-	go runDailyVersionCheck(ctx)
+	// Version checking is now handled by telemetry collector
+	// UI will call collector directly for version checks
 
 	// Start daily database cleanup
 	go runDailyDatabaseCleanup(ctx, db)
@@ -584,37 +583,6 @@ func queueImagesForScanning(containers []models.Container, hostID int64, db *sto
 	// Note: Not logging queue count here because QueueScan silently skips images that
 	// don't need scanning (already scanned within cache TTL). Check queue status on
 	// Security tab to see actual scanning activity.
-}
-
-// checkForUpdates checks for new versions and logs a warning if an update is available
-func checkForUpdates() {
-	info := version.CheckLatestVersion()
-
-	if info.Error != nil {
-		// Silently ignore errors during version check
-		log.Printf("Version check: %v", info.Error)
-		return
-	}
-
-	if info.UpdateAvailable {
-		log.Printf("⚠️  UPDATE AVAILABLE: Container Census %s → %s", info.CurrentVersion, info.LatestVersion)
-		log.Printf("   Download: %s", info.ReleaseURL)
-	}
-}
-
-// runDailyVersionCheck performs version checks once per day
-func runDailyVersionCheck(ctx context.Context) {
-	ticker := time.NewTicker(24 * time.Hour)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			checkForUpdates()
-		}
-	}
 }
 
 // runDailyDatabaseCleanup performs database cleanup of redundant scans once per day

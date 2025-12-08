@@ -271,13 +271,19 @@ export default function NotificationsPage() {
         getNotificationSilences(),
         getNotificationStatus(),
       ]);
-      setLogs(logsData);
-      setChannels(channelsData);
-      setRules(rulesData);
-      setSilences(silencesData);
-      setStatus(statusData);
+      setLogs(logsData || []);
+      setChannels(channelsData || []);
+      setRules(rulesData || []);
+      setSilences(silencesData || []);
+      setStatus(statusData || { unread_count: 0 });
     } catch (error) {
       console.error('Failed to load notifications:', error);
+      // Ensure we still have valid empty arrays on error
+      setLogs([]);
+      setChannels([]);
+      setRules([]);
+      setSilences([]);
+      setStatus({ unread_count: 0 });
     } finally {
       setLoading(false);
     }
@@ -290,18 +296,32 @@ export default function NotificationsPage() {
   }, []);
 
   const handleMarkRead = async (id: number) => {
-    await markNotificationRead(id);
-    await loadData();
+    try {
+      await markNotificationRead(id);
+      await loadData();
+    } catch (error) {
+      console.error('Failed to mark notification as read:', error);
+    }
   };
 
   const handleMarkAllRead = async () => {
-    await markAllNotificationsRead();
-    await loadData();
+    try {
+      await markAllNotificationsRead();
+      await loadData();
+    } catch (error) {
+      console.error('Failed to mark all notifications as read:', error);
+      alert('Failed to mark all notifications as read. Please try again.');
+    }
   };
 
   const handleClearOld = async () => {
-    await clearOldNotifications();
-    await loadData();
+    try {
+      await clearOldNotifications();
+      await loadData();
+    } catch (error) {
+      console.error('Failed to clear old notifications:', error);
+      alert('Failed to clear old notifications. Please try again.');
+    }
   };
 
   const handleSaveChannel = async (channelData: Partial<NotificationChannel>) => {

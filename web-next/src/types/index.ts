@@ -236,6 +236,20 @@ export interface HealthStatus {
   release_url?: string;
 }
 
+export interface VersionCheckResponse {
+  current_version: string;
+  latest_version: string;
+  update_available: boolean;
+  release_url: string;
+  checked_at: string;
+  error?: string;
+}
+
+export interface DismissedVersionPreference {
+  dismissed_version: string | null;
+  dismiss_until_major: boolean;
+}
+
 // Dashboard stats
 export interface DashboardStats {
   total_hosts: number;

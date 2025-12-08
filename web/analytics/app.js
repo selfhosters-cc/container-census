@@ -1,5 +1,6 @@
 let topImagesChart = null;
 let growthChart = null;
+let activeInstallsChart = null;
 let registriesChart = null;
 let versionsChart = null;
 let scanIntervalsChart = null;
@@ -256,6 +257,103 @@ function initCharts() {
                     },
                     grid: {
                         drawOnChartArea: false
+                    }
+                }
+            }
+        }
+    });
+
+    // Active Installations Chart
+    const activeInstallsCtx = document.getElementById('activeInstallsChart').getContext('2d');
+    activeInstallsChart = new Chart(activeInstallsCtx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Active Installations',
+                data: [],
+                borderColor: gradientColors.teal.solid,
+                backgroundColor: function(context) {
+                    const chart = context.chart;
+                    const {ctx, chartArea} = chart;
+                    if (!chartArea) return gradientColors.teal.start;
+                    const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+                    gradient.addColorStop(0, gradientColors.teal.end);
+                    gradient.addColorStop(1, gradientColors.teal.start);
+                    return gradient;
+                },
+                tension: 0.4,
+                fill: true,
+                pointRadius: 4,
+                pointHoverRadius: 7,
+                pointBackgroundColor: gradientColors.teal.solid,
+                pointBorderColor: '#fff',
+                pointBorderWidth: 2,
+                pointHoverBorderWidth: 3,
+                borderWidth: 3
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            interaction: {
+                mode: 'index',
+                intersect: false
+            },
+            animation: {
+                duration: 2000,
+                easing: 'easeInOutQuart'
+            },
+            plugins: {
+                legend: {
+                    display: false
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                    padding: 12,
+                    titleFont: {
+                        size: 14,
+                        weight: 'bold'
+                    },
+                    bodyFont: {
+                        size: 13
+                    },
+                    callbacks: {
+                        label: function(context) {
+                            return ' ' + context.parsed.y.toLocaleString() + ' active installations';
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: 'Active Installations',
+                        font: {
+                            size: 14,
+                            weight: 'bold'
+                        }
+                    },
+                    ticks: {
+                        stepSize: 1,
+                        callback: function(value) {
+                            return value.toLocaleString();
+                        }
+                    },
+                    grid: {
+                        color: 'rgba(0, 0, 0, 0.05)'
+                    }
+                },
+                x: {
+                    grid: {
+                        display: false
+                    },
+                    ticks: {
+                        font: {
+                            size: 11
+                        }
                     }
                 }
             }
@@ -735,6 +833,9 @@ async function loadData() {
         // Load growth data
         await loadGrowth(days);
 
+        // Load active installations data
+        await loadActiveInstalls();
+
         // Load new charts
         await loadRegistries(days);
         await loadVersions();
@@ -754,7 +855,8 @@ async function loadSummary() {
 
         const data = await response.json();
 
-        document.getElementById('totalInstallations').textContent = formatNumber(data.installations);
+        // Use active_installs_30d if available, fallback to installations
+        document.getElementById('totalInstallations').textContent = formatNumber(data.active_installs_30d || data.installations);
         document.getElementById('totalSubmissions').textContent = formatNumber(data.total_submissions);
         document.getElementById('totalContainers').textContent = formatNumber(data.total_containers);
         document.getElementById('avgContainers').textContent = data.avg_containers_per_install ? data.avg_containers_per_install.toFixed(1) : '-';
@@ -800,6 +902,22 @@ async function loadGrowth(days) {
         growthChart.update();
     } catch (error) {
         console.error('Failed to load growth:', error);
+    }
+}
+
+async function loadActiveInstalls() {
+    try {
+        const response = await fetch('/api/stats/active-installs');
+        if (!response.ok) throw new Error('Failed to fetch active installations');
+
+        const data = await response.json();
+
+        // Update chart with daily active installs data
+        activeInstallsChart.data.labels = data.daily_active_installs.map(item => formatDate(item.date));
+        activeInstallsChart.data.datasets[0].data = data.daily_active_installs.map(item => item.count);
+        activeInstallsChart.update();
+    } catch (error) {
+        console.error('Failed to load active installations:', error);
     }
 }
 

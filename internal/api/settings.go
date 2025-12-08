@@ -366,3 +366,81 @@ func (s *Server) handleNuclearReset(w http.ResponseWriter, r *http.Request) {
 		"stats":   stats,
 	})
 }
+
+// ======= USER PREFERENCES ENDPOINTS =======
+
+// handleGetDismissedVersion returns the currently dismissed version preference
+func (s *Server) handleGetDismissedVersion(w http.ResponseWriter, r *http.Request) {
+	version, err := s.db.GetPreference("dismissed_version")
+	if err != nil {
+		// No dismissed version set
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"dismissed_version":   nil,
+			"dismiss_until_major": false,
+		})
+		return
+	}
+
+	dismissMajor, _ := s.db.GetPreference("dismiss_until_major")
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"dismissed_version":   version,
+		"dismiss_until_major": dismissMajor == "true",
+	})
+}
+
+// handleDismissVersion dismisses a specific version or until next major release
+func (s *Server) handleDismissVersion(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Version           string `json:"version"`
+		DismissUntilMajor bool   `json:"dismiss_until_major"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	// Validate version is not empty
+	if req.Version == "" {
+		http.Error(w, "Version is required", http.StatusBadRequest)
+		return
+	}
+
+	// Save dismissed version
+	if err := s.db.SetPreference("dismissed_version", req.Version); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to save preference: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Save dismiss until major flag
+	dismissMajor := "false"
+	if req.DismissUntilMajor {
+		dismissMajor = "true"
+	}
+	if err := s.db.SetPreference("dismiss_until_major", dismissMajor); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to save preference: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("User dismissed version %s (until_major: %v)", req.Version, req.DismissUntilMajor)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleClearDismissedVersion clears the dismissed version preference
+func (s *Server) handleClearDismissedVersion(w http.ResponseWriter, r *http.Request) {
+	// Delete both preferences
+	if err := s.db.DeletePreference("dismissed_version", "dismiss_until_major"); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to clear preferences: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	log.Println("User cleared dismissed version preferences")
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}

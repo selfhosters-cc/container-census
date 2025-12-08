@@ -17,7 +17,6 @@ const mainNavItems: NavItem[] = [
   { href: '/', label: 'Dashboard', icon: '📊' },
   { href: '/containers', label: 'Containers', icon: '📦' },
   { href: '/hosts', label: 'Hosts', icon: '🖥️' },
-  { href: '/security', label: 'Security', icon: '🛡️' },
 ];
 
 const bottomNavItems: NavItem[] = [
@@ -108,41 +107,39 @@ export default function Sidebar() {
           ))}
         </div>
 
-        {/* Integrations section - always expanded */}
-        {pluginTabs.length > 0 && (
-          <div className="mt-4">
-            <div className="px-3 py-2 text-xs font-semibold text-[var(--text-tertiary)] uppercase tracking-wider">
-              Integrations
-            </div>
-            <div className="space-y-1">
-              {pluginTabs.map((tab) => (
-                <Link
-                  key={tab.id}
-                  href={`/integrations/${tab.id}`}
-                  className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    pathname === `/integrations/${tab.id}`
-                      ? 'bg-[var(--accent)] text-white'
-                      : 'text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]'
-                  }`}
-                >
-                  <span className="text-lg">{tab.icon}</span>
-                  <span>{tab.label}</span>
-                </Link>
-              ))}
+        {/* Integrations section - always show Manage Plugins */}
+        <div className="mt-4">
+          <div className="px-3 py-2 text-xs font-semibold text-[var(--text-tertiary)] uppercase tracking-wider">
+            Integrations
+          </div>
+          <div className="space-y-1">
+            {pluginTabs.map((tab) => (
               <Link
-                href="/integrations"
+                key={tab.id}
+                href={`/integrations/${tab.id}`}
                 className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  pathname === '/integrations'
+                  pathname === `/integrations/${tab.id}`
                     ? 'bg-[var(--accent)] text-white'
                     : 'text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]'
                 }`}
               >
-                <span className="text-lg">⚙️</span>
-                <span>Manage Plugins</span>
+                <span className="text-lg">{tab.icon}</span>
+                <span>{tab.label}</span>
               </Link>
-            </div>
+            ))}
+            <Link
+              href="/integrations"
+              className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                pathname === '/integrations'
+                  ? 'bg-[var(--accent)] text-white'
+                  : 'text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              <span className="text-lg">⚙️</span>
+              <span>Manage Plugins</span>
+            </Link>
           </div>
-        )}
+        </div>
 
         {/* Bottom navigation */}
         <div className="mt-4 pt-4 border-t border-[var(--border)] space-y-1">

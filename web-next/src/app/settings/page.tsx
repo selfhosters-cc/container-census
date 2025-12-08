@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getHealth } from '@/lib/api';
-import type { HealthStatus } from '@/types';
+import { getHealth, checkVersion, clearDismissedVersion } from '@/lib/api';
+import type { HealthStatus, VersionCheckResponse } from '@/types';
 
 interface Settings {
   scanner: {
@@ -67,6 +67,7 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState<string | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [versionInfo, setVersionInfo] = useState<VersionCheckResponse | null>(null);
 
   const loadData = async () => {
     try {
@@ -90,11 +91,22 @@ export default function SettingsPage() {
   const handleCheckUpdates = async () => {
     setCheckingUpdates(true);
     try {
+      // Clear any previous dismissals when manually checking
+      await clearDismissedVersion();
+
+      // Force fresh check via telemetry collector
+      const versionData = await checkVersion();
+      setVersionInfo(versionData);
+
+      // Refresh health status to show in UI
       const healthData = await getHealth();
       setHealth(healthData);
+
+      // Show modal with results
       setShowUpdateModal(true);
     } catch (error) {
       console.error('Failed to check for updates:', error);
+      alert('Failed to check for updates. Please try again later.');
     } finally {
       setCheckingUpdates(false);
     }
@@ -285,11 +297,11 @@ export default function SettingsPage() {
       </div>
 
       {/* Update Modal */}
-      {showUpdateModal && (
+      {showUpdateModal && versionInfo && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg w-full max-w-md p-6">
             <h2 className="text-xl font-bold mb-4">Software Update</h2>
-            {health?.update_available ? (
+            {versionInfo.update_available ? (
               <>
                 <p className="text-[var(--text-secondary)] mb-4">
                   A new version of Container Census is available!
@@ -297,16 +309,16 @@ export default function SettingsPage() {
                 <div className="space-y-2 mb-6">
                   <div className="flex justify-between">
                     <span className="text-[var(--text-secondary)]">Current Version:</span>
-                    <span className="font-medium">v{health.version}</span>
+                    <span className="font-medium">v{versionInfo.current_version}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-[var(--text-secondary)]">Latest Version:</span>
-                    <span className="font-medium text-[var(--success)]">v{health.latest_version}</span>
+                    <span className="font-medium text-[var(--success)]">v{versionInfo.latest_version}</span>
                   </div>
                 </div>
                 <div className="flex gap-3">
                   <a
-                    href={health.release_url}
+                    href={versionInfo.release_url}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex-1 px-4 py-2 text-sm text-center bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)] transition-colors"
@@ -324,7 +336,7 @@ export default function SettingsPage() {
             ) : (
               <>
                 <p className="text-[var(--text-secondary)] mb-6">
-                  You are running the latest version of Container Census (v{health?.version}).
+                  You are running the latest version of Container Census (v{versionInfo.current_version}).
                 </p>
                 <button
                   onClick={() => setShowUpdateModal(false)}

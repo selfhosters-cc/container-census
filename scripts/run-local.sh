@@ -166,4 +166,5 @@ SESSION_SECRET=${SESSION_SECRET} \
 DATABASE_PATH=/opt/docker-compose/census-server/census/server/${DB_FILE} \
 TRIVY_CACHE_DIR=/tmp/trivy-cache \
 WEB_DIR=${WEB_DIR} \
+TELEMETRY_ENDPOINT_URL=http://100.91.119.113:8081/api/ingest \
 /tmp/census-server

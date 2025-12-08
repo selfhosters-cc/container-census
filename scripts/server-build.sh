@@ -48,6 +48,23 @@ if [ -d "$GRAPH_PLUGIN_DIR/src" ]; then
     echo -e "${GREEN}Graph Plugin frontend built successfully!${NC}"
 fi
 
+# Build Security Plugin Frontend
+SECURITY_PLUGIN_DIR="$PROJECT_ROOT/internal/plugins/builtin/security/frontend"
+if [ -d "$SECURITY_PLUGIN_DIR/src" ]; then
+    echo -e "${YELLOW}Building Security Plugin frontend...${NC}"
+
+    # Check if node_modules exists, if not install dependencies
+    if [ ! -d "$SECURITY_PLUGIN_DIR/node_modules" ]; then
+        echo "Installing Security Plugin npm dependencies..."
+        (cd "$SECURITY_PLUGIN_DIR" && npm install)
+    fi
+
+    # Build the webpack bundle
+    (cd "$SECURITY_PLUGIN_DIR" && npm run build)
+
+    echo -e "${GREEN}Security Plugin frontend built successfully!${NC}"
+fi
+
 # Build Go server
 echo -e "${YELLOW}Building Go server...${NC}"
 cd "$PROJECT_ROOT"

@@ -123,6 +123,9 @@ func main() {
 	// Create weekly snapshot on startup if needed, then schedule weekly
 	go server.runWeeklySnapshotJob(bgCtx)
 
+	// Start daily cleanup job for old version checks
+	go server.runDailyCleanup(bgCtx)
+
 	// Start server
 	go func() {
 		log.Printf("Telemetry collector listening on http://0.0.0.0%s", addr)
@@ -157,12 +160,16 @@ func (s *Server) setupRoutes() {
 	// Ingest endpoint - always public (anonymous telemetry submission)
 	s.router.HandleFunc("/api/ingest", s.handleIngest).Methods("POST")
 
+	// Version check endpoint - always public (no auth required), with CORS
+	s.router.HandleFunc("/api/version/check", s.corsMiddleware(s.handleVersionCheck)).Methods("POST", "OPTIONS")
+
 	// Stats API - protected by API key (read-only analytics data)
 	s.router.HandleFunc("/api/stats/top-images", s.apiKeyMiddleware(s.handleTopImages)).Methods("GET", "OPTIONS")
 	s.router.HandleFunc("/api/stats/image-details", s.apiKeyMiddleware(s.handleImageDetails)).Methods("GET", "OPTIONS")
 	s.router.HandleFunc("/api/stats/growth", s.apiKeyMiddleware(s.handleGrowth)).Methods("GET", "OPTIONS")
 	s.router.HandleFunc("/api/stats/installations", s.apiKeyMiddleware(s.handleInstallations)).Methods("GET", "OPTIONS")
 	s.router.HandleFunc("/api/stats/summary", s.apiKeyMiddleware(s.handleSummary)).Methods("GET", "OPTIONS")
+	s.router.HandleFunc("/api/stats/active-installs", s.handleActiveInstalls).Methods("GET", "OPTIONS")
 	s.router.HandleFunc("/api/stats/registries", s.apiKeyMiddleware(s.handleRegistries)).Methods("GET", "OPTIONS")
 	s.router.HandleFunc("/api/stats/versions", s.apiKeyMiddleware(s.handleVersions)).Methods("GET", "OPTIONS")
 	s.router.HandleFunc("/api/stats/activity-heatmap", s.apiKeyMiddleware(s.handleActivityHeatmap)).Methods("GET", "OPTIONS")
@@ -242,6 +249,24 @@ func (s *Server) apiKeyMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// CORS middleware for public endpoints
+func (s *Server) corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Add CORS headers for cross-origin requests
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		// Handle preflight requests
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	}
+}
+
 // Health check
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if err := s.db.Ping(); err != nil {
@@ -299,6 +324,65 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusCreated, map[string]string{
 		"status":  "success",
 		"message": "Telemetry received",
+	})
+}
+
+// Handle version check requests
+func (s *Server) handleVersionCheck(w http.ResponseWriter, r *http.Request) {
+	// Parse request body
+	var req struct {
+		InstallationID string `json:"installation_id"`
+		CurrentVersion string `json:"current_version"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+
+	// Validate required fields
+	if req.InstallationID == "" || req.CurrentVersion == "" {
+		respondError(w, http.StatusBadRequest, "Missing installation_id or current_version")
+		return
+	}
+
+	// Record this version check (upsert)
+	_, err := s.db.Exec(`
+		INSERT INTO version_checks (installation_id, current_version, checked_at)
+		VALUES ($1, $2, NOW())
+		ON CONFLICT (installation_id)
+		DO UPDATE SET current_version = $2, checked_at = NOW()
+	`, req.InstallationID, req.CurrentVersion)
+
+	if err != nil {
+		log.Printf("Error recording version check: %v", err)
+		// Continue anyway - don't fail the check
+	}
+
+	// Check GitHub API (using existing version package logic)
+	info := version.CheckLatestVersion()
+
+	// If there was an error checking GitHub, still return a valid response
+	if info.Error != nil {
+		log.Printf("Error checking GitHub for latest version: %v", info.Error)
+		respondJSON(w, http.StatusOK, map[string]interface{}{
+			"current_version":  req.CurrentVersion,
+			"latest_version":   "",
+			"update_available": false,
+			"release_url":      "",
+			"checked_at":       time.Now().UTC(),
+			"error":            info.Error.Error(),
+		})
+		return
+	}
+
+	// Return version info
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"current_version":  req.CurrentVersion,
+		"latest_version":   info.LatestVersion,
+		"update_available": info.UpdateAvailable,
+		"release_url":      info.ReleaseURL,
+		"checked_at":       time.Now().UTC(),
 	})
 }
 
@@ -870,6 +954,7 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 		TotalHosts             int     `json:"total_hosts"`
 		TotalAgents            int     `json:"total_agents"`
 		UniqueImages           int     `json:"unique_images"`
+		ActiveInstalls30d      int     `json:"active_installs_30d"`
 	}
 
 	var summary Summary
@@ -907,7 +992,83 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get active installations count (last 30 days from version_checks)
+	err = s.db.QueryRow(`
+		SELECT COUNT(DISTINCT installation_id)
+		FROM version_checks
+		WHERE checked_at >= NOW() - INTERVAL '30 days'
+	`).Scan(&summary.ActiveInstalls30d)
+	if err != nil {
+		// If table doesn't exist yet or query fails, default to 0
+		summary.ActiveInstalls30d = 0
+	}
+
 	respondJSON(w, http.StatusOK, summary)
+}
+
+// Get active installations stats
+func (s *Server) handleActiveInstalls(w http.ResponseWriter, r *http.Request) {
+	// Parse time window parameter (default: 30 days)
+	daysStr := r.URL.Query().Get("days")
+	days := 30
+	if daysStr != "" {
+		if d, err := strconv.Atoi(daysStr); err == nil && d > 0 && d <= 365 {
+			days = d
+		}
+	}
+
+	// Query active installations (version checks within time window)
+	var activeInstalls int
+	err := s.db.QueryRow(`
+		SELECT COUNT(DISTINCT installation_id)
+		FROM version_checks
+		WHERE checked_at >= NOW() - INTERVAL '1 day' * $1
+	`, days).Scan(&activeInstalls)
+
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Database query failed: "+err.Error())
+		return
+	}
+
+	// Query total unique installations ever seen
+	var totalInstalls int
+	s.db.QueryRow(`
+		SELECT COUNT(DISTINCT installation_id)
+		FROM version_checks
+	`).Scan(&totalInstalls)
+
+	// Query daily active installs for chart (last 30 days)
+	rows, err := s.db.Query(`
+		SELECT
+			DATE(checked_at) as check_date,
+			COUNT(DISTINCT installation_id) as count
+		FROM version_checks
+		WHERE checked_at >= NOW() - INTERVAL '30 days'
+		GROUP BY DATE(checked_at)
+		ORDER BY check_date ASC
+	`)
+
+	dailyData := []map[string]interface{}{}
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var date time.Time
+			var count int
+			if err := rows.Scan(&date, &count); err == nil {
+				dailyData = append(dailyData, map[string]interface{}{
+					"date":  date.Format("2006-01-02"),
+					"count": count,
+				})
+			}
+		}
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"active_installs_30d":   activeInstalls,
+		"total_installs_ever":   totalInstalls,
+		"daily_active_installs": dailyData,
+		"checked_at":            time.Now().UTC(),
+	})
 }
 
 // Get registry distribution stats
@@ -1397,6 +1558,15 @@ func initSchema(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_image_stats_weekly_week ON image_stats_weekly(week_start);
 	CREATE INDEX IF NOT EXISTS idx_image_stats_weekly_image ON image_stats_weekly(image);
 	CREATE INDEX IF NOT EXISTS idx_image_stats_weekly_first_seen ON image_stats_weekly(first_seen);
+
+	-- Version checks table for tracking active installations
+	CREATE TABLE IF NOT EXISTS version_checks (
+		installation_id VARCHAR(255) NOT NULL PRIMARY KEY,
+		current_version VARCHAR(50) NOT NULL,
+		checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_version_checks_checked_at ON version_checks(checked_at);
 	`
 
 	_, err := db.Exec(schema)
@@ -1819,6 +1989,42 @@ func (s *Server) runWeeklySnapshotJob(ctx context.Context) {
 				log.Printf("Warning: Failed to create weekly snapshot: %v", err)
 			}
 		}
+	}
+}
+
+// runDailyCleanup runs daily cleanup tasks (old version checks, etc.)
+func (s *Server) runDailyCleanup(ctx context.Context) {
+	// Run cleanup immediately on startup
+	s.cleanupOldVersionChecks()
+
+	// Then run daily at 3 AM UTC
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.cleanupOldVersionChecks()
+		}
+	}
+}
+
+// cleanupOldVersionChecks removes version check records older than 60 days
+func (s *Server) cleanupOldVersionChecks() {
+	result, err := s.db.Exec(`
+		DELETE FROM version_checks
+		WHERE checked_at < NOW() - INTERVAL '60 days'
+	`)
+	if err != nil {
+		log.Printf("Error cleaning up old version checks: %v", err)
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected > 0 {
+		log.Printf("Cleaned up %d old version check records (>60 days)", rowsAffected)
 	}
 }
 

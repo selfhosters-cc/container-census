@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,10 +15,6 @@ import (
 	"github.com/container-census/container-census/internal/storage"
 	"github.com/container-census/container-census/internal/version"
 	"github.com/google/uuid"
-)
-
-const (
-	installationIDFile = "./data/.installation_id"
 )
 
 // Collector gathers anonymous telemetry data
@@ -271,6 +268,12 @@ func (c *Collector) CollectReport(ctx context.Context, agentStats map[string]*mo
 
 // getOrCreateInstallationID gets or creates a unique installation ID
 func getOrCreateInstallationID() (string, error) {
+	// Installation ID is stored in /app/data (container) or ./data (local dev)
+	installationIDFile := "/app/data/.installation_id"
+	if _, err := os.Stat("/app/data"); os.IsNotExist(err) {
+		installationIDFile = "./data/.installation_id"
+	}
+
 	// Try to read existing ID
 	data, err := os.ReadFile(installationIDFile)
 	if err == nil {
@@ -282,6 +285,9 @@ func getOrCreateInstallationID() (string, error) {
 
 	// Generate new UUID
 	newID := uuid.New().String()
+
+	// Ensure directory exists
+	os.MkdirAll(filepath.Dir(installationIDFile), 0755)
 
 	// Try to save it
 	if err := os.WriteFile(installationIDFile, []byte(newID), 0644); err != nil {

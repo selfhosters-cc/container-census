@@ -533,6 +533,12 @@ func (s *scopedPluginDB) SetSetting(key string, value string) error {
 	return s.db.SetPluginSetting(s.pluginID, key, value)
 }
 
+// GetRawDB returns the underlying storage.DB for built-in plugins that need full database access
+// This should only be used by trusted built-in plugins like the security plugin
+func (s *scopedPluginDB) GetRawDB() *storage.DB {
+	return s.db
+}
+
 func (s *scopedPluginDB) GetAllSettings() (map[string]string, error) {
 	return s.db.GetAllPluginSettings(s.pluginID)
 }

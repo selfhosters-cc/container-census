@@ -22,6 +22,7 @@ import (
 	"github.com/container-census/container-census/internal/storage"
 	"github.com/container-census/container-census/internal/telemetry"
 	"github.com/container-census/container-census/internal/version"
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 )
 
@@ -168,6 +169,9 @@ func (s *Server) setupRoutes() {
 	// Health endpoint for monitoring
 	s.router.HandleFunc("/api/health", s.handleHealth).Methods("GET", "HEAD")
 
+	// Installation ID endpoint (used by frontend for version checking)
+	s.router.HandleFunc("/api/installation-id", s.handleInstallationID).Methods("GET")
+
 	// Login/logout endpoints
 	s.router.HandleFunc("/api/login", s.handleLogin).Methods("POST")
 	s.router.HandleFunc("/api/logout", s.handleLogout).Methods("POST")
@@ -281,6 +285,11 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/settings/import", s.handleImportSettings).Methods("POST")
 	api.HandleFunc("/settings/migration-status", s.handleGetMigrationStatus).Methods("GET")
 	api.HandleFunc("/settings/migration-ack", s.handleAcknowledgeMigration).Methods("POST")
+
+	// User preferences endpoints
+	api.HandleFunc("/preferences/dismissed-version", s.handleGetDismissedVersion).Methods("GET")
+	api.HandleFunc("/preferences/dismiss-version", s.handleDismissVersion).Methods("POST")
+	api.HandleFunc("/preferences/dismissed-version", s.handleClearDismissedVersion).Methods("DELETE")
 
 	// Danger Zone endpoints (destructive operations)
 	api.HandleFunc("/settings/reset", s.handleResetSettings).Methods("POST")
@@ -824,17 +833,34 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"auth_enabled": s.authConfig.Enabled,
 	}
 
-	// Add update information if available
-	updateInfo := version.GetUpdateInfo()
-	if updateInfo != nil && updateInfo.Error == nil {
-		response["latest_version"] = updateInfo.LatestVersion
-		response["update_available"] = updateInfo.UpdateAvailable
-		if updateInfo.UpdateAvailable {
-			response["release_url"] = updateInfo.ReleaseURL
-		}
-	}
+	// Version checking is now handled by telemetry collector
+	// UI will call collector directly for version checks
 
 	respondJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleInstallationID(w http.ResponseWriter, r *http.Request) {
+	// Installation ID is stored in /app/data (container) or ./data (local dev)
+	installationIDFile := "/app/data/.installation_id"
+	if _, err := os.Stat("/app/data"); os.IsNotExist(err) {
+		installationIDFile = "./data/.installation_id"
+	}
+
+	id, err := os.ReadFile(installationIDFile)
+	if err != nil {
+		// Generate new ID if not found
+		newID := uuid.New().String()
+		os.MkdirAll(filepath.Dir(installationIDFile), 0755)
+		os.WriteFile(installationIDFile, []byte(newID), 0644)
+		respondJSON(w, http.StatusOK, map[string]string{
+			"installation_id": newID,
+		})
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"installation_id": strings.TrimSpace(string(id)),
+	})
 }
 
 // Helper functions

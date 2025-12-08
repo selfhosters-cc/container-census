@@ -71,25 +71,25 @@ export const scanHost = (id: number) =>
 // Images
 export const getImages = () => fetchApi<import('@/types').Image[]>('/images');
 
-// Vulnerabilities
+// Vulnerabilities (Security Plugin)
 export const getVulnerabilitySummary = () =>
-  fetchApi<import('@/types').VulnerabilitySummary>('/vulnerabilities/summary');
+  fetchApi<import('@/types').VulnerabilitySummary>('/p/security/summary');
 export const getVulnerabilityScans = (limit?: number) =>
-  fetchApi<import('@/types').VulnerabilityScan[]>(`/vulnerabilities/scans${limit ? `?limit=${limit}` : ''}`);
+  fetchApi<import('@/types').VulnerabilityScan[]>(`/p/security/scans${limit ? `?limit=${limit}` : ''}`);
 export const getVulnerabilityDetails = (imageId: string) =>
   fetchApi<{ scan: import('@/types').VulnerabilityScan; vulnerabilities: import('@/types').Vulnerability[] }>(
-    `/vulnerabilities/image/${encodeURIComponent(imageId)}`
+    `/p/security/image/${encodeURIComponent(imageId)}`
   );
 export const scanImage = (imageId: string) =>
-  fetchApi<void>(`/vulnerabilities/scan/${encodeURIComponent(imageId)}`, { method: 'POST' });
+  fetchApi<void>(`/p/security/scan/${encodeURIComponent(imageId)}`, { method: 'POST' });
 export const scanAllImages = () =>
-  fetchApi<void>('/vulnerabilities/scan-all', { method: 'POST' });
+  fetchApi<void>('/p/security/scan-all', { method: 'POST' });
 export const updateVulnerabilityDb = () =>
-  fetchApi<void>('/vulnerabilities/update-db', { method: 'POST' });
+  fetchApi<void>('/p/security/update-db', { method: 'POST' });
 export const getVulnerabilitySettings = () =>
-  fetchApi<Record<string, string>>('/vulnerabilities/settings');
+  fetchApi<Record<string, string>>('/p/security/settings');
 export const updateVulnerabilitySettings = (settings: Record<string, string>) =>
-  fetchApi<void>('/vulnerabilities/settings', { method: 'PUT', body: JSON.stringify(settings) });
+  fetchApi<void>('/p/security/settings', { method: 'PUT', body: JSON.stringify(settings) });
 
 // Notifications
 export const getNotificationChannels = () =>
@@ -209,3 +209,58 @@ export const getContainerLifecycleSummaries = (limit: number = 200, hostId?: num
   if (hostId) params.append('host_id', hostId.toString());
   return fetchApi<import('@/types').ContainerLifecycleSummary[]>(`/containers/lifecycle?${params}`);
 };
+
+// Version checking via telemetry collector
+export const checkVersion = async (): Promise<import('@/types').VersionCheckResponse> => {
+  // Get installation ID from health endpoint
+  const health = await fetchApi<import('@/types').HealthStatus>('/health');
+
+  // Get installation ID from localStorage or generate
+  let installationId: string = localStorage.getItem('installation_id') || '';
+  if (!installationId) {
+    // Try to fetch from server
+    const response = await fetch('/api/installation-id', {
+      credentials: 'include',
+    });
+    if (response.ok) {
+      const data = await response.json();
+      installationId = data.installation_id || 'browser-' + Math.random().toString(36).substring(2);
+    } else {
+      // Fallback: use a browser-specific ID
+      installationId = 'browser-' + Math.random().toString(36).substring(2);
+    }
+    localStorage.setItem('installation_id', installationId);
+  }
+
+  // Call telemetry collector (public endpoint)
+  const collectorUrl = process.env.NEXT_PUBLIC_TELEMETRY_COLLECTOR_URL ||
+                       'https://telemetry.container-census.com';
+
+  const response = await fetch(`${collectorUrl}/api/version/check`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      installation_id: installationId,
+      current_version: health.version
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error('Version check failed');
+  }
+
+  return response.json();
+};
+
+// Dismissed version preferences
+export const getDismissedVersion = () =>
+  fetchApi<import('@/types').DismissedVersionPreference>('/preferences/dismissed-version');
+
+export const dismissVersion = (version: string, dismissUntilMajor: boolean = false) =>
+  fetchApi('/preferences/dismiss-version', {
+    method: 'POST',
+    body: JSON.stringify({ version, dismiss_until_major: dismissUntilMajor })
+  });
+
+export const clearDismissedVersion = () =>
+  fetchApi('/preferences/dismissed-version', { method: 'DELETE' });

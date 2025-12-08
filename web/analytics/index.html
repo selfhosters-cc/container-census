@@ -29,7 +29,7 @@
         <div class="summary-cards">
             <div class="card">
                 <div class="card-value" id="totalInstallations">-</div>
-                <div class="card-label">Active Installations</div>
+                <div class="card-label">Active Installations (30d)</div>
             </div>
             <div class="card">
                 <div class="card-value" id="totalSubmissions">-</div>
@@ -86,6 +86,12 @@
         <div class="chart-container">
             <h2>Installation Growth Over Time</h2>
             <canvas id="growthChart"></canvas>
+        </div>
+
+        <div class="chart-container">
+            <h2>Active Installations (Daily)</h2>
+            <p class="chart-subtitle">Unique installations checking for updates each day</p>
+            <canvas id="activeInstallsChart"></canvas>
         </div>
 
         <div class="chart-row">
