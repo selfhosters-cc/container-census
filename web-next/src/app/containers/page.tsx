@@ -1414,14 +1414,20 @@ export default function ContainersPage() {
                     await removeContainer(container.host_id, container.id);
                   }
 
-                  console.log(`[Container Action] ${action} completed, triggering host rescan...`);
+                  console.log(`[Container Action] ${action} completed successfully`);
 
-                  // Trigger a rescan of the specific host to get updated status
-                  await scanHost(container.host_id);
-
-                  console.log(`[Container Action] Host rescan completed, reloading data...`);
+                  // Try to rescan the host, but don't fail if it errors
+                  try {
+                    console.log(`[Container Action] Triggering host rescan...`);
+                    await scanHost(container.host_id);
+                    console.log(`[Container Action] Host rescan completed`);
+                  } catch (scanError) {
+                    console.warn(`[Container Action] Host rescan failed (non-critical):`, scanError);
+                    // Continue anyway - the action itself succeeded
+                  }
 
                   // Reload all data to show the updated status
+                  console.log(`[Container Action] Reloading data...`);
                   await loadData();
 
                   console.log(`[Container Action] All done!`);
