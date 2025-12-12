@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/selfhosters-cc/container-census/internal/models"
 	imagetypes "github.com/docker/docker/api/types/image"
@@ -64,6 +65,11 @@ func (s *Scanner) scanAgentHost(ctx context.Context, host models.Host) ([]models
 	path := "/api/containers"
 	if host.CollectStats {
 		path += "?stats=true"
+		// Stats collection can take longer on hosts with many containers
+		// Override the default timeout for this request
+		statsCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		defer cancel()
+		ctx = statsCtx
 	}
 
 	resp, err := s.agentRequest(ctx, host, "GET", path, nil)

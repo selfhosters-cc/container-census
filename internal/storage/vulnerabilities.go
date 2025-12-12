@@ -420,6 +420,30 @@ func (db *DB) GetContainersForImage(imageID string) ([]struct {
 	return containers, nil
 }
 
+// GetHostIDForImage returns the host ID that most recently saw the specified image
+// Returns 0 if the image is not found on any host
+func (db *DB) GetHostIDForImage(imageID string) (int64, error) {
+	query := `
+		SELECT host_id
+		FROM image_containers
+		WHERE image_id = ?
+		ORDER BY last_seen DESC
+		LIMIT 1
+	`
+
+	var hostID int64
+	err := db.conn.QueryRow(query, imageID).Scan(&hostID)
+	if err == sql.ErrNoRows {
+		// Image not found on any host, return 0 (will scan locally)
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("failed to query host for image: %w", err)
+	}
+
+	return hostID, nil
+}
+
 // CleanupOldVulnerabilityData removes old vulnerability scans and details
 func (db *DB) CleanupOldVulnerabilityData(retentionDays, detailedRetentionDays int) error {
 	tx, err := db.conn.Begin()

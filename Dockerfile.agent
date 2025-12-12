@@ -23,8 +23,11 @@ COPY . .
 # Tidy if needed (rarely changes cache)
 RUN go mod tidy -e
 
-# Build the agent binary
-RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags="-w -s" -o census-agent ./cmd/agent
+# Build the agent binary with build time
+RUN BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ") && \
+    CGO_ENABLED=0 GOOS=linux go build -buildvcs=false \
+    -ldflags="-w -s -X github.com/selfhosters-cc/container-census/internal/version.BuildTime=${BUILD_TIME}" \
+    -o census-agent ./cmd/agent
 
 # Stage 2: Create minimal runtime image
 FROM alpine:3.21

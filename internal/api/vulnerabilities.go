@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -28,6 +29,7 @@ type VulnerabilityScheduler interface {
 	QueueScan(imageID, imageName string, priority int) error
 	QueueScanBlocking(imageID, imageName string, priority int) error
 	ForceQueueScan(imageID, imageName string, priority int) error
+	QueueScanWithHostForce(imageID, imageName string, hostID int64, priority int) error
 	GetQueueStatus() vulnerability.ScanQueueStatus
 	RescanAll(imageIDs map[string]string) int
 	UpdateConfig(config *vulnerability.Config)
@@ -165,7 +167,7 @@ func (s *Server) handleTriggerImageScan(w http.ResponseWriter, r *http.Request) 
 	vars := mux.Vars(r)
 	imageID := vars["imageId"]
 
-	// Try to get image name from database
+	// Try to get image name and host from database
 	scans, err := s.db.GetAllVulnerabilityScans(1000)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to query scans: "+err.Error())
@@ -180,13 +182,22 @@ func (s *Server) handleTriggerImageScan(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	// Find which host has this image by querying image_containers table
+	hostID, err := s.db.GetHostIDForImage(imageID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to determine host for image: "+err.Error())
+		return
+	}
+	log.Printf("Manual scan requested for image %s (name: %s) - found on host_id: %d", imageID, imageName, hostID)
+
 	// Invalidate cache to force a fresh scan
 	if s.vulnScanner != nil {
 		s.vulnScanner.InvalidateCache(imageID)
 	}
 
 	// Force queue the scan with high priority (skip cache check)
-	err = s.vulnScheduler.ForceQueueScan(imageID, imageName, 10)
+	// Use QueueScanWithHostForce to include host context for proper routing
+	err = s.vulnScheduler.QueueScanWithHostForce(imageID, imageName, hostID, 10)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to queue scan: "+err.Error())
 		return

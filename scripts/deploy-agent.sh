@@ -2,6 +2,11 @@
 
 # Deploy Agent Script
 # Builds agent Docker image and deploys to ubuntu3
+#
+# Usage:
+#   ./deploy-agent.sh                 # Interactive mode (prompts for choice)
+#   ./deploy-agent.sh --with-trivy    # Build with Trivy (no prompt)
+#   ./deploy-agent.sh --no-trivy      # Build without Trivy (no prompt)
 
 set -e
 
@@ -23,13 +28,25 @@ VERSION=$(cat .version 2>/dev/null || echo "dev")
 echo -e "${YELLOW}Building and deploying Census Agent v${VERSION}...${NC}"
 echo ""
 
-# Ask which agent variant to build
-echo -e "${YELLOW}Which agent variant to build?${NC}"
-echo -e "  ${GREEN}1${NC}) Lightweight (no Trivy) - faster, smaller (~20MB)"
-echo -e "  ${GREEN}2${NC}) With Trivy - vulnerability scanning capability (~400MB)"
-echo ""
-read -p "Choice [1-2] (default: 1): " AGENT_VARIANT
-AGENT_VARIANT=${AGENT_VARIANT:-1}
+# Parse command line arguments
+AGENT_VARIANT=""
+if [ "$1" = "--with-trivy" ]; then
+    AGENT_VARIANT="2"
+    echo -e "${GREEN}Flag detected: Building agent WITH Trivy${NC}"
+elif [ "$1" = "--no-trivy" ]; then
+    AGENT_VARIANT="1"
+    echo -e "${GREEN}Flag detected: Building lightweight agent (no Trivy)${NC}"
+fi
+
+# If no flag provided, ask interactively
+if [ -z "$AGENT_VARIANT" ]; then
+    echo -e "${YELLOW}Which agent variant to build?${NC}"
+    echo -e "  ${GREEN}1${NC}) Lightweight (no Trivy) - faster, smaller (~20MB)"
+    echo -e "  ${GREEN}2${NC}) With Trivy - vulnerability scanning capability (~400MB)"
+    echo ""
+    read -p "Choice [1-2] (default: 1): " AGENT_VARIANT
+    AGENT_VARIANT=${AGENT_VARIANT:-1}
+fi
 
 # Set build arguments and image tags based on choice
 if [ "$AGENT_VARIANT" = "2" ]; then

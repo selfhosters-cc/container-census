@@ -47,8 +47,9 @@ func main() {
 		hostname = "unknown"
 	}
 
-	// Get version
+	// Get version and build time
 	agentVersion := version.Get()
+	buildTime := version.GetBuildTime()
 
 	// Check Trivy availability
 	hasTrivyBool, trivyVer := checkTrivyAvailability()
@@ -56,6 +57,7 @@ func main() {
 	// Create agent info
 	agentInfo := agent.Info{
 		Version:      agentVersion,
+		BuildTime:    buildTime,
 		Hostname:     hostname,
 		OS:           runtime.GOOS,
 		Arch:         runtime.GOARCH,
@@ -65,6 +67,9 @@ func main() {
 	}
 
 	log.Printf("Starting Container Census Agent v%s", agentVersion)
+	if buildTime != "" && buildTime != "unknown" {
+		log.Printf("Build Time: %s", buildTime)
+	}
 	log.Printf("Hostname: %s", hostname)
 	log.Printf("OS: %s/%s", runtime.GOOS, runtime.GOARCH)
 	log.Printf("Docker Host: %s", *dockerHost)
@@ -97,7 +102,7 @@ func main() {
 		Addr:         addr,
 		Handler:      agentServer.Router(),
 		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		WriteTimeout: 2 * time.Minute, // Increased for stats collection on hosts with many containers
 		IdleTimeout:  60 * time.Second,
 	}
 
