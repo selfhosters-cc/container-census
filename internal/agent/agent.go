@@ -27,15 +27,16 @@ import (
 
 // Info represents agent information
 type Info struct {
-	Version       string    `json:"version"`
-	BuildTime     string    `json:"build_time"`      // Build timestamp
-	Hostname      string    `json:"hostname"`
-	OS            string    `json:"os"`
-	Arch          string    `json:"arch"`
-	DockerVersion string    `json:"docker_version"`
-	StartedAt     time.Time `json:"started_at"`
-	HasTrivy      bool      `json:"has_trivy"`       // Whether Trivy is available
-	TrivyVersion  string    `json:"trivy_version"`   // Trivy version if available
+	Version         string    `json:"version"`
+	BuildTime       string    `json:"build_time"`        // Build timestamp
+	Hostname        string    `json:"hostname"`
+	OS              string    `json:"os"`
+	Arch            string    `json:"arch"`
+	DockerVersion   string    `json:"docker_version"`
+	StartedAt       time.Time `json:"started_at"`
+	HasTrivy        bool      `json:"has_trivy"`         // Whether Trivy is available
+	TrivyVersion    string    `json:"trivy_version"`     // Trivy version if available
+	TrivyDBUpdatedAt string   `json:"trivy_db_updated_at"` // Trivy DB update timestamp
 }
 
 // Agent handles Docker operations on a single host
@@ -1032,4 +1033,28 @@ func GenerateToken() string {
 		return fmt.Sprintf("token_%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b)
+}
+
+// GetTrivyDBMetadata reads the Trivy database metadata and returns the UpdatedAt timestamp
+func GetTrivyDBMetadata(cacheDir string) string {
+	metadataPath := filepath.Join(cacheDir, "db", "metadata.json")
+	data, err := os.ReadFile(metadataPath)
+	if err != nil {
+		return ""
+	}
+
+	var metadata struct {
+		UpdatedAt time.Time `json:"UpdatedAt"`
+	}
+
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return ""
+	}
+
+	// Return formatted timestamp (ISO 8601)
+	if !metadata.UpdatedAt.IsZero() {
+		return metadata.UpdatedAt.Format(time.RFC3339)
+	}
+
+	return ""
 }

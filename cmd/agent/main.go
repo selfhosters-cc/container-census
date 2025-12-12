@@ -54,16 +54,23 @@ func main() {
 	// Check Trivy availability
 	hasTrivyBool, trivyVer := checkTrivyAvailability()
 
+	// Get Trivy DB metadata if Trivy is available
+	var trivyDBUpdatedAt string
+	if hasTrivyBool {
+		trivyDBUpdatedAt = agent.GetTrivyDBMetadata("/app/data/.trivy")
+	}
+
 	// Create agent info
 	agentInfo := agent.Info{
-		Version:      agentVersion,
-		BuildTime:    buildTime,
-		Hostname:     hostname,
-		OS:           runtime.GOOS,
-		Arch:         runtime.GOARCH,
-		StartedAt:    time.Now(),
-		HasTrivy:     hasTrivyBool,
-		TrivyVersion: trivyVer,
+		Version:         agentVersion,
+		BuildTime:       buildTime,
+		Hostname:        hostname,
+		OS:              runtime.GOOS,
+		Arch:            runtime.GOARCH,
+		StartedAt:       time.Now(),
+		HasTrivy:        hasTrivyBool,
+		TrivyVersion:    trivyVer,
+		TrivyDBUpdatedAt: trivyDBUpdatedAt,
 	}
 
 	log.Printf("Starting Container Census Agent v%s", agentVersion)

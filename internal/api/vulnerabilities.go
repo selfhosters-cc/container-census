@@ -22,6 +22,7 @@ type VulnerabilityScanner interface {
 	SetConfig(config *vulnerability.Config)
 	InvalidateCache(imageID string)
 	GetAgentInfo(ctx context.Context, host *models.Host) (*models.AgentInfo, error)
+	GetTrivyDBMetadata() string
 }
 
 // VulnerabilityScheduler interface for the vulnerability scheduler
@@ -49,18 +50,29 @@ func (s *Server) handleGetVulnerabilitySummary(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Get Trivy DB metadata
+	var trivyDBUpdatedAt string
+	if s.vulnScanner != nil {
+		trivyDBUpdatedAt = s.vulnScanner.GetTrivyDBMetadata()
+	}
+
 	// Add queue status if scheduler is available
 	if s.vulnScheduler != nil {
 		queueStatus := s.vulnScheduler.GetQueueStatus()
 		response := map[string]interface{}{
-			"summary":      summary,
-			"queue_status": queueStatus,
+			"summary":             summary,
+			"queue_status":        queueStatus,
+			"trivy_db_updated_at": trivyDBUpdatedAt,
 		}
 		respondJSON(w, http.StatusOK, response)
 		return
 	}
 
-	respondJSON(w, http.StatusOK, summary)
+	response := map[string]interface{}{
+		"summary":             summary,
+		"trivy_db_updated_at": trivyDBUpdatedAt,
+	}
+	respondJSON(w, http.StatusOK, response)
 }
 
 // handleGetImageVulnerabilities returns vulnerabilities for a specific image
