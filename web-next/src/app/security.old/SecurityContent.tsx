@@ -207,6 +207,7 @@ export default function SecurityContent({ onScanAll, onUpdateDb }: SecurityConte
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [severityFilter, setSeverityFilter] = useState('');
+  const [hostFilter, setHostFilter] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
   const [detailsModal, setDetailsModal] = useState<{ imageId: string; imageName: string } | null>(null);
 
@@ -318,6 +319,24 @@ export default function SecurityContent({ onScanAll, onUpdateDb }: SecurityConte
     };
   }, [loading, stats]);
 
+  // Get unique hosts from scans
+  const availableHosts = useMemo(() => {
+    const hostMap = new Map<string, string>();
+    scans.forEach(scan => {
+      if (scan.host_names && scan.host_names.length > 0) {
+        scan.host_names.forEach((name, idx) => {
+          const id = scan.host_ids?.[idx]?.toString() || '';
+          if (id && !hostMap.has(id)) {
+            hostMap.set(id, name);
+          }
+        });
+      }
+    });
+    return Array.from(hostMap.entries())
+      .sort((a, b) => a[1].localeCompare(b[1]))
+      .map(([id, name]) => ({ id, name }));
+  }, [scans]);
+
   const filteredScans = useMemo(() => {
     return scans.filter(scan => {
       const matchesSearch = searchTerm === '' ||
@@ -346,9 +365,14 @@ export default function SecurityContent({ onScanAll, onUpdateDb }: SecurityConte
         matchesSeverity = scan.total_vulnerabilities === 0 && scan.success === true;
       }
 
-      return matchesSearch && matchesStatus && matchesSeverity;
+      let matchesHost = true;
+      if (hostFilter !== '') {
+        matchesHost = scan.host_ids?.includes(parseInt(hostFilter)) || false;
+      }
+
+      return matchesSearch && matchesStatus && matchesSeverity && matchesHost;
     });
-  }, [scans, searchTerm, statusFilter, severityFilter]);
+  }, [scans, searchTerm, statusFilter, severityFilter, hostFilter]);
 
   const handleScanImage = async (imageId: string) => {
     try {
@@ -489,6 +513,16 @@ export default function SecurityContent({ onScanAll, onUpdateDb }: SecurityConte
           className="flex-1 min-w-[200px] bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg px-4 py-2 text-[var(--text-primary)] placeholder-[var(--text-tertiary)] focus:outline-none focus:border-[var(--accent)]"
         />
         <select
+          value={hostFilter}
+          onChange={(e) => setHostFilter(e.target.value)}
+          className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg px-4 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
+        >
+          <option value="">All Hosts</option>
+          {availableHosts.map(host => (
+            <option key={host.id} value={host.id}>{host.name}</option>
+          ))}
+        </select>
+        <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
           className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg px-4 py-2 text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]"
@@ -546,7 +580,14 @@ export default function SecurityContent({ onScanAll, onUpdateDb }: SecurityConte
                     onClick={() => setDetailsModal({ imageId: scan.image_id, imageName: scan.image_name })}
                   >
                     <td className="px-4 py-3">
-                      <code className="text-sm">{scan.image_name}</code>
+                      <div>
+                        <code className="text-sm">{scan.image_name}</code>
+                        {scan.host_names && scan.host_names.length > 0 && (
+                          <div className="text-xs text-[var(--text-tertiary)] mt-1">
+                            {scan.host_names.join(', ')}
+                          </div>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       {getStatusBadge(scan)}

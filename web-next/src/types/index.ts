@@ -87,6 +87,8 @@ export interface VulnerabilityScan {
   trivy_db_version?: string;
   total_vulnerabilities: number;
   severity_counts: SeverityCounts;
+  host_ids?: number[];
+  host_names?: string[];
   // Legacy flat fields for backward compatibility
   critical_count?: number;
   high_count?: number;
