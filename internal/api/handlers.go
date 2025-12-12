@@ -981,8 +981,15 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"auth_enabled": s.authConfig.Enabled,
 	}
 
-	// Version checking is now handled by telemetry collector
-	// UI will call collector directly for version checks
+	// Include version check results if available (from telemetry collector)
+	updateInfo := version.GetUpdateInfo()
+	if updateInfo != nil && updateInfo.Error == nil {
+		response["latest_version"] = updateInfo.LatestVersion
+		response["update_available"] = updateInfo.UpdateAvailable
+		if updateInfo.UpdateAvailable {
+			response["release_url"] = updateInfo.ReleaseURL
+		}
+	}
 
 	respondJSON(w, http.StatusOK, response)
 }

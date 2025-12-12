@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/selfhosters-cc/container-census/internal/api"
 	"github.com/selfhosters-cc/container-census/internal/auth"
 	"github.com/selfhosters-cc/container-census/internal/migration"
@@ -308,8 +309,10 @@ func main() {
 		}
 	}
 
-	// Version checking is now handled by telemetry collector
-	// UI will call collector directly for version checks
+	// Start version checking (via telemetry collector)
+	// Runs on startup and daily to track active installations
+	go checkForUpdates(ctx, db)
+	go runDailyVersionCheck(ctx, db)
 
 	// Start daily database cleanup
 	go runDailyDatabaseCleanup(ctx, db)
@@ -613,6 +616,112 @@ func runDailyDatabaseCleanup(ctx context.Context, db *storage.DB) {
 			}
 		}
 	}
+}
+
+// checkForUpdates performs a version check via the telemetry collector
+// This runs asynchronously on startup (non-blocking)
+func checkForUpdates(ctx context.Context, db *storage.DB) {
+	// Get installation ID
+	installationID, err := getInstallationID(db)
+	if err != nil {
+		log.Printf("Version check: failed to get installation ID: %v", err)
+		return
+	}
+
+	// Get the first enabled telemetry endpoint URL as collector URL
+	collectorURL := getCollectorURL(db)
+	if collectorURL == "" {
+		log.Println("Version check: No telemetry collector configured, skipping version check")
+		return
+	}
+
+	// Perform version check
+	updateInfo := version.CheckViaCollector(collectorURL, installationID)
+	if updateInfo.Error != nil {
+		log.Printf("Version check: %v", updateInfo.Error)
+		return
+	}
+
+	// Log update availability
+	if updateInfo.UpdateAvailable {
+		log.Printf("⚠️  UPDATE AVAILABLE: Container Census %s → %s", updateInfo.CurrentVersion, updateInfo.LatestVersion)
+		log.Printf("   Download: %s", updateInfo.ReleaseURL)
+	}
+}
+
+// runDailyVersionCheck performs version checks once per day at midnight
+func runDailyVersionCheck(ctx context.Context, db *storage.DB) {
+	// Calculate time until next midnight
+	now := time.Now()
+	nextMidnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
+	timeUntilMidnight := time.Until(nextMidnight)
+
+	// Wait until midnight
+	select {
+	case <-time.After(timeUntilMidnight):
+		checkForUpdates(ctx, db)
+	case <-ctx.Done():
+		return
+	}
+
+	// Then run daily
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			checkForUpdates(ctx, db)
+		}
+	}
+}
+
+// getInstallationID retrieves or creates an installation ID
+func getInstallationID(db *storage.DB) (string, error) {
+	installationIDFile := "/app/data/.installation_id"
+	if _, err := os.Stat("/app/data"); os.IsNotExist(err) {
+		installationIDFile = "./data/.installation_id"
+	}
+
+	// Try to read existing ID
+	if data, err := os.ReadFile(installationIDFile); err == nil {
+		return strings.TrimSpace(string(data)), nil
+	}
+
+	// Generate new ID if not found
+	newID := uuid.New().String()
+	os.MkdirAll(filepath.Dir(installationIDFile), 0755)
+	if err := os.WriteFile(installationIDFile, []byte(newID), 0644); err != nil {
+		return "", err
+	}
+
+	return newID, nil
+}
+
+// getCollectorURL returns the first enabled telemetry endpoint URL
+// Falls back to the default community collector if none configured
+func getCollectorURL(db *storage.DB) string {
+	endpoints, err := db.GetTelemetryEndpoints()
+	if err != nil {
+		log.Printf("Warning: Failed to get telemetry endpoints: %v", err)
+		return "https://cc-telemetry.selfhosters.cc"
+	}
+
+	// Use first enabled endpoint, or fall back to community collector
+	for _, ep := range endpoints {
+		if ep.Enabled {
+			// Extract base URL (remove /api/ingest path if present)
+			url := ep.URL
+			url = strings.TrimSuffix(url, "/api/ingest")
+			url = strings.TrimSuffix(url, "/")
+			return url
+		}
+	}
+
+	// Default to community collector
+	return "https://cc-telemetry.selfhosters.cc"
 }
 
 // runHourlyStatsAggregation performs stats aggregation every hour

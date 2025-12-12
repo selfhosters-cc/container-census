@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { checkVersion, getDismissedVersion, dismissVersion } from '@/lib/api';
+import { getHealth, getDismissedVersion, dismissVersion } from '@/lib/api';
 import type { VersionCheckResponse } from '@/types';
 
 export default function UpdateBanner() {
@@ -12,32 +12,43 @@ export default function UpdateBanner() {
   useEffect(() => {
     checkForUpdates();
 
-    // Check daily (24 hours)
-    const interval = setInterval(checkForUpdates, 24 * 60 * 60 * 1000);
+    // Check hourly (server checks daily, but UI can poll more frequently)
+    const interval = setInterval(checkForUpdates, 60 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
 
   const checkForUpdates = async () => {
     try {
-      const [versionInfo, dismissedPref] = await Promise.all([
-        checkVersion(),
+      const [health, dismissedPref] = await Promise.all([
+        getHealth(),
         getDismissedVersion()
       ]);
 
-      setUpdateInfo(versionInfo);
+      // Only process if server has version check results
+      if (health.update_available !== undefined && health.latest_version) {
+        const versionInfo: VersionCheckResponse = {
+          current_version: health.version,
+          latest_version: health.latest_version,
+          update_available: health.update_available,
+          release_url: health.release_url || '',
+          checked_at: new Date().toISOString()
+        };
 
-      // Show banner if update available and not dismissed
-      if (versionInfo.update_available) {
-        const shouldShow = shouldShowUpdate(
-          versionInfo.latest_version,
-          dismissedPref.dismissed_version,
-          dismissedPref.dismiss_until_major
-        );
-        setShowBanner(shouldShow);
+        setUpdateInfo(versionInfo);
+
+        // Show banner if update available and not dismissed
+        if (versionInfo.update_available) {
+          const shouldShow = shouldShowUpdate(
+            versionInfo.latest_version,
+            dismissedPref.dismissed_version,
+            dismissedPref.dismiss_until_major
+          );
+          setShowBanner(shouldShow);
+        }
       }
     } catch (error) {
       console.error('Version check failed:', error);
-      // Silently fail - don't show banner if collector unreachable
+      // Silently fail - don't show banner if server unreachable
     }
   };
 

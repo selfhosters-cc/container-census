@@ -211,3 +211,77 @@ func InvalidateCache() {
 	cachedUpdateInfo = nil
 	cacheMutex.Unlock()
 }
+
+// CheckViaCollector checks for updates via the telemetry collector
+// This is the preferred method as it tracks active installations
+func CheckViaCollector(collectorURL, installationID string) *UpdateInfo {
+	// Check cache first
+	cacheMutex.RLock()
+	if cachedUpdateInfo != nil && time.Since(cachedUpdateInfo.CheckedAt) < cacheExpiration {
+		cacheMutex.RUnlock()
+		return cachedUpdateInfo
+	}
+	cacheMutex.RUnlock()
+
+	// Prepare request
+	info := &UpdateInfo{
+		CurrentVersion: Version,
+		CheckedAt:      time.Now(),
+	}
+
+	// Call telemetry collector
+	reqBody := map[string]string{
+		"installation_id": installationID,
+		"current_version": Version,
+	}
+
+	reqData, err := json.Marshal(reqBody)
+	if err != nil {
+		info.Error = fmt.Errorf("failed to marshal request: %w", err)
+		cacheResult(info)
+		return info
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Post(
+		collectorURL+"/api/version/check",
+		"application/json",
+		strings.NewReader(string(reqData)),
+	)
+	if err != nil {
+		info.Error = fmt.Errorf("failed to contact telemetry collector: %w", err)
+		cacheResult(info)
+		return info
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		info.Error = fmt.Errorf("telemetry collector returned status %d", resp.StatusCode)
+		cacheResult(info)
+		return info
+	}
+
+	// Parse response
+	var response struct {
+		CurrentVersion  string `json:"current_version"`
+		LatestVersion   string `json:"latest_version"`
+		UpdateAvailable bool   `json:"update_available"`
+		ReleaseURL      string `json:"release_url"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		info.Error = fmt.Errorf("failed to parse collector response: %w", err)
+		cacheResult(info)
+		return info
+	}
+
+	// Store results
+	info.LatestVersion = response.LatestVersion
+	info.UpdateAvailable = response.UpdateAvailable
+	info.ReleaseURL = response.ReleaseURL
+
+	// Cache the result
+	cacheResult(info)
+
+	return info
+}
