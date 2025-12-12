@@ -7,6 +7,7 @@ import { formatUptime, extractImageTag, formatCpu, formatMemory as formatMemoryU
 import InlineChart from '@/components/containers/InlineChart';
 import ViewToggle from '@/components/containers/ViewToggle';
 import ContainerTable from '@/components/containers/ContainerTable';
+import { useUpdateCheckProgress } from '@/hooks/useUpdateCheckProgress';
 
 // Chart.js declaration for StatsModal
 declare const Chart: {
@@ -445,10 +446,15 @@ function BulkUpdateModal({ isOpen, onClose, containers, onUpdate }: { isOpen: bo
   const [updateResults, setUpdateResults] = useState<Record<string, { success: boolean; error?: string; new_container_id?: string }> | null>(null);
   const [results, setResults] = useState<Record<string, { available: boolean; message?: string }> | null>(null);
   const [selectedContainers, setSelectedContainers] = useState<Set<string>>(new Set());
+  const [updateJobId, setUpdateJobId] = useState<string | null>(null);
+
+  // Import and use the SSE hook at the top of the file
+  const { progress, complete, error: progressError } = useUpdateCheckProgress(updateJobId);
 
   const handleCheckUpdates = useCallback(async () => {
     setChecking(true);
     setResults(null);
+    setUpdateJobId(null);
 
     // Filter to only :latest containers
     const latestContainers = containers.filter(c =>
@@ -467,15 +473,38 @@ function BulkUpdateModal({ isOpen, onClose, containers, onUpdate }: { isOpen: bo
         container_id: c.id
       }));
 
-      const updateResults = await bulkCheckUpdates(containerList);
-      setResults(updateResults);
+      // Start the update check job
+      const response = await bulkCheckUpdates(containerList);
+      setUpdateJobId(response.job_id);
     } catch (error) {
       console.error('Failed to check for updates:', error);
       alert('Failed to check for updates. See console for details.');
-    } finally {
       setChecking(false);
     }
   }, [containers]);
+
+  // Handle completion from SSE
+  useEffect(() => {
+    if (complete) {
+      if (complete.status === 'error') {
+        alert(`Error checking for updates: ${complete.error}`);
+        setResults({});
+      } else {
+        setResults(complete.results);
+      }
+      setChecking(false);
+      setUpdateJobId(null);
+    }
+  }, [complete]);
+
+  // Handle SSE errors
+  useEffect(() => {
+    if (progressError) {
+      alert(`Error: ${progressError}`);
+      setChecking(false);
+      setUpdateJobId(null);
+    }
+  }, [progressError]);
 
   useEffect(() => {
     if (isOpen) {
@@ -500,6 +529,21 @@ function BulkUpdateModal({ isOpen, onClose, containers, onUpdate }: { isOpen: bo
       return results[key]?.available;
     });
   }, [results, containers]);
+
+  // Clean up selected containers when the available updates list changes
+  useEffect(() => {
+    if (containersWithUpdates.length === 0) {
+      // If no containers have updates, clear all selections
+      setSelectedContainers(new Set());
+    } else {
+      // Remove selections for containers that no longer have updates
+      const validKeys = new Set(containersWithUpdates.map(c => `${c.host_id}-${c.id}`));
+      setSelectedContainers(prev => {
+        const cleaned = new Set(Array.from(prev).filter(key => validKeys.has(key)));
+        return cleaned.size === prev.size ? prev : cleaned; // Only update if changed
+      });
+    }
+  }, [containersWithUpdates]);
 
   const toggleContainer = (key: string) => {
     const newSelected = new Set(selectedContainers);
@@ -586,7 +630,21 @@ function BulkUpdateModal({ isOpen, onClose, containers, onUpdate }: { isOpen: bo
             <div className="flex flex-col items-center justify-center py-12">
               <div className="text-6xl mb-4">🔍</div>
               <div className="text-lg font-semibold mb-2">Checking for updates...</div>
-              <div className="text-sm text-[var(--text-secondary)]">Checking {latestCount} container(s) against their registries</div>
+              <div className="text-sm text-[var(--text-secondary)] mb-6">Checking {latestCount} container(s) against their registries</div>
+
+              {progress && (
+                <div className="w-full max-w-md space-y-3">
+                  <div className="w-full bg-[var(--bg-tertiary)] rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-blue-500 h-2 transition-all duration-300 ease-out"
+                      style={{ width: `${(progress.checked / progress.total) * 100}%` }}
+                    />
+                  </div>
+                  <p className="text-sm text-[var(--text-secondary)] text-center">
+                    Checked {progress.checked} of {progress.total} containers
+                  </p>
+                </div>
+              )}
             </div>
           )}
 

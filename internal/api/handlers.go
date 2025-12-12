@@ -46,6 +46,7 @@ type Server struct {
 	vulnScheduler         VulnerabilityScheduler
 	pluginManager         *plugins.Manager
 	apiRouter             *mux.Router // Subrouter for /api with auth middleware
+	jobManager            *UpdateJobManager
 }
 
 // TelemetryScheduler interface for submitting telemetry on demand
@@ -63,6 +64,7 @@ func New(db *storage.DB, scanner *scanner.Scanner, scanInterval int, authConfig 
 		router:         mux.NewRouter(),
 		scanInterval:   scanInterval,
 		authConfig:     authConfig,
+		jobManager:     NewUpdateJobManager(),
 	}
 
 	s.setupRoutes()
@@ -92,6 +94,11 @@ func (s *Server) SetTelemetryScheduler(scheduler *telemetry.Scheduler, ctx conte
 // SetNotificationService sets the notification service
 func (s *Server) SetNotificationService(ns *notifications.NotificationService) {
 	s.notificationService = ns
+}
+
+// CleanupOldUpdateJobs removes old update check jobs from memory
+func (s *Server) CleanupOldUpdateJobs() {
+	s.jobManager.CleanupOldJobs()
 }
 
 // RestartTelemetry stops and restarts the telemetry scheduler with new configuration
@@ -230,6 +237,7 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/containers/{host_id}/{container_id}/check-update", s.handleCheckContainerUpdate).Methods("POST")
 	api.HandleFunc("/containers/{host_id}/{container_id}/update", s.handleUpdateContainer).Methods("POST")
 	api.HandleFunc("/containers/bulk-check-updates", s.handleBulkCheckUpdates).Methods("POST")
+	api.HandleFunc("/containers/check-progress/{job_id}", s.handleCheckProgress).Methods("GET")
 	api.HandleFunc("/containers/bulk-update", s.handleBulkUpdate).Methods("POST")
 
 	// Scan endpoints
@@ -2058,7 +2066,7 @@ func (s *Server) handleUpdateContainer(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, result)
 }
 
-// handleBulkCheckUpdates checks multiple containers for updates
+// handleBulkCheckUpdates checks multiple containers for updates (async with job tracking)
 func (s *Server) handleBulkCheckUpdates(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Containers []struct {
@@ -2072,39 +2080,61 @@ func (s *Server) handleBulkCheckUpdates(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	results := make(map[string]interface{})
+	// Create a job to track progress
+	jobID := s.jobManager.CreateJob(len(req.Containers))
 
-	for _, c := range req.Containers {
+	// Launch goroutine to perform checks asynchronously
+	go s.performBulkUpdateChecks(jobID, req.Containers)
+
+	// Return job ID immediately
+	respondJSON(w, http.StatusOK, map[string]string{
+		"job_id": jobID,
+	})
+}
+
+// performBulkUpdateChecks performs the actual update checks for a bulk operation
+func (s *Server) performBulkUpdateChecks(jobID string, containers []struct {
+	HostID      int64  `json:"host_id"`
+	ContainerID string `json:"container_id"`
+}) {
+	ctx := context.Background()
+
+	for _, c := range containers {
+		containerKey := fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)
+
 		// Get host
 		_, err := s.db.GetHost(c.HostID)
 		if err != nil {
-			results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = map[string]interface{}{
-				"error": "Host not found",
-			}
+			s.jobManager.UpdateProgress(jobID, containerKey, &models.ImageUpdateInfo{
+				Available: false,
+				Error:     "Host not found",
+			})
 			continue
 		}
 
 		// Get container info
-		containers, err := s.db.GetLatestContainers()
+		allContainers, err := s.db.GetLatestContainers()
 		if err != nil {
-			results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = map[string]interface{}{
-				"error": "Failed to get containers",
-			}
+			s.jobManager.UpdateProgress(jobID, containerKey, &models.ImageUpdateInfo{
+				Available: false,
+				Error:     "Failed to get containers",
+			})
 			continue
 		}
 
 		var container *models.Container
-		for i := range containers {
-			if containers[i].ID == c.ContainerID && containers[i].HostID == c.HostID {
-				container = &containers[i]
+		for i := range allContainers {
+			if allContainers[i].ID == c.ContainerID && allContainers[i].HostID == c.HostID {
+				container = &allContainers[i]
 				break
 			}
 		}
 
 		if container == nil {
-			results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = map[string]interface{}{
-				"error": "Container not found",
-			}
+			s.jobManager.UpdateProgress(jobID, containerKey, &models.ImageUpdateInfo{
+				Available: false,
+				Error:     "Container not found",
+			})
 			continue
 		}
 
@@ -2115,10 +2145,10 @@ func (s *Server) handleBulkCheckUpdates(w http.ResponseWriter, r *http.Request) 
 		}
 
 		if !strings.HasSuffix(imageName, ":latest") {
-			results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = map[string]interface{}{
-				"available": false,
-				"message":   "Only :latest tags supported",
-			}
+			s.jobManager.UpdateProgress(jobID, containerKey, &models.ImageUpdateInfo{
+				Available: false,
+				Error:     "Only :latest tags supported",
+			})
 			continue
 		}
 
@@ -2127,11 +2157,12 @@ func (s *Server) handleBulkCheckUpdates(w http.ResponseWriter, r *http.Request) 
 		if localDigest == "" {
 			localDigest = container.ImageID
 		}
-		updateInfo, err := s.registryClient.CheckImageUpdate(r.Context(), imageName, localDigest)
+		updateInfo, err := s.registryClient.CheckImageUpdate(ctx, imageName, localDigest)
 		if err != nil {
-			results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = map[string]interface{}{
-				"error": err.Error(),
-			}
+			s.jobManager.UpdateProgress(jobID, containerKey, &models.ImageUpdateInfo{
+				Available: false,
+				Error:     err.Error(),
+			})
 			continue
 		}
 
@@ -2150,10 +2181,85 @@ func (s *Server) handleBulkCheckUpdates(w http.ResponseWriter, r *http.Request) 
 			}(c.HostID)
 		}
 
-		results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = updateInfo
+		// Update job progress with the result - convert registry.ImageUpdateInfo to models.ImageUpdateInfo
+		modelsUpdateInfo := &models.ImageUpdateInfo{
+			Available:     updateInfo.Available,
+			LocalDigest:   updateInfo.LocalDigest,
+			RemoteDigest:  updateInfo.RemoteDigest,
+			RemoteCreated: updateInfo.RemoteCreated,
+			ImageName:     updateInfo.ImageName,
+			Tag:           updateInfo.Tag,
+		}
+		s.jobManager.UpdateProgress(jobID, containerKey, modelsUpdateInfo)
 	}
 
-	respondJSON(w, http.StatusOK, results)
+	// Mark job as complete
+	s.jobManager.CompleteJob(jobID)
+}
+
+// handleCheckProgress streams progress updates for a bulk update check job via Server-Sent Events
+func (s *Server) handleCheckProgress(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	jobID := vars["job_id"]
+
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	// Check if streaming is supported
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	// Poll job state every 500ms
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			// Client disconnected
+			return
+		case <-ticker.C:
+			snapshot, err := s.jobManager.GetJobSnapshot(jobID)
+			if err != nil {
+				// Job not found
+				errorData := map[string]string{"error": err.Error()}
+				jsonData, _ := json.Marshal(errorData)
+				fmt.Fprintf(w, "event: error\ndata: %s\n\n", jsonData)
+				flusher.Flush()
+				return
+			}
+
+			// Send progress event
+			progressData := map[string]interface{}{
+				"total":   snapshot["total"],
+				"checked": snapshot["checked"],
+				"status":  snapshot["status"],
+			}
+			jsonData, _ := json.Marshal(progressData)
+			fmt.Fprintf(w, "event: progress\ndata: %s\n\n", jsonData)
+			flusher.Flush()
+
+			// If job is complete or errored, send final event and close
+			status := snapshot["status"].(string)
+			if status == "complete" || status == "error" {
+				completeData := map[string]interface{}{
+					"results": snapshot["results"],
+					"status":  status,
+					"error":   snapshot["error"],
+				}
+				jsonData, _ := json.Marshal(completeData)
+				fmt.Fprintf(w, "event: complete\ndata: %s\n\n", jsonData)
+				flusher.Flush()
+				return
+			}
+		}
+	}
 }
 
 // handleBulkUpdate updates multiple containers

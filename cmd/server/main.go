@@ -264,8 +264,8 @@ func main() {
 	server := &http.Server{
 		Addr:         addr,
 		Handler:      apiServer.Router(),
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 300 * time.Second, // 5 minutes for long operations (image pull, container updates)
 		IdleTimeout:  60 * time.Second,
 	}
 
@@ -316,6 +316,9 @@ func main() {
 
 	// Start hourly stats aggregation
 	go runHourlyStatsAggregation(ctx, db)
+
+	// Start hourly update job cleanup
+	go runHourlyUpdateJobCleanup(ctx, apiServer)
 
 	// Initialize notification system (settings from database, with env var overrides)
 	maxNotificationsPerHour := getEnvInt("NOTIFICATION_RATE_LIMIT_MAX", settings.Notification.RateLimitMax)
@@ -633,6 +636,26 @@ func runHourlyStatsAggregation(ctx context.Context, db *storage.DB) {
 			} else if aggregated > 0 {
 				log.Printf("Stats aggregation completed: created/updated %d hourly aggregate records", aggregated)
 			}
+		}
+	}
+}
+
+// runHourlyUpdateJobCleanup performs update job cleanup every hour
+// Removes update check jobs older than 1 hour from memory
+func runHourlyUpdateJobCleanup(ctx context.Context, apiServer *api.Server) {
+	// Run first cleanup after 1 hour
+	time.Sleep(1 * time.Hour)
+
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			apiServer.CleanupOldUpdateJobs()
+			log.Println("Update job cleanup completed")
 		}
 	}
 }

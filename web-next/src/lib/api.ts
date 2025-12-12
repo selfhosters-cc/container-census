@@ -197,7 +197,7 @@ export const updateContainer = (hostId: number, containerName: string) =>
 
 // Bulk update operations
 export const bulkCheckUpdates = (containers: Array<{ host_id: number; container_id: string }>) =>
-  fetchApi<Record<string, { available: boolean; message?: string }>>('/containers/bulk-check-updates', {
+  fetchApi<{ job_id: string }>('/containers/bulk-check-updates', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ containers }),
