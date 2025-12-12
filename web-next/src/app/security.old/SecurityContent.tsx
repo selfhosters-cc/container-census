@@ -9,6 +9,7 @@ import {
   getHosts,
 } from '@/lib/api';
 import type { VulnerabilitySummary, VulnerabilityScan, Vulnerability, Host } from '@/types';
+import ScanActivityLog from '@/components/security/ScanActivityLog';
 
 // Chart.js type declaration
 declare const Chart: {
@@ -511,15 +512,8 @@ export default function SecurityContent({ onScanAll, onUpdateDb }: SecurityConte
         </div>
       </div>
 
-      {/* Queue Status */}
-      {summary?.queue_status && (summary.queue_status.in_progress > 0 || summary.queue_status.pending > 0) && (
-        <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg p-4 flex items-center gap-4">
-          <span className="text-xl">⏳</span>
-          <span className="text-sm">
-            <strong>Scanning in progress:</strong> {summary.queue_status.in_progress} scanning, {summary.queue_status.pending} queued
-          </span>
-        </div>
-      )}
+      {/* Scan Activity Log */}
+      <ScanActivityLog />
 
       {/* Filters */}
       <div className="flex flex-wrap gap-4">
