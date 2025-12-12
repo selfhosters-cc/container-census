@@ -600,11 +600,18 @@ export default function SecurityContent({ onScanAll, onUpdateDb }: SecurityConte
                     <td className="px-4 py-3">
                       <div>
                         <code className="text-sm">{scan.image_name}</code>
-                        {scan.host_names && scan.host_names.length > 0 && (
-                          <div className="text-xs text-[var(--text-tertiary)] mt-1">
-                            {scan.host_names.join(', ')}
-                          </div>
-                        )}
+                        {scan.host_names && scan.host_names.length > 0 && (() => {
+                          // Filter to only show names for active hosts
+                          const activeHostNames = scan.host_names.filter((_, idx) => {
+                            const hostId = scan.host_ids?.[idx];
+                            return hostId && activeHostIds.has(hostId);
+                          });
+                          return activeHostNames.length > 0 && (
+                            <div className="text-xs text-[var(--text-tertiary)] mt-1">
+                              {activeHostNames.join(', ')}
+                            </div>
+                          );
+                        })()}
                       </div>
                     </td>
                     <td className="px-4 py-3">
