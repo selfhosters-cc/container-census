@@ -6,8 +6,9 @@ import {
   getVulnerabilityScans,
   getVulnerabilityDetails,
   scanImage,
+  getHosts,
 } from '@/lib/api';
-import type { VulnerabilitySummary, VulnerabilityScan, Vulnerability } from '@/types';
+import type { VulnerabilitySummary, VulnerabilityScan, Vulnerability, Host } from '@/types';
 
 // Chart.js type declaration
 declare const Chart: {
@@ -203,6 +204,7 @@ interface SecurityContentProps {
 export default function SecurityContent({ onScanAll, onUpdateDb }: SecurityContentProps) {
   const [summary, setSummary] = useState<VulnerabilitySummary | null>(null);
   const [scans, setScans] = useState<VulnerabilityScan[]>([]);
+  const [hosts, setHosts] = useState<Host[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -217,12 +219,14 @@ export default function SecurityContent({ onScanAll, onUpdateDb }: SecurityConte
 
   const loadData = async () => {
     try {
-      const [summaryData, scansData] = await Promise.all([
+      const [summaryData, scansData, hostsData] = await Promise.all([
         getVulnerabilitySummary().catch(() => null),
         getVulnerabilityScans(1000).catch(() => []),
+        getHosts().catch(() => []),
       ]);
       setSummary(summaryData);
       setScans(scansData);
+      setHosts(hostsData);
     } catch (error) {
       console.error('Failed to load security data:', error);
     } finally {
@@ -319,15 +323,23 @@ export default function SecurityContent({ onScanAll, onUpdateDb }: SecurityConte
     };
   }, [loading, stats]);
 
-  // Get unique hosts from scans
+  // Get active host IDs
+  const activeHostIds = useMemo(() => {
+    return new Set(hosts.filter(h => h.enabled).map(h => h.id));
+  }, [hosts]);
+
+  // Get unique active hosts from scans
   const availableHosts = useMemo(() => {
     const hostMap = new Map<string, string>();
     scans.forEach(scan => {
       if (scan.host_names && scan.host_names.length > 0) {
         scan.host_names.forEach((name, idx) => {
-          const id = scan.host_ids?.[idx]?.toString() || '';
-          if (id && !hostMap.has(id)) {
-            hostMap.set(id, name);
+          const id = scan.host_ids?.[idx];
+          if (id && activeHostIds.has(id)) {
+            const idStr = id.toString();
+            if (!hostMap.has(idStr)) {
+              hostMap.set(idStr, name);
+            }
           }
         });
       }
@@ -335,10 +347,16 @@ export default function SecurityContent({ onScanAll, onUpdateDb }: SecurityConte
     return Array.from(hostMap.entries())
       .sort((a, b) => a[1].localeCompare(b[1]))
       .map(([id, name]) => ({ id, name }));
-  }, [scans]);
+  }, [scans, activeHostIds]);
 
   const filteredScans = useMemo(() => {
     return scans.filter(scan => {
+      // Only show scans for images that are connected to at least one ACTIVE host
+      const hasActiveHost = scan.host_ids && scan.host_ids.some(id => activeHostIds.has(id));
+      if (!hasActiveHost) {
+        return false;
+      }
+
       const matchesSearch = searchTerm === '' ||
         scan.image_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         scan.image_id.toLowerCase().includes(searchTerm.toLowerCase());
@@ -372,7 +390,7 @@ export default function SecurityContent({ onScanAll, onUpdateDb }: SecurityConte
 
       return matchesSearch && matchesStatus && matchesSeverity && matchesHost;
     });
-  }, [scans, searchTerm, statusFilter, severityFilter, hostFilter]);
+  }, [scans, searchTerm, statusFilter, severityFilter, hostFilter, activeHostIds]);
 
   const handleScanImage = async (imageId: string) => {
     try {
@@ -593,18 +611,36 @@ export default function SecurityContent({ onScanAll, onUpdateDb }: SecurityConte
                       {getStatusBadge(scan)}
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <SeverityBadge severity="critical" count={getSeverityCount(scan, 'critical')} />
+                      {scan.success ? (
+                        <SeverityBadge severity="critical" count={getSeverityCount(scan, 'critical')} />
+                      ) : (
+                        <span className="text-xs text-[var(--text-tertiary)]">-</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <SeverityBadge severity="high" count={getSeverityCount(scan, 'high')} />
+                      {scan.success ? (
+                        <SeverityBadge severity="high" count={getSeverityCount(scan, 'high')} />
+                      ) : (
+                        <span className="text-xs text-[var(--text-tertiary)]">-</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <SeverityBadge severity="medium" count={getSeverityCount(scan, 'medium')} />
+                      {scan.success ? (
+                        <SeverityBadge severity="medium" count={getSeverityCount(scan, 'medium')} />
+                      ) : (
+                        <span className="text-xs text-[var(--text-tertiary)]">-</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <SeverityBadge severity="low" count={getSeverityCount(scan, 'low')} />
+                      {scan.success ? (
+                        <SeverityBadge severity="low" count={getSeverityCount(scan, 'low')} />
+                      ) : (
+                        <span className="text-xs text-[var(--text-tertiary)]">-</span>
+                      )}
                     </td>
-                    <td className="px-4 py-3 text-center font-medium">{scan.total_vulnerabilities}</td>
+                    <td className="px-4 py-3 text-center font-medium">
+                      {scan.success ? scan.total_vulnerabilities : '-'}
+                    </td>
                     <td className="px-4 py-3 text-sm text-[var(--text-tertiary)]">
                       {new Date(scan.scanned_at).toLocaleString()}
                     </td>
