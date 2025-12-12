@@ -208,7 +208,7 @@ export default function TrivyDatabaseModal({ isOpen, onClose, onComplete }: Triv
                         <div className="mt-1 text-sm text-gray-600 dark:text-gray-400">
                           <div className="flex items-center space-x-4">
                             <span>Version: {host.trivy_version || 'Unknown'}</span>
-                            <span>DB: {host.db_version || 'Unknown'}</span>
+                            <span>DB: {host.db_version ? formatDate(host.db_version) : 'Unknown'}</span>
                           </div>
                           <div className="text-xs mt-1">
                             Last updated: {formatDate(host.last_updated)}

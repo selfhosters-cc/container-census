@@ -358,12 +358,21 @@ func (p *SecurityPlugin) handleGetTrivyStatus(w http.ResponseWriter, r *http.Req
 		if host.HostType == "unix" {
 			// Local unix socket - has Trivy if scanner is available
 			status.HasTrivy = p.vulnScanner != nil
+			// Get DB metadata for local host
+			if p.vulnScanner != nil {
+				if dbUpdatedAt := p.vulnScanner.GetTrivyDBMetadata(); dbUpdatedAt != "" {
+					status.DBVersion = dbUpdatedAt
+				}
+			}
 		} else if host.HostType == "agent" && p.vulnScanner != nil {
 			// Agent hosts - query the /info endpoint to check Trivy capability
 			if agentInfo, err := p.vulnScanner.GetAgentInfo(r.Context(), &host); err == nil {
 				status.HasTrivy = agentInfo.HasTrivy
 				if agentInfo.TrivyVersion != "" {
 					status.TrivyVersion = agentInfo.TrivyVersion
+				}
+				if agentInfo.TrivyDBUpdatedAt != "" {
+					status.DBVersion = agentInfo.TrivyDBUpdatedAt
 				}
 			}
 		}

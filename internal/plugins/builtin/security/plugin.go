@@ -125,13 +125,16 @@ func (p *SecurityPlugin) Start(ctx context.Context) error {
 
 // Stop stops the plugin
 func (p *SecurityPlugin) Stop(ctx context.Context) error {
-	p.deps.Logger.Info("Stopping Security plugin...")
+	p.deps.Logger.Info("Stopping Security plugin - cancelling background jobs...")
 
 	if p.cancel != nil {
 		p.cancel()
 	}
 
-	p.deps.Logger.Info("Security plugin stopped")
+	// Wait briefly for goroutines to acknowledge shutdown
+	time.Sleep(100 * time.Millisecond)
+
+	p.deps.Logger.Info("Security plugin stopped - all background jobs terminated")
 	return nil
 }
 
@@ -220,6 +223,7 @@ func (p *SecurityPlugin) runDailyTrivyUpdate(ctx context.Context, config *vulner
 	case <-time.After(initialDelay):
 		p.updateTrivyDB(ctx)
 	case <-ctx.Done():
+		p.deps.Logger.Info("Trivy DB update job stopped - plugin disabled")
 		return
 	}
 
@@ -229,6 +233,7 @@ func (p *SecurityPlugin) runDailyTrivyUpdate(ctx context.Context, config *vulner
 		case <-ticker.C:
 			p.updateTrivyDB(ctx)
 		case <-ctx.Done():
+			p.deps.Logger.Info("Trivy DB update job stopped - plugin disabled")
 			return
 		}
 	}
@@ -272,6 +277,7 @@ func (p *SecurityPlugin) runDailyCleanup(ctx context.Context, config *vulnerabil
 	case <-time.After(initialDelay):
 		p.cleanupOldScans(ctx, config)
 	case <-ctx.Done():
+		p.deps.Logger.Info("Vulnerability cleanup job stopped - plugin disabled")
 		return
 	}
 
@@ -281,6 +287,7 @@ func (p *SecurityPlugin) runDailyCleanup(ctx context.Context, config *vulnerabil
 		case <-ticker.C:
 			p.cleanupOldScans(ctx, config)
 		case <-ctx.Done():
+			p.deps.Logger.Info("Vulnerability cleanup job stopped - plugin disabled")
 			return
 		}
 	}

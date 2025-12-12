@@ -150,8 +150,28 @@ func (m *Manager) mountPluginRoutes(pluginID string, plugin Plugin) {
 		// Router is already prefixed with /api, so we add /p/{id}{path}
 		// Using /p/ instead of /plugins/ to avoid conflict with /plugins/{id} management routes
 		path := fmt.Sprintf("/p/%s%s", pluginID, route.Path)
-		m.router.HandleFunc(path, route.Handler).Methods(route.Method)
+
+		// Wrap handler with plugin availability guard
+		guardedHandler := m.pluginRouteGuard(pluginID, route.Handler)
+
+		m.router.HandleFunc(path, guardedHandler).Methods(route.Method)
 		log.Printf("Mounted plugin route: %s /api%s", route.Method, path)
+	}
+}
+
+// pluginRouteGuard wraps a plugin route handler to check if plugin is enabled
+func (m *Manager) pluginRouteGuard(pluginID string, handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		m.mu.RLock()
+		_, loaded := m.plugins[pluginID]
+		m.mu.RUnlock()
+
+		if !loaded {
+			http.Error(w, "Plugin not available", http.StatusNotFound)
+			return
+		}
+
+		handler(w, r)
 	}
 }
 

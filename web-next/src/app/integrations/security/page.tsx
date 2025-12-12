@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { scanAllImages } from '@/lib/api';
 import ScanHostSelectionModal from '@/components/ScanHostSelectionModal';
 import ScanProgressModal from '@/components/ScanProgressModal';
@@ -13,6 +13,7 @@ export default function SecurityIntegrationPage() {
   const [showScanProgress, setShowScanProgress] = useState(false);
   const [showDbModal, setShowDbModal] = useState(false);
   const [scannedCount, setScannedCount] = useState(0);
+  const [pluginEnabled, setPluginEnabled] = useState<boolean | null>(null);
 
   const handleScanAll = () => {
     setShowScanHostSelection(true);
@@ -31,6 +32,54 @@ export default function SecurityIntegrationPage() {
   const handleUpdateDb = () => {
     setShowDbModal(true);
   };
+
+  // Check if security plugin is enabled
+  useEffect(() => {
+    const checkPluginStatus = async () => {
+      try {
+        const response = await fetch('/api/plugins');
+        const plugins = await response.json();
+        const securityPlugin = plugins.find((p: any) => p.id === 'security');
+        setPluginEnabled(securityPlugin?.enabled ?? false);
+      } catch (error) {
+        console.error('Failed to check plugin status:', error);
+        setPluginEnabled(false);
+      }
+    };
+    checkPluginStatus();
+  }, []);
+
+  // Show loading state while checking
+  if (pluginEnabled === null) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-gray-400">Loading...</div>
+      </div>
+    );
+  }
+
+  // Show disabled message if plugin is not enabled
+  if (!pluginEnabled) {
+    return (
+      <div className="max-w-2xl mx-auto mt-12">
+        <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-8 text-center">
+          <div className="text-4xl mb-4">🛡️</div>
+          <h2 className="text-2xl font-semibold text-yellow-500 mb-2">
+            Security Plugin Disabled
+          </h2>
+          <p className="text-gray-400 mb-6">
+            The Security plugin is currently disabled. Enable it in the Integrations page to access vulnerability scanning features.
+          </p>
+          <a
+            href="/integrations"
+            className="inline-block px-6 py-2 bg-yellow-500 hover:bg-yellow-600 text-black font-medium rounded-lg transition-colors"
+          >
+            Go to Integrations
+          </a>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

@@ -75,6 +75,23 @@ export default function ScanHostSelectionModal({ isOpen, onClose, onStartScan }:
     }
   };
 
+  const formatDate = (dateStr: string) => {
+    if (!dateStr) return 'Unknown';
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return 'Unknown';
+
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffHours < 1) return 'Less than 1 hour ago';
+    if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+    if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+
+    return date.toLocaleDateString();
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -160,7 +177,7 @@ export default function ScanHostSelectionModal({ isOpen, onClose, onStartScan }:
                         <div className="mt-1 text-sm text-gray-600 dark:text-gray-400">
                           <div className="flex items-center space-x-4">
                             <span>Trivy: {host.trivy_version || 'Unknown'}</span>
-                            <span>DB: {host.db_version || 'Unknown'}</span>
+                            <span>DB: {host.db_version ? formatDate(host.db_version) : 'Unknown'}</span>
                           </div>
                         </div>
                       ) : (

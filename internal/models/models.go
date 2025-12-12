@@ -220,14 +220,15 @@ type HostConfig struct {
 
 // AgentInfo represents agent metadata
 type AgentInfo struct {
-	Version       string    `json:"version"`
-	Hostname      string    `json:"hostname"`
-	OS            string    `json:"os"`
-	Arch          string    `json:"arch"`
-	DockerVersion string    `json:"docker_version"`
-	StartedAt     time.Time `json:"started_at"`
-	HasTrivy      bool      `json:"has_trivy"`       // Whether Trivy is available on this agent
-	TrivyVersion  string    `json:"trivy_version"`   // Trivy version if available
+	Version         string    `json:"version"`
+	Hostname        string    `json:"hostname"`
+	OS              string    `json:"os"`
+	Arch            string    `json:"arch"`
+	DockerVersion   string    `json:"docker_version"`
+	StartedAt       time.Time `json:"started_at"`
+	HasTrivy        bool      `json:"has_trivy"`           // Whether Trivy is available on this agent
+	TrivyVersion    string    `json:"trivy_version"`       // Trivy version if available
+	TrivyDBUpdatedAt string   `json:"trivy_db_updated_at"` // Trivy DB update timestamp
 }
 
 // AgentRequest wraps requests sent to agents
