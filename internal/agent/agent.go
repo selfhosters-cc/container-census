@@ -928,8 +928,14 @@ func (a *Agent) runTrivyScan(ctx context.Context, imageRef string) (map[string]i
 
 	// Skip DB update if DB exists (prevent lock conflicts)
 	dbPath := filepath.Join(cacheDir, "db", "trivy.db")
+	javaDBPath := filepath.Join(cacheDir, "java-db", "trivy-java.db")
+
 	if _, err := os.Stat(dbPath); err == nil {
-		args = append(args, "--skip-db-update", "--skip-java-db-update")
+		args = append(args, "--skip-db-update")
+		// Only skip Java DB update if it exists (first run needs to download it)
+		if _, err := os.Stat(javaDBPath); err == nil {
+			args = append(args, "--skip-java-db-update")
+		}
 	}
 
 	args = append(args, imageRef)
