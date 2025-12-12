@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/container-census/container-census/internal/models"
+	"github.com/selfhosters-cc/container-census/internal/models"
 	"github.com/gorilla/mux"
 )
 
@@ -28,6 +28,96 @@ func detectHostType(address string) string {
 	default:
 		return "unknown"
 	}
+}
+
+// handleAddHost adds a new host (generic handler that detects type from address)
+func (s *Server) handleAddHost(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name                         string `json:"name"`
+		Address                      string `json:"address"`
+		Description                  string `json:"description"`
+		AgentToken                   string `json:"agent_token,omitempty"` // Legacy field name
+		APIToken                     string `json:"api_token,omitempty"`   // Preferred field name
+		CollectStats                 bool   `json:"collect_stats"`
+		EnableVulnerabilityScanning  bool   `json:"enable_vulnerability_scanning"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	// Validate required fields
+	if req.Name == "" {
+		respondError(w, http.StatusBadRequest, "Name is required")
+		return
+	}
+	if req.Address == "" {
+		respondError(w, http.StatusBadRequest, "Address is required")
+		return
+	}
+
+	// Detect host type from address
+	hostType := detectHostType(req.Address)
+
+	// Use api_token if provided, otherwise fall back to agent_token
+	token := req.APIToken
+	if token == "" {
+		token = req.AgentToken
+	}
+
+	// For agent hosts, require token
+	if hostType == "agent" && token == "" {
+		respondError(w, http.StatusBadRequest, "Agent token is required for agent hosts")
+		return
+	}
+
+	// Verify connectivity based on host type
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	host := models.Host{
+		Name:                        req.Name,
+		Address:                     req.Address,
+		Description:                 req.Description,
+		HostType:                    hostType,
+		AgentToken:                  token,
+		AgentStatus:                 "unknown",
+		Enabled:                     true,
+		CollectStats:                req.CollectStats,
+		EnableVulnerabilityScanning: req.EnableVulnerabilityScanning,
+	}
+
+	// For agent hosts, verify connectivity and authentication
+	if hostType == "agent" {
+		if err := s.verifyAgentConnection(ctx, host); err != nil {
+			respondError(w, http.StatusBadGateway, "Failed to connect to agent: "+err.Error())
+			return
+		}
+
+		// Also verify authentication
+		if err := s.scanner.VerifyAgentAuth(ctx, host); err != nil {
+			if strings.Contains(err.Error(), "401") || strings.Contains(err.Error(), "authentication failed") {
+				respondError(w, http.StatusUnauthorized, "Agent authentication failed - invalid API token")
+			} else {
+				respondError(w, http.StatusBadGateway, "Failed to verify agent authentication: "+err.Error())
+			}
+			return
+		}
+
+		host.AgentStatus = "online"
+		host.LastSeen = time.Now()
+	}
+
+	// Add to database
+	id, err := s.db.AddHost(host)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to add host: "+err.Error())
+		return
+	}
+
+	host.ID = id
+	respondJSON(w, http.StatusCreated, host)
 }
 
 // handleAddAgentHost adds a new agent-based host

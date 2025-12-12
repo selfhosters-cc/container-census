@@ -1,4 +1,4 @@
-module github.com/container-census/container-census
+module github.com/selfhosters-cc/container-census
 
 go 1.25
 

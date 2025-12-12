@@ -23,11 +23,17 @@ COPY . .
 # Tidy if needed (rarely changes cache)
 RUN go mod tidy -e
 
-# Build the binary with proper tags for Alpine
-RUN CGO_ENABLED=1 GOOS=linux go build -buildvcs=false -tags "sqlite_omit_load_extension" -o census ./cmd/server
+# Build the binary with proper tags for Alpine and inject build timestamp
+RUN BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ") && \
+    CGO_ENABLED=1 GOOS=linux go build \
+    -buildvcs=false \
+    -tags "sqlite_omit_load_extension" \
+    -ldflags "-X github.com/selfhosters-cc/container-census/internal/version.BuildTime=${BUILD_TIME}" \
+    -o census \
+    ./cmd/server
 
 # Stage 2: Create minimal runtime image
-FROM alpine:latest
+FROM alpine:3.21
 
 # Build arg for docker group GID (defaults to 999, can be overridden at runtime)
 ARG DOCKER_GID=999
@@ -70,8 +76,10 @@ COPY --from=builder /build/.version ./.version
 # Copy changelog for "What's New" feature
 COPY --from=builder /build/CHANGELOG.md ./CHANGELOG.md
 
-# Copy web frontend
-COPY --from=builder /build/web ./web
+# Copy Next.js web frontend (pre-built static export)
+# To build: cd web-next && npm run build
+# Output is in web-next/out which gets copied here as ./web
+COPY --from=builder /build/web-next/out ./web
 
 # Copy example config
 COPY --from=builder /build/config/config.yaml.example ./config/config.yaml.example

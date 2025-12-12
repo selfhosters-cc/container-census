@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/container-census/container-census/internal/models"
-	"github.com/container-census/container-census/internal/plugins"
+	"github.com/selfhosters-cc/container-census/internal/models"
+	"github.com/selfhosters-cc/container-census/internal/plugins"
 	"github.com/gorilla/mux"
 )
 

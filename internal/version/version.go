@@ -14,6 +14,9 @@ import (
 var (
 	// Version is read from .version file or defaults to "dev"
 	Version string
+
+	// BuildTime is set at compile time using -ldflags
+	BuildTime string = "unknown"
 )
 
 func init() {
@@ -51,6 +54,11 @@ func loadVersion() string {
 // Get returns the current version
 func Get() string {
 	return Version
+}
+
+// GetBuildTime returns the build timestamp
+func GetBuildTime() string {
+	return BuildTime
 }
 
 // GitHubRelease represents the GitHub API response for a release

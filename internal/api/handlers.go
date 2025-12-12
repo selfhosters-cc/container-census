@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -13,15 +14,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/container-census/container-census/internal/auth"
-	"github.com/container-census/container-census/internal/models"
-	"github.com/container-census/container-census/internal/notifications"
-	"github.com/container-census/container-census/internal/plugins"
-	"github.com/container-census/container-census/internal/registry"
-	"github.com/container-census/container-census/internal/scanner"
-	"github.com/container-census/container-census/internal/storage"
-	"github.com/container-census/container-census/internal/telemetry"
-	"github.com/container-census/container-census/internal/version"
+	"github.com/selfhosters-cc/container-census/internal/auth"
+	"github.com/selfhosters-cc/container-census/internal/models"
+	"github.com/selfhosters-cc/container-census/internal/notifications"
+	"github.com/selfhosters-cc/container-census/internal/plugins"
+	"github.com/selfhosters-cc/container-census/internal/registry"
+	"github.com/selfhosters-cc/container-census/internal/scanner"
+	"github.com/selfhosters-cc/container-census/internal/storage"
+	"github.com/selfhosters-cc/container-census/internal/telemetry"
+	"github.com/selfhosters-cc/container-census/internal/version"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 )
@@ -183,13 +184,22 @@ func (s *Server) setupRoutes() {
 
 	// Host endpoints
 	api.HandleFunc("/hosts", s.handleGetHosts).Methods("GET")
+	api.HandleFunc("/hosts", s.handleAddHost).Methods("POST")
+
+	// Host Trivy management endpoints (must be before /hosts/{id} to avoid route conflicts)
+	api.HandleFunc("/hosts/trivy-summary", s.handleGetTrivySummary).Methods("GET")
+	api.HandleFunc("/hosts/bulk-trivy-update", s.handleBulkTrivyUpdate).Methods("POST")
+	api.HandleFunc("/hosts/agent", s.handleAddAgentHost).Methods("POST")
+	api.HandleFunc("/hosts/agent/test", s.handleTestAgentConnection).Methods("POST")
+	api.HandleFunc("/hosts/agent/{id}/info", s.handleGetAgentInfo).Methods("GET")
+
+	// Host CRUD endpoints (must be after specific routes)
 	api.HandleFunc("/hosts/{id}", s.handleGetHost).Methods("GET")
 	api.HandleFunc("/hosts/{id}", s.handleUpdateHost).Methods("PUT")
 	api.HandleFunc("/hosts/{id}", s.handleDeleteHost).Methods("DELETE")
 	api.HandleFunc("/hosts/{id}/scan", s.handleScanHost).Methods("POST")
-	api.HandleFunc("/hosts/agent", s.handleAddAgentHost).Methods("POST")
-	api.HandleFunc("/hosts/agent/test", s.handleTestAgentConnection).Methods("POST")
-	api.HandleFunc("/hosts/agent/{id}/info", s.handleGetAgentInfo).Methods("GET")
+	api.HandleFunc("/hosts/{id}/trivy-update", s.handleHostTrivyUpdate).Methods("POST")
+	api.HandleFunc("/hosts/{id}/trivy-clear-cache", s.handleHostTrivyClearCache).Methods("POST")
 
 	// Container endpoints
 	api.HandleFunc("/containers", s.handleGetContainers).Methods("GET")
@@ -424,6 +434,63 @@ func (s *Server) handleDeleteHost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"message": "Host deleted successfully"})
+}
+
+func (s *Server) handleGetTrivySummary(w http.ResponseWriter, r *http.Request) {
+	// Get all hosts
+	hosts, err := s.db.GetHosts()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get hosts: "+err.Error())
+		return
+	}
+
+	withTrivy := 0
+	withoutTrivy := 0
+	disabled := 0
+	totalAgents := len(hosts)
+
+	// Check local host
+	if s.vulnScanner != nil {
+		withTrivy++ // Local host has Trivy
+	}
+
+	// Check each agent host
+	for _, host := range hosts {
+		if !host.EnableVulnerabilityScanning {
+			disabled++
+			continue
+		}
+
+		// For agent hosts, check if they have Trivy
+		if host.HostType == "agent" {
+			// Try to get agent info
+			if s.scanner != nil {
+				if agentInfo, err := s.scanner.GetAgentInfo(r.Context(), host); err == nil && agentInfo.HasTrivy {
+					withTrivy++
+				} else {
+					withoutTrivy++
+				}
+			} else {
+				withoutTrivy++
+			}
+		} else if host.HostType == "unix" {
+			// Unix hosts use local Trivy
+			if s.vulnScanner != nil {
+				withTrivy++
+			} else {
+				withoutTrivy++
+			}
+		}
+	}
+
+	response := map[string]interface{}{
+		"with_trivy":    withTrivy,
+		"without_trivy": withoutTrivy,
+		"disabled":      disabled,
+		"total_agents":  totalAgents,
+	}
+
+	respondJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleGetContainers(w http.ResponseWriter, r *http.Request) {
@@ -901,6 +968,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"status":       "healthy",
 		"version":      version.Get(),
+		"build_time":   version.GetBuildTime(),
 		"time":         time.Now().Format(time.RFC3339),
 		"auth_enabled": s.authConfig.Enabled,
 	}
@@ -2238,4 +2306,187 @@ func (s *Server) handlePluginAsset(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline';")
 
 	http.ServeFile(w, r, fullPath)
+}
+
+// handleBulkTrivyUpdate updates Trivy database on all agents
+func (s *Server) handleBulkTrivyUpdate(w http.ResponseWriter, r *http.Request) {
+	hosts, err := s.db.GetHosts()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to list hosts")
+		return
+	}
+
+	updateCount := 0
+	for _, host := range hosts {
+		if !isAgentHost(host.Address) {
+			continue
+		}
+
+		agentInfo, err := s.vulnScanner.GetAgentInfo(r.Context(), &host)
+		if err != nil || !agentInfo.HasTrivy {
+			continue
+		}
+
+		// Launch update asynchronously
+		go func(host models.Host) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+			if err := updateAgentTrivyDB(ctx, host); err != nil {
+				log.Printf("Failed to update Trivy DB on %s: %v", host.Name, err)
+			}
+		}(host)
+
+		updateCount++
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Trivy DB update initiated",
+		"updated": updateCount,
+	})
+}
+
+// handleHostTrivyUpdate updates Trivy database on a specific agent
+func (s *Server) handleHostTrivyUpdate(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	hostID, err := strconv.ParseInt(vars["id"], 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid host ID")
+		return
+	}
+
+	host, err := s.db.GetHost(hostID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Host not found")
+		return
+	}
+
+	if !isAgentHost(host.Address) {
+		respondError(w, http.StatusBadRequest, "Host is not an agent")
+		return
+	}
+
+	agentInfo, err := s.vulnScanner.GetAgentInfo(r.Context(), host)
+	if err != nil {
+		respondError(w, http.StatusBadGateway, "Failed to connect to agent")
+		return
+	}
+
+	if !agentInfo.HasTrivy {
+		respondError(w, http.StatusBadRequest, "Agent does not have Trivy installed")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	defer cancel()
+
+	if err := updateAgentTrivyDB(ctx, *host); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to update Trivy DB: "+err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"message": "Trivy database updated successfully"})
+}
+
+// handleHostTrivyClearCache clears Trivy cache on a specific agent
+func (s *Server) handleHostTrivyClearCache(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	hostID, err := strconv.ParseInt(vars["id"], 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid host ID")
+		return
+	}
+
+	host, err := s.db.GetHost(hostID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Host not found")
+		return
+	}
+
+	if !isAgentHost(host.Address) {
+		respondError(w, http.StatusBadRequest, "Host is not an agent")
+		return
+	}
+
+	agentInfo, err := s.vulnScanner.GetAgentInfo(r.Context(), host)
+	if err != nil {
+		respondError(w, http.StatusBadGateway, "Failed to connect to agent")
+		return
+	}
+
+	if !agentInfo.HasTrivy {
+		respondError(w, http.StatusBadRequest, "Agent does not have Trivy installed")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	if err := clearAgentTrivyCache(ctx, *host); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to clear cache: "+err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"message": "Trivy cache cleared successfully"})
+}
+
+// updateAgentTrivyDB makes HTTP call to agent to update Trivy database
+func updateAgentTrivyDB(ctx context.Context, host models.Host) error {
+	url := normalizeAgentURL(host.Address) + "/api/vulnerabilities/db-update"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("X-API-Token", host.AgentToken)
+
+	client := &http.Client{Timeout: 10 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to connect: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("agent returned %d: %s", resp.StatusCode, body)
+	}
+	return nil
+}
+
+// clearAgentTrivyCache makes HTTP call to agent to clear Trivy cache
+func clearAgentTrivyCache(ctx context.Context, host models.Host) error {
+	url := normalizeAgentURL(host.Address) + "/api/vulnerabilities/cache-clear"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("X-API-Token", host.AgentToken)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to connect: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("agent returned %d: %s", resp.StatusCode, body)
+	}
+	return nil
+}
+
+// isAgentHost checks if a host address is agent-based
+func isAgentHost(address string) bool {
+	return strings.HasPrefix(address, "agent://") ||
+		strings.HasPrefix(address, "http://") ||
+		strings.HasPrefix(address, "https://")
+}
+
+// normalizeAgentURL converts agent:// prefix to http:// and cleans URL
+func normalizeAgentURL(address string) string {
+	address = strings.TrimPrefix(address, "agent://")
+	if !strings.HasPrefix(address, "http://") && !strings.HasPrefix(address, "https://") {
+		address = "http://" + address
+	}
+	return strings.TrimSuffix(address, "/")
 }

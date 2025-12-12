@@ -3,7 +3,7 @@ package channels
 import (
 	"context"
 
-	"github.com/container-census/container-census/internal/models"
+	"github.com/selfhosters-cc/container-census/internal/models"
 )
 
 // Channel represents a notification delivery channel

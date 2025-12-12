@@ -10,6 +10,13 @@ Container Census is a multi-host Docker monitoring system written in Go. It cons
 2. **Agent** (`cmd/agent`): Lightweight agent for remote Docker hosts
 3. **Telemetry Collector** (`cmd/telemetry-collector`): Analytics aggregation service with PostgreSQL backend
 
+### Frontend
+
+**IMPORTANT**: Container Census uses a **Next.js/React** frontend (`web-next/`) as the primary UI. The vanilla JavaScript frontend (`web/`) is **deprecated** and kept only for reference - it will be removed in a future release. All new development should use the Next.js frontend.
+
+- **Active**: `web-next/` - Next.js 16 with TypeScript and React
+- **Deprecated**: `web/` - Vanilla JS (reference only, DO NOT USE for new features)
+
 ## Build Instructions
 
 **IMPORTANT**: When building binaries during development, ALWAYS build to `/tmp/container-census`:

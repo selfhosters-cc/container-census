@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/container-census/container-census/internal/models"
+	"github.com/selfhosters-cc/container-census/internal/models"
 )
 
 // Submitter handles sending telemetry to multiple endpoints

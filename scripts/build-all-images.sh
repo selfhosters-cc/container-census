@@ -383,6 +383,65 @@ save_version "$NEW_VERSION"
 # Start building
 print_header "Starting Build Process"
 
+# Build Next.js frontend (if building server)
+if [ "$BUILD_SERVER" = true ]; then
+    echo ""
+    read -p "Build Next.js frontend? (Y/n): " build_frontend
+
+    if [[ ! $build_frontend =~ ^[Nn]$ ]]; then
+        print_info "Building Next.js frontend..."
+
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+        if [ ! -d "$PROJECT_ROOT/web-next/node_modules" ]; then
+            print_info "Installing npm dependencies..."
+            (cd "$PROJECT_ROOT/web-next" && npm install)
+        fi
+
+        (cd "$PROJECT_ROOT/web-next" && npm run build)
+
+        print_success "Next.js frontend built successfully!"
+        print_info "Static files available in: $PROJECT_ROOT/web-next/out/"
+    else
+        print_warning "Skipping Next.js frontend build (vanilla JS will be used)"
+    fi
+fi
+
+# Build Graph Plugin Frontend (if building server)
+if [ "$BUILD_SERVER" = true ]; then
+    GRAPH_PLUGIN_DIR="$PROJECT_ROOT/internal/plugins/builtin/graph/frontend"
+    if [ -d "$GRAPH_PLUGIN_DIR/src" ]; then
+        print_info "Building Graph Plugin frontend..."
+
+        if [ ! -d "$GRAPH_PLUGIN_DIR/node_modules" ]; then
+            print_info "Installing Graph Plugin npm dependencies..."
+            (cd "$GRAPH_PLUGIN_DIR" && npm install)
+        fi
+
+        (cd "$GRAPH_PLUGIN_DIR" && npm run build)
+
+        print_success "Graph Plugin frontend built successfully!"
+    fi
+fi
+
+# Build Security Plugin Frontend (if building server)
+if [ "$BUILD_SERVER" = true ]; then
+    SECURITY_PLUGIN_DIR="$PROJECT_ROOT/internal/plugins/builtin/security/frontend"
+    if [ -d "$SECURITY_PLUGIN_DIR/src" ]; then
+        print_info "Building Security Plugin frontend..."
+
+        if [ ! -d "$SECURITY_PLUGIN_DIR/node_modules" ]; then
+            print_info "Installing Security Plugin npm dependencies..."
+            (cd "$SECURITY_PLUGIN_DIR" && npm install)
+        fi
+
+        (cd "$SECURITY_PLUGIN_DIR" && npm run build)
+
+        print_success "Security Plugin frontend built successfully!"
+    fi
+fi
+
 BUILD_SUCCESS=true
 
 # Build server
@@ -398,13 +457,100 @@ fi
 
 # Build agent
 if [ "$BUILD_AGENT" = true ]; then
-    if build_image "census-agent" "Dockerfile.agent" "$NEW_VERSION" "$PLATFORMS"; then
-        if [ "$PUSH_TO_REGISTRY" = true ]; then
-            build_and_push "census-agent" "Dockerfile.agent" "$NEW_VERSION" "$PLATFORMS" "$REGISTRY"
-        fi
-    else
-        BUILD_SUCCESS=false
-    fi
+    print_header "Agent Build Options"
+    echo -e "Which agent variant(s) to build?"
+    echo -e "  ${GREEN}1${NC}) Lightweight (no Trivy) - census-agent:latest"
+    echo -e "  ${GREEN}2${NC}) With Trivy - census-agent:with-trivy"
+    echo -e "  ${GREEN}3${NC}) Both variants"
+    echo ""
+    read -p "Choice [1-3]: " AGENT_VARIANT
+
+    case "$AGENT_VARIANT" in
+        1)
+            print_info "Building lightweight agent (no Trivy)..."
+            if build_image "census-agent" "Dockerfile.agent" "$NEW_VERSION" "$PLATFORMS"; then
+                if [ "$PUSH_TO_REGISTRY" = true ]; then
+                    build_and_push "census-agent" "Dockerfile.agent" "$NEW_VERSION" "$PLATFORMS" "$REGISTRY"
+                fi
+            else
+                BUILD_SUCCESS=false
+            fi
+            ;;
+        2)
+            print_info "Building agent with Trivy..."
+            # Build with Trivy using --build-arg
+            if docker buildx build \
+                --platform "$PLATFORMS" \
+                --build-arg DOCKER_GID=999 \
+                --build-arg INSTALL_TRIVY=true \
+                -t "census-agent:with-trivy-$NEW_VERSION" \
+                -t "census-agent:with-trivy" \
+                -f "Dockerfile.agent" \
+                $([ $(echo "$PLATFORMS" | tr ',' '\n' | wc -l) -eq 1 ] && echo "--load" || echo "") \
+                --progress=plain \
+                . ; then
+                print_success "census-agent:with-trivy built successfully"
+                if [ "$PUSH_TO_REGISTRY" = true ] && [ -n "$REGISTRY" ]; then
+                    docker buildx build \
+                        --platform "$PLATFORMS" \
+                        --build-arg DOCKER_GID=999 \
+                        --build-arg INSTALL_TRIVY=true \
+                        -t "$REGISTRY/census-agent:with-trivy-$NEW_VERSION" \
+                        -t "$REGISTRY/census-agent:with-trivy" \
+                        -f "Dockerfile.agent" \
+                        --push \
+                        --progress=plain \
+                        .
+                    print_success "Pushed to $REGISTRY/census-agent:with-trivy"
+                fi
+            else
+                BUILD_SUCCESS=false
+            fi
+            ;;
+        3)
+            print_info "Building both agent variants..."
+            # Build lightweight
+            if build_image "census-agent" "Dockerfile.agent" "$NEW_VERSION" "$PLATFORMS"; then
+                if [ "$PUSH_TO_REGISTRY" = true ]; then
+                    build_and_push "census-agent" "Dockerfile.agent" "$NEW_VERSION" "$PLATFORMS" "$REGISTRY"
+                fi
+            else
+                BUILD_SUCCESS=false
+            fi
+
+            # Build with Trivy
+            if docker buildx build \
+                --platform "$PLATFORMS" \
+                --build-arg DOCKER_GID=999 \
+                --build-arg INSTALL_TRIVY=true \
+                -t "census-agent:with-trivy-$NEW_VERSION" \
+                -t "census-agent:with-trivy" \
+                -f "Dockerfile.agent" \
+                $([ $(echo "$PLATFORMS" | tr ',' '\n' | wc -l) -eq 1 ] && echo "--load" || echo "") \
+                --progress=plain \
+                . ; then
+                print_success "census-agent:with-trivy built successfully"
+                if [ "$PUSH_TO_REGISTRY" = true ] && [ -n "$REGISTRY" ]; then
+                    docker buildx build \
+                        --platform "$PLATFORMS" \
+                        --build-arg DOCKER_GID=999 \
+                        --build-arg INSTALL_TRIVY=true \
+                        -t "$REGISTRY/census-agent:with-trivy-$NEW_VERSION" \
+                        -t "$REGISTRY/census-agent:with-trivy" \
+                        -f "Dockerfile.agent" \
+                        --push \
+                        --progress=plain \
+                        .
+                    print_success "Pushed to $REGISTRY/census-agent:with-trivy"
+                fi
+            else
+                BUILD_SUCCESS=false
+            fi
+            ;;
+        *)
+            print_error "Invalid choice. Skipping agent build."
+            ;;
+    esac
 fi
 
 # Build telemetry collector

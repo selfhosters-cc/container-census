@@ -3,7 +3,7 @@ package storage
 import (
 	"log"
 
-	"github.com/container-census/container-census/internal/models"
+	"github.com/selfhosters-cc/container-census/internal/models"
 )
 
 // InitializeDefaultNotifications creates default notification channels and rules if they don't exist

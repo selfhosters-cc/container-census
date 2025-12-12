@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/container-census/container-census/internal/vulnerability"
+	"github.com/selfhosters-cc/container-census/internal/models"
+	"github.com/selfhosters-cc/container-census/internal/vulnerability"
 )
 
 // GetVulnerabilityScan retrieves a vulnerability scan by image ID
@@ -324,6 +325,39 @@ func (db *DB) GetAllVulnerabilityScans(limit int) ([]vulnerability.Vulnerability
 			scan.Error = errorText.String
 		}
 
+		// Query host information for this image
+		hostQuery := `
+			SELECT DISTINCT ic.host_id, h.name
+			FROM image_containers ic
+			LEFT JOIN hosts h ON ic.host_id = h.id
+			WHERE ic.image_id = ?
+			ORDER BY h.name
+		`
+		hostRows, err := db.conn.Query(hostQuery, scan.ImageID)
+		if err != nil {
+			// Don't fail the entire query, just log and continue
+			scan.HostIDs = []int{}
+			scan.HostNames = []string{}
+		} else {
+			hostIDs := []int{}
+			hostNames := []string{}
+			for hostRows.Next() {
+				var hostID int
+				var hostName sql.NullString
+				if err := hostRows.Scan(&hostID, &hostName); err == nil {
+					hostIDs = append(hostIDs, hostID)
+					if hostName.Valid {
+						hostNames = append(hostNames, hostName.String)
+					} else {
+						hostNames = append(hostNames, fmt.Sprintf("Host %d", hostID))
+					}
+				}
+			}
+			hostRows.Close()
+			scan.HostIDs = hostIDs
+			scan.HostNames = hostNames
+		}
+
 		scans = append(scans, scan)
 	}
 
@@ -495,4 +529,81 @@ func (db *DB) LoadVulnerabilitySettings() (*vulnerability.Config, error) {
 	}
 
 	return &config, nil
+}
+
+// SaveTrivyDBMetadata saves Trivy database metadata for a host
+func (db *DB) SaveTrivyDBMetadata(hostID int64, trivyVersion, dbVersion string) error {
+	query := `
+		INSERT OR REPLACE INTO trivy_db_metadata (host_id, trivy_version, db_version, last_updated)
+		VALUES (?, ?, ?, ?)
+	`
+
+	_, err := db.conn.Exec(query, hostID, trivyVersion, dbVersion, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to save trivy metadata: %w", err)
+	}
+
+	return nil
+}
+
+// GetTrivyDBMetadata retrieves Trivy database metadata for a specific host
+func (db *DB) GetTrivyDBMetadata(hostID int64) (*models.TrivyDBMetadata, error) {
+	query := `
+		SELECT host_id, trivy_version, db_version, last_updated
+		FROM trivy_db_metadata
+		WHERE host_id = ?
+	`
+
+	var metadata models.TrivyDBMetadata
+	err := db.conn.QueryRow(query, hostID).Scan(
+		&metadata.HostID,
+		&metadata.TrivyVersion,
+		&metadata.DBVersion,
+		&metadata.LastUpdated,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get trivy metadata: %w", err)
+	}
+
+	return &metadata, nil
+}
+
+// GetAllTrivyDBMetadata retrieves Trivy database metadata for all hosts
+func (db *DB) GetAllTrivyDBMetadata() ([]models.TrivyDBMetadata, error) {
+	query := `
+		SELECT host_id, trivy_version, db_version, last_updated
+		FROM trivy_db_metadata
+		ORDER BY host_id
+	`
+
+	rows, err := db.conn.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query trivy metadata: %w", err)
+	}
+	defer rows.Close()
+
+	var metadataList []models.TrivyDBMetadata
+	for rows.Next() {
+		var metadata models.TrivyDBMetadata
+		err := rows.Scan(
+			&metadata.HostID,
+			&metadata.TrivyVersion,
+			&metadata.DBVersion,
+			&metadata.LastUpdated,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan trivy metadata: %w", err)
+		}
+		metadataList = append(metadataList, metadata)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating trivy metadata: %w", err)
+	}
+
+	return metadataList, nil
 }

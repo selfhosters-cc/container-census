@@ -421,26 +421,20 @@ async function loadVulnerabilityScans() {
     }
 }
 
+// Store scans globally for filtering
+let allVulnerabilityScans = [];
+
 // Render vulnerability scans table
 function renderVulnerabilityScans(scans) {
     const tbody = document.getElementById('securityScansBody');
     if (!tbody) return;
-
-    // Filter out remote/agent scans (images not available for local scanning)
-    const localScans = scans ? scans.filter(scan => {
-        // Exclude scans that failed because image wasn't available (agent scans)
-        return !(scan.success === false && scan.error && scan.error.includes('image not available'));
-    }) : [];
-
-    // Count filtered scans
-    const filteredCount = scans ? scans.length - localScans.length : 0;
 
     // Deduplicate by image_id (keep most recent scan)
     const uniqueScans = [];
     const seenImages = new Set();
 
     // Sort by scanned_at descending to get most recent first
-    const sortedScans = [...localScans].sort((a, b) => {
+    const sortedScans = [...(scans || [])].sort((a, b) => {
         const dateA = new Date(a.scanned_at);
         const dateB = new Date(b.scanned_at);
         return dateB - dateA;
@@ -453,34 +447,16 @@ function renderVulnerabilityScans(scans) {
         }
     }
 
+    // Store scans globally for filtering
+    allVulnerabilityScans = uniqueScans;
+
+    // Populate host filter dropdown
+    populateHostFilter(uniqueScans);
+
     // Update scan count badge
     const scanCountBadge = document.getElementById('scanCountBadge');
     if (scanCountBadge) {
         scanCountBadge.textContent = `${uniqueScans.length} images`;
-    }
-
-    // Update or create exclusion notice
-    let exclusionNotice = document.getElementById('exclusionNotice');
-    const tableCard = document.querySelector('.security-table-card');
-
-    if (filteredCount > 0) {
-        if (!exclusionNotice) {
-            exclusionNotice = document.createElement('div');
-            exclusionNotice.id = 'exclusionNotice';
-            exclusionNotice.className = 'security-queue-status';
-            exclusionNotice.style.marginBottom = '20px';
-            tableCard.insertBefore(exclusionNotice, tableCard.firstChild);
-        }
-        exclusionNotice.innerHTML = `
-            <div class="queue-status-icon">ℹ️</div>
-            <div class="queue-status-content">
-                <strong>Remote Agent Images:</strong>
-                ${filteredCount} images from remote agents are not shown. Agents do not have the ability to scan for vulnerabilities.
-            </div>
-        `;
-        exclusionNotice.style.display = 'flex';
-    } else if (exclusionNotice) {
-        exclusionNotice.style.display = 'none';
     }
 
     if (!uniqueScans || uniqueScans.length === 0) {
@@ -494,21 +470,50 @@ function renderVulnerabilityScans(scans) {
         const scannedAt = new Date(scan.scanned_at).toLocaleString();
 
         let statusBadge = '';
+        let severityClass = '';
         if (!scan.success) {
             statusBadge = '❌ Failed';
+            severityClass = 'failed';
         } else if (total === 0) {
             statusBadge = '✅ Clean';
+            severityClass = 'clean';
         } else if (counts.critical > 0) {
             statusBadge = '🚨 Critical';
+            severityClass = 'critical';
         } else if (counts.high > 0) {
             statusBadge = '⚠️ High';
+            severityClass = 'high';
+        } else if (counts.medium > 0) {
+            statusBadge = '📊 Issues';
+            severityClass = 'medium';
         } else {
             statusBadge = '📊 Issues';
+            severityClass = 'low';
         }
 
+        // Prepare host IDs and names for data attributes
+        const hostIds = (scan.host_ids || []).join(',');
+        const hostNames = (scan.host_names || []).join(',');
+
+        // Format host names for display (shown below image name)
+        const hostNamesDisplay = (scan.host_names && scan.host_names.length > 0)
+            ? `<div style="font-size: 0.85em; color: var(--text-secondary, #666); margin-top: 4px;">
+                 ${scan.host_names.join(', ')}
+               </div>`
+            : '';
+
         return `
-            <tr data-image-id="${scan.image_id}" style="cursor: pointer;" onclick="window.viewScanDetails('${scan.image_id}')">
-                <td title="${scan.image_name || scan.image_id}">${scan.image_name || scan.image_id}</td>
+            <tr data-image-id="${scan.image_id}"
+                data-host-ids="${hostIds}"
+                data-host-names="${hostNames}"
+                data-severity="${severityClass}"
+                data-image-name="${(scan.image_name || scan.image_id).toLowerCase()}"
+                style="cursor: pointer;"
+                onclick="window.viewScanDetails('${scan.image_id}')">
+                <td title="${scan.image_name || scan.image_id}">
+                    <div>${scan.image_name || scan.image_id}</div>
+                    ${hostNamesDisplay}
+                </td>
                 <td>${statusBadge}</td>
                 <td>${total}</td>
                 <td>${counts.critical || 0}</td>
@@ -523,6 +528,122 @@ function renderVulnerabilityScans(scans) {
             </tr>
         `;
     }).join('');
+
+    // Setup filter event listeners (only once)
+    setupFilterListeners();
+}
+
+// Populate host filter dropdown
+function populateHostFilter(scans) {
+    const hostFilter = document.getElementById('securityHostFilter');
+    if (!hostFilter) return;
+
+    // Collect all unique hosts
+    const hostsMap = new Map();
+    scans.forEach(scan => {
+        if (scan.host_ids && scan.host_names) {
+            scan.host_ids.forEach((hostId, index) => {
+                const hostName = scan.host_names[index] || `Host ${hostId}`;
+                hostsMap.set(hostId, hostName);
+            });
+        }
+    });
+
+    // Sort hosts by name
+    const hosts = Array.from(hostsMap.entries()).sort((a, b) => a[1].localeCompare(b[1]));
+
+    // Preserve current selection
+    const currentValue = hostFilter.value;
+
+    // Rebuild dropdown
+    hostFilter.innerHTML = '<option value="">All Hosts</option>' +
+        hosts.map(([id, name]) => `<option value="${id}">${name}</option>`).join('');
+
+    // Restore selection if it still exists
+    if (currentValue && Array.from(hostFilter.options).some(opt => opt.value === currentValue)) {
+        hostFilter.value = currentValue;
+    }
+}
+
+// Setup filter event listeners
+let filtersSetup = false;
+function setupFilterListeners() {
+    if (filtersSetup) return;
+    filtersSetup = true;
+
+    const hostFilter = document.getElementById('securityHostFilter');
+    const severityFilter = document.getElementById('securitySeverityFilter');
+    const statusFilter = document.getElementById('securityStatusFilter');
+    const searchInput = document.getElementById('securitySearchInput');
+
+    if (hostFilter) hostFilter.addEventListener('change', applyFilters);
+    if (severityFilter) severityFilter.addEventListener('change', applyFilters);
+    if (statusFilter) statusFilter.addEventListener('change', applyFilters);
+    if (searchInput) searchInput.addEventListener('input', applyFilters);
+}
+
+// Apply all filters
+function applyFilters() {
+    const hostFilter = document.getElementById('securityHostFilter')?.value || '';
+    const severityFilter = document.getElementById('securitySeverityFilter')?.value || '';
+    const statusFilter = document.getElementById('securityStatusFilter')?.value || '';
+    const searchText = document.getElementById('securitySearchInput')?.value.toLowerCase() || '';
+
+    const tbody = document.getElementById('securityScansBody');
+    if (!tbody) return;
+
+    const rows = tbody.querySelectorAll('tr[data-image-id]');
+    let visibleCount = 0;
+
+    rows.forEach(row => {
+        let show = true;
+
+        // Host filter
+        if (hostFilter) {
+            const hostIds = row.getAttribute('data-host-ids') || '';
+            if (!hostIds.split(',').includes(hostFilter)) {
+                show = false;
+            }
+        }
+
+        // Severity filter
+        if (severityFilter && show) {
+            const severity = row.getAttribute('data-severity') || '';
+            if (severity !== severityFilter) {
+                show = false;
+            }
+        }
+
+        // Status filter
+        if (statusFilter && show) {
+            const severity = row.getAttribute('data-severity') || '';
+            if (statusFilter === 'scanned' && (severity === 'failed' || severity === '')) {
+                show = false;
+            } else if (statusFilter === 'failed' && severity !== 'failed') {
+                show = false;
+            } else if (statusFilter === 'remote') {
+                // This filter doesn't apply to the table (remote scans are already filtered out)
+                show = false;
+            }
+        }
+
+        // Search filter
+        if (searchText && show) {
+            const imageName = row.getAttribute('data-image-name') || '';
+            if (!imageName.includes(searchText)) {
+                show = false;
+            }
+        }
+
+        row.style.display = show ? '' : 'none';
+        if (show) visibleCount++;
+    });
+
+    // Update count badge
+    const scanCountBadge = document.getElementById('scanCountBadge');
+    if (scanCountBadge) {
+        scanCountBadge.textContent = `${visibleCount} images`;
+    }
 }
 
 // View detailed scan results
@@ -662,7 +783,16 @@ window.scanAllImages = async function() {
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
         const result = await response.json();
-        alert(`${result.images_queued} images queued for scanning`);
+
+        // Build detailed message with per-host breakdown
+        let message = `${result.total_queued} images queued for scanning`;
+        if (result.queued_by_host && Object.keys(result.queued_by_host).length > 0) {
+            const breakdown = Object.entries(result.queued_by_host)
+                .map(([host, count]) => `${host}: ${count}`)
+                .join(', ');
+            message += `\n\n${breakdown}`;
+        }
+        alert(message);
 
         setTimeout(() => {
             loadVulnerabilitySummary();
@@ -881,6 +1011,21 @@ window.filterSecurityScans = function() {
 
 // Initialize security tab
 async function initSecurityTab() {
+    // Attach event listeners to buttons
+    const scanAllBtn = document.getElementById('scanAllImagesBtn');
+    const updateDbBtn = document.getElementById('updateTrivyDBBtn');
+    const settingsBtn = document.getElementById('vulnerabilitySettingsBtn');
+
+    if (scanAllBtn) {
+        scanAllBtn.addEventListener('click', window.scanAllImages);
+    }
+    if (updateDbBtn) {
+        updateDbBtn.addEventListener('click', window.updateTrivyDB);
+    }
+    if (settingsBtn) {
+        settingsBtn.addEventListener('click', window.showSecuritySettings);
+    }
+
     // Pre-load vulnerability scans
     await preloadVulnerabilityScans();
 
@@ -983,6 +1128,14 @@ window.initSecurityPlugin = function(container, sdk) {
                 </div>
             </div>
 
+            <div class="security-queue-status" style="display: flex; background-color: var(--info-bg, #e3f2fd); border-color: var(--info-border, #2196f3);">
+                <div class="queue-status-icon">ℹ️</div>
+                <div class="queue-status-content">
+                    <strong>Note:</strong>
+                    Only images from hosts with vulnerability scanning enabled are shown here. Agents do not have the ability to scan for vulnerabilities locally.
+                </div>
+            </div>
+
             <div class="security-charts-grid">
                 <div class="security-chart-card">
                     <div class="chart-card-header">
@@ -1012,6 +1165,9 @@ window.initSecurityPlugin = function(container, sdk) {
                         <span class="scan-count" id="scanCountBadge">0 scans</span>
                     </div>
                     <div class="security-filters-modern">
+                        <select id="securityHostFilter" class="filter-select">
+                            <option value="">All Hosts</option>
+                        </select>
                         <select id="securitySeverityFilter" class="filter-select">
                             <option value="">All Severities</option>
                             <option value="critical">Critical</option>

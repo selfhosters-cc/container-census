@@ -1,6 +1,6 @@
 package security
 
-import "github.com/container-census/container-census/internal/plugins"
+import "github.com/selfhosters-cc/container-census/internal/plugins"
 
 // Register registers the security plugin with the plugin manager
 func Register(manager *plugins.Manager) {

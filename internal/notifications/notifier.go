@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/container-census/container-census/internal/models"
-	"github.com/container-census/container-census/internal/notifications/channels"
-	"github.com/container-census/container-census/internal/storage"
+	"github.com/selfhosters-cc/container-census/internal/models"
+	"github.com/selfhosters-cc/container-census/internal/notifications/channels"
+	"github.com/selfhosters-cc/container-census/internal/storage"
 )
 
 // NotificationService handles all notification logic

@@ -45,6 +45,7 @@ export interface Host {
   api_token?: string;
   description?: string;
   collect_stats: boolean;
+  enable_vulnerability_scanning?: boolean;
   created_at: string;
   updated_at: string;
   last_seen?: string;
@@ -231,6 +232,7 @@ export interface Badge {
 export interface HealthStatus {
   status: string;
   version: string;
+  build_time?: string;
   latest_version?: string;
   update_available?: boolean;
   release_url?: string;
@@ -294,4 +296,53 @@ export interface ContainerLifecycleEvent {
   new_image_sha?: string;
   description?: string;
   restart_count?: number;
+}
+
+// Security Plugin Types
+export interface ScanProgress {
+  in_progress: number;
+  pending: number;
+  total: number;
+  current_scans: Array<{
+    image_id: string;
+    image_name: string;
+    host_id: number;
+    host_name: string;
+    started_at: string;
+  }>;
+}
+
+export interface TrivyHostStatus {
+  host_id: number;
+  host_name: string;
+  trivy_version: string;
+  db_version: string;
+  last_updated: string;
+  has_trivy: boolean;
+}
+
+export interface TrivyStatusResponse {
+  hosts: TrivyHostStatus[];
+}
+
+export interface TrivySummary {
+  with_trivy: number;
+  without_trivy: number;
+  disabled: number;
+  total_agents: number;
+}
+
+export interface ScanAllResponse {
+  message: string;
+  queued_by_host: Record<string, number>;
+  total_queued: number;
+}
+
+export interface UpdateDBResponse {
+  results: Array<{
+    host_id: number;
+    host_name: string;
+    success: boolean;
+    error?: string;
+  }>;
 }

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -9,11 +10,14 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/container-census/container-census/internal/models"
+	"github.com/selfhosters-cc/container-census/internal/models"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
@@ -29,6 +33,8 @@ type Info struct {
 	Arch          string    `json:"arch"`
 	DockerVersion string    `json:"docker_version"`
 	StartedAt     time.Time `json:"started_at"`
+	HasTrivy      bool      `json:"has_trivy"`       // Whether Trivy is available
+	TrivyVersion  string    `json:"trivy_version"`   // Trivy version if available
 }
 
 // Agent handles Docker operations on a single host
@@ -97,6 +103,11 @@ func (a *Agent) setupRoutes() {
 
 	// Telemetry endpoint
 	api.HandleFunc("/telemetry", a.handleGetTelemetry).Methods("GET")
+
+	// Vulnerability scanning endpoints (if Trivy available)
+	api.HandleFunc("/vulnerabilities/scan", a.handleScanImage).Methods("POST")
+	api.HandleFunc("/vulnerabilities/db-update", a.handleUpdateTrivyDB).Methods("POST")
+	api.HandleFunc("/vulnerabilities/cache-clear", a.handleClearTrivyCache).Methods("POST")
 }
 
 // Router returns the configured router
@@ -802,6 +813,133 @@ func createDockerClient(dockerHost string) (*client.Client, error) {
 		client.WithHost(dockerHost),
 		client.WithAPIVersionNegotiation(),
 	)
+}
+
+// handleScanImage scans an image using local Trivy
+func (a *Agent) handleScanImage(w http.ResponseWriter, r *http.Request) {
+	if !a.info.HasTrivy {
+		respondError(w, http.StatusNotImplemented, "Trivy not available on this agent")
+		return
+	}
+
+	var req struct {
+		ImageID   string `json:"image_id"`
+		ImageName string `json:"image_name"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if req.ImageName == "" {
+		respondError(w, http.StatusBadRequest, "image_name is required")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	defer cancel()
+
+	result, err := a.runTrivyScan(ctx, req.ImageName)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Scan failed: "+err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, result)
+}
+
+// runTrivyScan executes Trivy CLI and returns raw JSON
+func (a *Agent) runTrivyScan(ctx context.Context, imageRef string) (map[string]interface{}, error) {
+	cacheDir := "/app/data/.trivy"
+
+	args := []string{
+		"image",
+		"--format", "json",
+		"--quiet",
+		"--no-progress",
+		"--cache-dir", cacheDir,
+		"--image-src", "docker",
+	}
+
+	// Skip DB update if DB exists (prevent lock conflicts)
+	dbPath := filepath.Join(cacheDir, "db", "trivy.db")
+	if _, err := os.Stat(dbPath); err == nil {
+		args = append(args, "--skip-db-update", "--skip-java-db-update")
+	}
+
+	args = append(args, imageRef)
+
+	cmd := exec.CommandContext(ctx, "trivy", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		stderrStr := stderr.String()
+		if strings.Contains(stderrStr, "unable to find the specified image") ||
+			strings.Contains(stderrStr, "No such image") {
+			return nil, fmt.Errorf("image not available for scanning")
+		}
+		return nil, fmt.Errorf("trivy command failed: %w (stderr: %s)", err, stderrStr)
+	}
+
+	// Parse JSON and return as generic map
+	var result map[string]interface{}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		return nil, fmt.Errorf("failed to parse trivy output: %w", err)
+	}
+
+	return result, nil
+}
+
+// handleUpdateTrivyDB updates the Trivy vulnerability database
+func (a *Agent) handleUpdateTrivyDB(w http.ResponseWriter, r *http.Request) {
+	if !a.info.HasTrivy {
+		respondError(w, http.StatusNotImplemented, "Trivy not available on this agent")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	defer cancel()
+
+	cacheDir := "/app/data/.trivy"
+	cmd := exec.CommandContext(ctx, "trivy", "image", "--download-db-only", "--cache-dir", cacheDir)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to update database: "+string(output))
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"message": "Trivy database updated successfully",
+		"output":  string(output),
+	})
+}
+
+// handleClearTrivyCache clears the Trivy cache directory
+func (a *Agent) handleClearTrivyCache(w http.ResponseWriter, r *http.Request) {
+	if !a.info.HasTrivy {
+		respondError(w, http.StatusNotImplemented, "Trivy not available on this agent")
+		return
+	}
+
+	cacheDir := "/app/data/.trivy"
+
+	if err := os.RemoveAll(cacheDir); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to clear cache: "+err.Error())
+		return
+	}
+
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to recreate cache directory: "+err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"message": "Trivy cache cleared successfully",
+	})
 }
 
 func respondJSON(w http.ResponseWriter, status int, data interface{}) {

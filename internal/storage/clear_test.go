@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/container-census/container-census/internal/models"
+	"github.com/selfhosters-cc/container-census/internal/models"
 )
 
 // TestCleanupOldNotifications tests clearing old notifications

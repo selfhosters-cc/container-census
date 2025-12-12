@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/container-census/container-census/internal/models"
-	"github.com/container-census/container-census/internal/vulnerability"
+	"github.com/selfhosters-cc/container-census/internal/models"
+	"github.com/selfhosters-cc/container-census/internal/vulnerability"
 	"github.com/gorilla/mux"
 )
 
@@ -20,6 +20,7 @@ type VulnerabilityScanner interface {
 	GetConfig() *vulnerability.Config
 	SetConfig(config *vulnerability.Config)
 	InvalidateCache(imageID string)
+	GetAgentInfo(ctx context.Context, host *models.Host) (*models.AgentInfo, error)
 }
 
 // VulnerabilityScheduler interface for the vulnerability scheduler

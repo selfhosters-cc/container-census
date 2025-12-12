@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/container-census/container-census/internal/models"
+	"github.com/selfhosters-cc/container-census/internal/models"
 	"gopkg.in/yaml.v3"
 )
 

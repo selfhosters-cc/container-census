@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/container-census/container-census/internal/auth"
+	"github.com/selfhosters-cc/container-census/internal/auth"
 )
 
 // LoginRequest represents the login request payload

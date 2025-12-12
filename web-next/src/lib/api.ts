@@ -67,6 +67,10 @@ export const deleteHost = (id: number) =>
   fetchApi<void>(`/hosts/${id}`, { method: 'DELETE' });
 export const scanHost = (id: number) =>
   fetchApi<void>(`/hosts/${id}/scan`, { method: 'POST' });
+export const getTrivySummary = () =>
+  fetchApi<import('@/types').TrivySummary>('/hosts/trivy-summary');
+export const getAgentInfo = (hostId: number) =>
+  fetchApi<{ has_trivy: boolean; trivy_version?: string }>(`/hosts/agent/${hostId}/info`);
 
 // Images
 export const getImages = () => fetchApi<import('@/types').Image[]>('/images');
@@ -82,10 +86,20 @@ export const getVulnerabilityDetails = (imageId: string) =>
   );
 export const scanImage = (imageId: string) =>
   fetchApi<void>(`/p/security/scan/${encodeURIComponent(imageId)}`, { method: 'POST' });
-export const scanAllImages = () =>
-  fetchApi<void>('/p/security/scan-all', { method: 'POST' });
-export const updateVulnerabilityDb = () =>
-  fetchApi<void>('/p/security/update-db', { method: 'POST' });
+export const scanAllImages = (hostIds?: number[]) =>
+  fetchApi<import('@/types').ScanAllResponse>('/p/security/scan-all', {
+    method: 'POST',
+    body: hostIds ? JSON.stringify({ host_ids: hostIds }) : undefined,
+  });
+export const getScanProgress = () =>
+  fetchApi<import('@/types').ScanProgress>('/p/security/progress');
+export const getTrivyStatus = () =>
+  fetchApi<import('@/types').TrivyStatusResponse>('/p/security/trivy-status');
+export const updateVulnerabilityDb = (hostIds?: number[]) =>
+  fetchApi<import('@/types').UpdateDBResponse>('/p/security/update-db', {
+    method: 'POST',
+    body: hostIds ? JSON.stringify({ host_ids: hostIds }) : undefined,
+  });
 export const getVulnerabilitySettings = () =>
   fetchApi<Record<string, string>>('/p/security/settings');
 export const updateVulnerabilitySettings = (settings: Record<string, string>) =>

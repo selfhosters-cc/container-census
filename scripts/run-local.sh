@@ -12,7 +12,7 @@ NC='\033[0m' # No Color
 TEST_MODE=false
 RESET_DB=false
 AUTH_ENABLED=false
-FRONTEND="classic"
+FRONTEND="nextjs"  # Default to Next.js
 INTERACTIVE=true
 
 while [[ $# -gt 0 ]]; do
@@ -33,6 +33,10 @@ while [[ $# -gt 0 ]]; do
             FRONTEND="nextjs"
             shift
             ;;
+        --classic)
+            FRONTEND="classic"
+            shift
+            ;;
         --no-interactive|-y)
             INTERACTIVE=false
             shift
@@ -44,14 +48,15 @@ while [[ $# -gt 0 ]]; do
             echo "  --test              Run in test mode (uses config-test.yaml and census-test.db)"
             echo "  --reset-db          Reset the test database (only valid with --test)"
             echo "  --auth              Enable authentication (username: qwerty, password: qwerty)"
-            echo "  --nextjs            Use Next.js frontend instead of classic"
+            echo "  --nextjs            Use Next.js frontend (default)"
+            echo "  --classic           Use classic vanilla JS frontend"
             echo "  --no-interactive,-y Run without prompts (use default/flag settings)"
             echo "  --help,-h           Show this help message"
             echo ""
             echo "Examples:"
             echo "  $0                           # Interactive mode (prompts for all options)"
-            echo "  $0 --no-interactive          # Non-interactive with defaults (normal mode, no auth, classic UI)"
-            echo "  $0 -y --nextjs               # Non-interactive with Next.js UI"
+            echo "  $0 --no-interactive          # Non-interactive with defaults (normal mode, no auth, Next.js UI)"
+            echo "  $0 -y --classic              # Non-interactive with classic UI"
             echo "  $0 --test --auth --nextjs -y # Test mode, auth enabled, Next.js UI, no prompts"
             exit 0
             ;;
@@ -125,13 +130,13 @@ fi
 if [ "$INTERACTIVE" = true ]; then
     echo ""
     echo "Frontend options:"
-    echo "  1) Classic (vanilla JS) - web/"
-    echo "  2) Next.js (React) - web-next/out/"
+    echo "  1) Next.js (React) - web-next/out/ [default]"
+    echo "  2) Classic (vanilla JS) - web/"
     read -p "Choose frontend [1]: " -n 1 -r
     echo
 
     if [[ $REPLY == "2" ]]; then
-        FRONTEND="nextjs"
+        FRONTEND="classic"
     fi
 fi
 

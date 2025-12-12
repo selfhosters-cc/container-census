@@ -68,7 +68,15 @@ fi
 # Build Go server
 echo -e "${YELLOW}Building Go server...${NC}"
 cd "$PROJECT_ROOT"
-CGO_ENABLED=1 go build -o /tmp/census-server ./cmd/server
+
+# Get build timestamp in RFC3339 format
+BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+# Build with ldflags to inject build time
+CGO_ENABLED=1 go build \
+  -ldflags "-X github.com/selfhosters-cc/container-census/internal/version.BuildTime=${BUILD_TIME}" \
+  -o /tmp/census-server \
+  ./cmd/server
 
 echo -e "${GREEN}Server built successfully!${NC}"
 ls -lh /tmp/census-server

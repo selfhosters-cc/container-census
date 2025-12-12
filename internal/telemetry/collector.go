@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/container-census/container-census/internal/models"
-	"github.com/container-census/container-census/internal/storage"
-	"github.com/container-census/container-census/internal/version"
+	"github.com/selfhosters-cc/container-census/internal/models"
+	"github.com/selfhosters-cc/container-census/internal/storage"
+	"github.com/selfhosters-cc/container-census/internal/version"
 	"github.com/google/uuid"
 )
 

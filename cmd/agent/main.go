@@ -7,14 +7,16 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
-	"github.com/container-census/container-census/internal/agent"
-	"github.com/container-census/container-census/internal/version"
+	"github.com/selfhosters-cc/container-census/internal/agent"
+	"github.com/selfhosters-cc/container-census/internal/version"
 )
 
 func main() {
@@ -48,19 +50,29 @@ func main() {
 	// Get version
 	agentVersion := version.Get()
 
+	// Check Trivy availability
+	hasTrivyBool, trivyVer := checkTrivyAvailability()
+
 	// Create agent info
 	agentInfo := agent.Info{
-		Version:   agentVersion,
-		Hostname:  hostname,
-		OS:        runtime.GOOS,
-		Arch:      runtime.GOARCH,
-		StartedAt: time.Now(),
+		Version:      agentVersion,
+		Hostname:     hostname,
+		OS:           runtime.GOOS,
+		Arch:         runtime.GOARCH,
+		StartedAt:    time.Now(),
+		HasTrivy:     hasTrivyBool,
+		TrivyVersion: trivyVer,
 	}
 
 	log.Printf("Starting Container Census Agent v%s", agentVersion)
 	log.Printf("Hostname: %s", hostname)
 	log.Printf("OS: %s/%s", runtime.GOOS, runtime.GOARCH)
 	log.Printf("Docker Host: %s", *dockerHost)
+	if hasTrivyBool {
+		log.Printf("Trivy: v%s (vulnerability scanning enabled)", trivyVer)
+	} else {
+		log.Printf("Trivy: not available (vulnerability scanning disabled)")
+	}
 
 	// Create agent server
 	agentServer, err := agent.New(*dockerHost, *apiToken, agentInfo)
@@ -191,4 +203,24 @@ func loadOrGenerateToken(tokenFile string) string {
 	}
 
 	return token
+}
+
+// checkTrivyAvailability checks if Trivy is installed and returns version
+func checkTrivyAvailability() (bool, string) {
+	cmd := exec.Command("trivy", "--version")
+	output, err := cmd.Output()
+	if err != nil {
+		return false, ""
+	}
+
+	// Parse version from output
+	// Expected format: "Version: 0.58.1"
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "Version:") {
+			version := strings.TrimSpace(strings.TrimPrefix(line, "Version:"))
+			return true, version
+		}
+	}
+	return true, "unknown"
 }

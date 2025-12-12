@@ -793,11 +793,18 @@ async function loadVersion() {
         const badge = document.getElementById('versionBadge');
 
         if (data.version) {
+            // Format build time for display
+            let buildTimeText = '';
+            if (data.build_time && data.build_time !== 'unknown') {
+                const buildDate = new Date(data.build_time);
+                buildTimeText = `\nBuilt: ${buildDate.toLocaleString()}`;
+            }
+
             if (data.update_available && data.latest_version) {
                 // Show update indicator
                 badge.innerHTML = `v${data.version} → v${data.latest_version} <span style="font-size: 1.2em;">⬆️</span>`;
                 badge.style.cursor = 'pointer';
-                badge.title = 'Click to view update';
+                badge.title = `Click to view update${buildTimeText}`;
                 badge.onclick = () => {
                     if (data.release_url) {
                         window.open(data.release_url, '_blank');
@@ -811,7 +818,7 @@ async function loadVersion() {
                 // No update available
                 badge.textContent = 'v' + data.version;
                 badge.style.cursor = 'default';
-                badge.title = 'Current version';
+                badge.title = `Current version${buildTimeText}`;
                 badge.onclick = null;
             }
         }
@@ -1754,7 +1761,7 @@ async function loadHottestImages(days) {
 
         // Update subtitle
         document.getElementById('hottestSubtitle').textContent =
-            `Based on ${data.total_installations.toLocaleString()} installations over the last ${data.period_days} days`;
+            `Based on ${data.total_installations.toLocaleString()} active installations over the last ${data.period_days} days`;
 
         // Create charts
         createHottestCharts(data);

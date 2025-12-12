@@ -27,13 +27,31 @@ RUN go mod tidy -e
 RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags="-w -s" -o census-agent ./cmd/agent
 
 # Stage 2: Create minimal runtime image
-FROM alpine:latest
+FROM alpine:3.21
 
 # Build arg for docker group GID (defaults to 999)
 ARG DOCKER_GID=999
 
-# Install ca-certificates for HTTPS
-RUN apk --no-cache add ca-certificates tzdata
+# Build arg for optional Trivy installation
+ARG INSTALL_TRIVY=false
+ARG TRIVY_VERSION=0.58.1
+
+# Install ca-certificates for HTTPS and conditionally install Trivy
+RUN apk --no-cache add ca-certificates tzdata && \
+    if [ "$INSTALL_TRIVY" = "true" ]; then \
+        apk --no-cache add wget && \
+        ARCH=$(uname -m) && \
+        case "$ARCH" in \
+            x86_64) TRIVY_ARCH="64bit" ;; \
+            aarch64) TRIVY_ARCH="ARM64" ;; \
+            armv7l) TRIVY_ARCH="ARM" ;; \
+            *) echo "Unsupported architecture: $ARCH" && exit 1 ;; \
+        esac && \
+        wget -qO- https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-${TRIVY_ARCH}.tar.gz | tar -xzf - -C /usr/local/bin trivy && \
+        chmod +x /usr/local/bin/trivy && \
+        trivy --version && \
+        apk del wget; \
+    fi
 
 # Create docker group with host's GID and census user
 RUN (getent group ${DOCKER_GID} && delgroup $(getent group ${DOCKER_GID} | cut -d: -f1)) || true && \
@@ -51,8 +69,12 @@ COPY --from=builder /build/census-agent .
 # Copy version file
 COPY --from=builder /build/.version ./.version
 
-# Create data directory for token persistence
-RUN mkdir -p /app/data && chown census:census /app/data
+# Create data directory for token persistence and conditionally create Trivy cache directory
+RUN mkdir -p /app/data && chown census:census /app/data && \
+    if [ "$INSTALL_TRIVY" = "true" ]; then \
+        mkdir -p /app/data/.trivy && \
+        chown census:census /app/data/.trivy; \
+    fi
 
 # Switch to non-root user
 USER census

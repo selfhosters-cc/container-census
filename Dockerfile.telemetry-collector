@@ -26,7 +26,7 @@ RUN go mod tidy -e
 RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags="-w -s" -o telemetry-collector ./cmd/telemetry-collector
 
 # Stage 2: Create minimal runtime image
-FROM alpine:latest
+FROM alpine:3.21
 
 # Install ca-certificates for HTTPS and timezone data
 RUN apk --no-cache add ca-certificates tzdata

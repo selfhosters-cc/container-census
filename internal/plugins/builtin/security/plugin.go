@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/container-census/container-census/internal/plugins"
-	"github.com/container-census/container-census/internal/scanner"
-	"github.com/container-census/container-census/internal/storage"
-	"github.com/container-census/container-census/internal/vulnerability"
+	"github.com/selfhosters-cc/container-census/internal/plugins"
+	"github.com/selfhosters-cc/container-census/internal/scanner"
+	"github.com/selfhosters-cc/container-census/internal/storage"
+	"github.com/selfhosters-cc/container-census/internal/vulnerability"
 )
 
 //go:embed frontend/bundle.js
@@ -110,7 +110,7 @@ func (p *SecurityPlugin) Start(ctx context.Context) error {
 	p.vulnScanner = vulnerability.NewScanner(vulnConfig, p.db)
 
 	// Initialize vulnerability scheduler
-	p.vulnScheduler = vulnerability.NewScheduler(p.vulnScanner, vulnConfig)
+	p.vulnScheduler = vulnerability.NewScheduler(p.vulnScanner, vulnConfig, p.db)
 
 	// Start scheduler
 	p.vulnScheduler.Start()
@@ -149,6 +149,8 @@ func (p *SecurityPlugin) Routes() []plugins.Route {
 		{Path: "/scan/{imageId}", Method: "POST", Handler: p.handleTriggerScan},
 		{Path: "/scan-all", Method: "POST", Handler: p.handleScanAll},
 		{Path: "/queue", Method: "GET", Handler: p.handleGetQueue},
+		{Path: "/progress", Method: "GET", Handler: p.handleGetProgress},
+		{Path: "/trivy-status", Method: "GET", Handler: p.handleGetTrivyStatus},
 		{Path: "/update-db", Method: "POST", Handler: p.handleUpdateDB},
 		{Path: "/settings", Method: "GET", Handler: p.handleGetSettings},
 		{Path: "/settings", Method: "PUT", Handler: p.handleUpdateSettings},
@@ -156,65 +158,16 @@ func (p *SecurityPlugin) Routes() []plugins.Route {
 	}
 }
 
-// Tab returns the tab definition
+// Tab returns the tab definition for the Integrations sidebar
 func (p *SecurityPlugin) Tab() *plugins.TabDefinition {
-	contentHTML := `
-		<div class="security-section-modern">
-			<div class="security-header-modern">
-				<div class="security-title-group">
-					<h2>🛡️ Vulnerability Scanner</h2>
-					<p class="security-subtitle">Monitor and track security vulnerabilities across all container images</p>
-				</div>
-				<div class="security-actions">
-					<button onclick="window.scanAllImages()" class="btn btn-primary">🔄 Scan All Images</button>
-					<button onclick="window.updateTrivyDB()" class="btn btn-secondary">📥 Update Database</button>
-					<button onclick="window.showSecuritySettings()" class="btn btn-secondary">⚙️ Settings</button>
-					<button onclick="window.exportVulnerabilityData()" class="btn btn-secondary">📊 Export</button>
-				</div>
-			</div>
-
-			<div id="vulnerabilitySummary"></div>
-
-			<div class="security-table-card">
-				<div class="security-table-header-modern">
-					<div class="table-title-group">
-						<h3>Vulnerability Scans</h3>
-						<span class="scan-count" id="scanCountBadge">0 scans</span>
-					</div>
-					<div class="security-filters-modern">
-						<input type="text" id="securitySearch" class="search-input" placeholder="🔍 Search images..." oninput="window.filterSecurityScans()">
-					</div>
-				</div>
-				<div class="table-container">
-					<table class="vulnerability-table" id="securityScansTable">
-						<thead>
-							<tr>
-								<th>Image Name</th>
-								<th>Status</th>
-								<th>Total Vulnerabilities</th>
-								<th>Severity Breakdown</th>
-								<th>Scanned At</th>
-							</tr>
-						</thead>
-						<tbody>
-							<tr>
-								<td colspan="5" class="loading">Loading vulnerability scans...</td>
-							</tr>
-						</tbody>
-					</table>
-				</div>
-			</div>
-		</div>
-	`
-
+	// Return tab definition so it appears in sidebar, but without vanilla JS content
+	// The Next.js page at /integrations/security provides the actual UI
 	return &plugins.TabDefinition{
-		ID:          "security",
-		Label:       "Security",
-		Icon:        "🛡️",
-		Order:       12, // After containers (10), before integrations (14)
-		ContentHTML: contentHTML,
-		ScriptURL:   "/bundle.js", // Relative to /api/p/security/
-		InitFunc:    "initSecurityPlugin",
+		ID:    "security",
+		Label: "Security",
+		Icon:  "🛡️",
+		Order: 12, // After containers (10), before other integrations
+		// No ContentHTML or ScriptURL - Next.js handles the UI
 	}
 }
 

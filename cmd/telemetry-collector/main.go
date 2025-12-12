@@ -15,8 +15,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/container-census/container-census/internal/models"
-	"github.com/container-census/container-census/internal/version"
+	"github.com/selfhosters-cc/container-census/internal/models"
+	"github.com/selfhosters-cc/container-census/internal/version"
 	"github.com/gorilla/mux"
 	_ "github.com/lib/pq" // PostgreSQL driver
 )
@@ -28,7 +28,7 @@ type Config struct {
 	AuthUsername        string
 	AuthPassword        string
 	StatsAPIKey         string // API key for stats endpoints
-	StatsMinInstalls    int    // Minimum installations for trending stats (default: 10)
+	StatsMinInstalls    int    // Minimum installations for trending stats (default: 3)
 }
 
 type Server struct {
@@ -57,7 +57,7 @@ func main() {
 		AuthUsername:     getEnv("COLLECTOR_AUTH_USERNAME", ""),
 		AuthPassword:     getEnv("COLLECTOR_AUTH_PASSWORD", ""),
 		StatsAPIKey:      getEnv("STATS_API_KEY", ""),
-		StatsMinInstalls: getEnvInt("STATS_MIN_INSTALLATIONS", 10),
+		StatsMinInstalls: getEnvInt("STATS_MIN_INSTALLATIONS", 3),
 	}
 
 	if config.AuthEnabled {
@@ -2404,9 +2404,9 @@ func (s *Server) handleMoversStats(w http.ResponseWriter, r *http.Request) {
 	previousQuery := `
 		SELECT image, total_count, installation_count
 		FROM image_stats_weekly
-		WHERE week_start = $1
+		WHERE week_start = $1 AND installation_count >= $2
 	`
-	previousRows, err := s.db.Query(previousQuery, previousWeek)
+	previousRows, err := s.db.Query(previousQuery, previousWeek, minInstallations)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Query failed: "+err.Error())
 		return

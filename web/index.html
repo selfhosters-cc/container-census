@@ -664,7 +664,10 @@
             <div class="hosts-section">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                     <h2 style="margin: 0;">Configured Hosts</h2>
-                    <button id="addAgentBtn" class="btn btn-success">+ Add Agent Host</button>
+                    <div style="display: flex; gap: 10px;">
+                        <button class="btn btn-secondary" onclick="updateAllAgentTrivyDBs()">Update All Agents' Trivy DBs</button>
+                        <button id="addAgentBtn" class="btn btn-success">+ Add Agent Host</button>
+                    </div>
                 </div>
                 <div id="hostsTable" class="table-container">
                     <table>
@@ -675,6 +678,7 @@
                                 <th>Address</th>
                                 <th>Status</th>
                                 <th>Stats Collection</th>
+                                <th>Vuln Scanning</th>
                                 <th>Description</th>
                                 <th>Last Seen</th>
                                 <th>Actions</th>
@@ -682,7 +686,7 @@
                         </thead>
                         <tbody id="hostsBody">
                             <tr>
-                                <td colspan="8" class="loading">Loading...</td>
+                                <td colspan="9" class="loading">Loading...</td>
                             </tr>
                         </tbody>
                     </table>

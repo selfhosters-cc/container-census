@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/container-census/container-census/internal/models"
+	"github.com/selfhosters-cc/container-census/internal/models"
 )
 
 // NtfyChannel implements ntfy.sh notifications

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/container-census/container-census/internal/models"
+	"github.com/selfhosters-cc/container-census/internal/models"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -329,6 +329,14 @@ func (db *DB) initSchema() error {
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
 
+	CREATE TABLE IF NOT EXISTS trivy_db_metadata (
+		host_id INTEGER PRIMARY KEY,
+		trivy_version TEXT,
+		db_version TEXT,
+		last_updated TIMESTAMP,
+		FOREIGN KEY (host_id) REFERENCES hosts(id) ON DELETE CASCADE
+	);
+
 	CREATE TABLE IF NOT EXISTS user_preferences (
 		key TEXT PRIMARY KEY,
 		value TEXT NOT NULL,
@@ -466,6 +474,23 @@ func (db *DB) runMigrations() error {
 
 	if collectStatsExists == 0 {
 		if _, err := db.conn.Exec(`ALTER TABLE hosts ADD COLUMN collect_stats BOOLEAN NOT NULL DEFAULT 1`); err != nil {
+			if !isSQLiteColumnExistsError(err) {
+				return err
+			}
+		}
+	}
+
+	// Check if enable_vulnerability_scanning column exists in hosts table
+	var enableVulnScanExists int
+	err = db.conn.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('hosts') WHERE name='enable_vulnerability_scanning'
+	`).Scan(&enableVulnScanExists)
+	if err != nil {
+		return err
+	}
+
+	if enableVulnScanExists == 0 {
+		if _, err := db.conn.Exec(`ALTER TABLE hosts ADD COLUMN enable_vulnerability_scanning BOOLEAN NOT NULL DEFAULT 1`); err != nil {
 			if !isSQLiteColumnExistsError(err) {
 				return err
 			}
@@ -617,14 +642,14 @@ func (db *DB) GetHosts() ([]models.Host, error) {
 		)
 		SELECT
 			h.id, h.name, h.address, h.description, h.host_type, h.agent_token, h.agent_status,
-			h.agent_version, h.last_seen, h.enabled, h.collect_stats, h.created_at, h.updated_at,
+			h.agent_version, h.last_seen, h.enabled, h.collect_stats, h.enable_vulnerability_scanning, h.created_at, h.updated_at,
 			COUNT(c.id) as container_count,
 			COUNT(CASE WHEN c.state = 'running' THEN c.id END) as running_count
 		FROM hosts h
 		LEFT JOIN latest_scan_per_host ls ON h.id = ls.host_id
 		LEFT JOIN containers c ON c.host_id = h.id AND c.scanned_at = ls.max_scanned_at
 		GROUP BY h.id, h.name, h.address, h.description, h.host_type, h.agent_token, h.agent_status,
-			h.agent_version, h.last_seen, h.enabled, h.collect_stats, h.created_at, h.updated_at
+			h.agent_version, h.last_seen, h.enabled, h.collect_stats, h.enable_vulnerability_scanning, h.created_at, h.updated_at
 		ORDER BY h.name
 	`)
 	if err != nil {
@@ -637,10 +662,10 @@ func (db *DB) GetHosts() ([]models.Host, error) {
 		var h models.Host
 		var lastSeen sql.NullTime
 		var agentToken, agentStatus, agentVersion sql.NullString
-		var collectStats sql.NullBool
+		var collectStats, enableVulnScanning sql.NullBool
 		var containerCount, runningCount int
 
-		if err := rows.Scan(&h.ID, &h.Name, &h.Address, &h.Description, &h.HostType, &agentToken, &agentStatus, &agentVersion, &lastSeen, &h.Enabled, &collectStats, &h.CreatedAt, &h.UpdatedAt, &containerCount, &runningCount); err != nil {
+		if err := rows.Scan(&h.ID, &h.Name, &h.Address, &h.Description, &h.HostType, &agentToken, &agentStatus, &agentVersion, &lastSeen, &h.Enabled, &collectStats, &enableVulnScanning, &h.CreatedAt, &h.UpdatedAt, &containerCount, &runningCount); err != nil {
 			return nil, err
 		}
 
@@ -661,6 +686,11 @@ func (db *DB) GetHosts() ([]models.Host, error) {
 		} else {
 			h.CollectStats = true // Default to true
 		}
+		if enableVulnScanning.Valid {
+			h.EnableVulnerabilityScanning = enableVulnScanning.Bool
+		} else {
+			h.EnableVulnerabilityScanning = true // Default to true
+		}
 
 		h.ContainerCount = containerCount
 		h.RunningCount = runningCount
@@ -676,12 +706,12 @@ func (db *DB) GetHost(id int64) (*models.Host, error) {
 	var h models.Host
 	var lastSeen sql.NullTime
 	var agentToken, agentStatus, agentVersion sql.NullString
-	var collectStats sql.NullBool
+	var collectStats, enableVulnScanning sql.NullBool
 
 	err := db.conn.QueryRow(`
-		SELECT id, name, address, description, host_type, agent_token, agent_status, agent_version, last_seen, enabled, collect_stats, created_at, updated_at
+		SELECT id, name, address, description, host_type, agent_token, agent_status, agent_version, last_seen, enabled, collect_stats, enable_vulnerability_scanning, created_at, updated_at
 		FROM hosts WHERE id = ?
-	`, id).Scan(&h.ID, &h.Name, &h.Address, &h.Description, &h.HostType, &agentToken, &agentStatus, &agentVersion, &lastSeen, &h.Enabled, &collectStats, &h.CreatedAt, &h.UpdatedAt)
+	`, id).Scan(&h.ID, &h.Name, &h.Address, &h.Description, &h.HostType, &agentToken, &agentStatus, &agentVersion, &lastSeen, &h.Enabled, &collectStats, &enableVulnScanning, &h.CreatedAt, &h.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -703,6 +733,11 @@ func (db *DB) GetHost(id int64) (*models.Host, error) {
 	} else {
 		h.CollectStats = true // Default to true
 	}
+	if enableVulnScanning.Valid {
+		h.EnableVulnerabilityScanning = enableVulnScanning.Bool
+	} else {
+		h.EnableVulnerabilityScanning = true // Default to true
+	}
 
 	return &h, nil
 }
@@ -711,9 +746,9 @@ func (db *DB) GetHost(id int64) (*models.Host, error) {
 func (db *DB) UpdateHost(host models.Host) error {
 	_, err := db.conn.Exec(`
 		UPDATE hosts
-		SET name = ?, address = ?, description = ?, host_type = ?, agent_token = ?, agent_status = ?, agent_version = ?, last_seen = ?, enabled = ?, collect_stats = ?, updated_at = CURRENT_TIMESTAMP
+		SET name = ?, address = ?, description = ?, host_type = ?, agent_token = ?, agent_status = ?, agent_version = ?, last_seen = ?, enabled = ?, collect_stats = ?, enable_vulnerability_scanning = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, host.Name, host.Address, host.Description, host.HostType, host.AgentToken, host.AgentStatus, host.AgentVersion, host.LastSeen, host.Enabled, host.CollectStats, host.ID)
+	`, host.Name, host.Address, host.Description, host.HostType, host.AgentToken, host.AgentStatus, host.AgentVersion, host.LastSeen, host.Enabled, host.CollectStats, host.EnableVulnerabilityScanning, host.ID)
 	return err
 }
 

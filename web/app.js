@@ -863,11 +863,18 @@ async function loadVersion() {
         const badge = document.getElementById('versionBadge');
 
         if (data.version) {
+            // Format build time for display
+            let buildTimeText = '';
+            if (data.build_time && data.build_time !== 'unknown') {
+                const buildDate = new Date(data.build_time);
+                buildTimeText = `\nBuilt: ${buildDate.toLocaleString()}`;
+            }
+
             if (data.update_available && data.latest_version) {
                 // Show update indicator
                 badge.innerHTML = `v${data.version} → v${data.latest_version} <span style="font-size: 1.2em;">⬆️</span>`;
                 badge.style.cursor = 'pointer';
-                badge.title = 'Click to view update';
+                badge.title = `Click to view update${buildTimeText}`;
                 badge.onclick = () => {
                     if (data.release_url) {
                         window.open(data.release_url, '_blank');
@@ -881,7 +888,7 @@ async function loadVersion() {
                 // No update available
                 badge.textContent = 'v' + data.version;
                 badge.style.cursor = 'default';
-                badge.title = 'Current version';
+                badge.title = `Current version${buildTimeText}`;
                 badge.onclick = null;
             }
         }
@@ -1964,6 +1971,22 @@ function renderHosts(hostsData) {
             ? '<span class="badge badge-success" style="cursor: pointer;" onclick="toggleStatsCollection(' + host.id + ', false)" title="Click to disable stats collection">✓ Enabled</span>'
             : '<span class="badge badge-secondary" style="cursor: pointer;" onclick="toggleStatsCollection(' + host.id + ', true)" title="Click to enable stats collection">Disabled</span>';
 
+        const vulnScanningBadge = host.enable_vulnerability_scanning
+            ? '<span class="badge badge-success" style="cursor: pointer;" onclick="toggleVulnScanning(' + host.id + ', false)" title="Click to disable vulnerability scanning">✓ Enabled</span>'
+            : '<span class="badge badge-secondary" style="cursor: pointer;" onclick="toggleVulnScanning(' + host.id + ', true)" title="Click to enable vulnerability scanning">Disabled</span>';
+
+        // Show Trivy actions only for agent hosts with Trivy capability
+        const hasTrivyActions = host.host_type === 'agent' && host.agent_status === 'online';
+        const trivyActions = hasTrivyActions ? `
+            <div class="dropdown" style="display: inline-block;">
+                <button class="btn-icon" onclick="toggleHostActionsDropdown(${host.id})" title="Trivy Actions">⚙️</button>
+                <div id="hostActions${host.id}" class="dropdown-menu" style="display: none;">
+                    <a class="dropdown-item" onclick="updateHostTrivyDB(${host.id})">Update Trivy DB</a>
+                    <a class="dropdown-item" onclick="clearHostTrivyCache(${host.id})">Clear Trivy Cache</a>
+                </div>
+            </div>
+        ` : '';
+
         return `
         <tr>
             <td><strong>${escapeHtml(host.name)}</strong></td>
@@ -1971,6 +1994,7 @@ function renderHosts(hostsData) {
             <td><code>${escapeHtml(host.address)}</code></td>
             <td>${statusBadge}</td>
             <td>${statsCollectionBadge}</td>
+            <td>${vulnScanningBadge}</td>
             <td>${escapeHtml(host.description || '-')}</td>
             <td class="time-ago">${lastSeen}</td>
             <td class="actions">
@@ -1978,6 +2002,7 @@ function renderHosts(hostsData) {
                     ? `<button class="btn-icon btn-warning" onclick="toggleHost(${host.id}, false)" title="Disable">⏸</button>`
                     : `<button class="btn-icon btn-success" onclick="toggleHost(${host.id}, true)" title="Enable">▶</button>`
                 }
+                ${trivyActions}
                 <button class="btn-icon btn-delete" onclick="deleteHost(${host.id}, '${escapeAttr(host.name)}')" title="Delete">🗑</button>
             </td>
         </tr>
@@ -2025,6 +2050,108 @@ async function toggleStatsCollection(hostId, enable) {
         } else {
             const error = await response.json();
             showNotification('Error: ' + (error.error || 'Failed to update host'), 'error');
+        }
+    } catch (error) {
+        showNotification('Error: ' + error.message, 'error');
+    }
+}
+
+async function toggleVulnScanning(hostId, enable) {
+    try {
+        const host = hosts.find(h => h.id === hostId);
+        if (!host) return;
+
+        const response = await fetch(`/api/hosts/${hostId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...host, enable_vulnerability_scanning: enable })
+        });
+
+        if (response.ok) {
+            showNotification(`Vulnerability scanning ${enable ? 'enabled' : 'disabled'} successfully`, 'success');
+            loadData();
+        } else {
+            const error = await response.json();
+            showNotification('Error: ' + (error.error || 'Failed to update host'), 'error');
+        }
+    } catch (error) {
+        showNotification('Error: ' + error.message, 'error');
+    }
+}
+
+function toggleHostActionsDropdown(hostId) {
+    const dropdown = document.getElementById(`hostActions${hostId}`);
+    if (dropdown) {
+        dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+    }
+}
+
+async function updateHostTrivyDB(hostId) {
+    const host = hosts.find(h => h.id === hostId);
+    if (!host) return;
+
+    showNotification(`Updating Trivy database on ${host.name}...`, 'info');
+
+    try {
+        const response = await fetchWithAuth(`/api/hosts/${hostId}/trivy-update`, {
+            method: 'POST'
+        });
+
+        if (response.ok) {
+            const result = await response.json();
+            showNotification(result.message || 'Trivy database updated successfully', 'success');
+        } else {
+            const error = await response.json();
+            showNotification(`Failed: ${error.error || 'Unknown error'}`, 'error');
+        }
+    } catch (error) {
+        showNotification('Error: ' + error.message, 'error');
+    }
+}
+
+async function clearHostTrivyCache(hostId) {
+    const host = hosts.find(h => h.id === hostId);
+    if (!host) return;
+
+    if (!confirm(`Clear Trivy cache on ${host.name}?\n\nNext scan will download the database again (~500MB).`)) {
+        return;
+    }
+
+    try {
+        const response = await fetchWithAuth(`/api/hosts/${hostId}/trivy-clear-cache`, {
+            method: 'POST'
+        });
+
+        if (response.ok) {
+            showNotification('Trivy cache cleared successfully', 'success');
+        } else {
+            const error = await response.json();
+            showNotification(`Failed: ${error.error || 'Unknown error'}`, 'error');
+        }
+    } catch (error) {
+        showNotification('Error: ' + error.message, 'error');
+    }
+}
+
+async function updateAllAgentTrivyDBs() {
+    if (!confirm('Update Trivy databases on all agents? This may take several minutes.')) {
+        return;
+    }
+
+    showNotification('Updating Trivy databases on all agents...', 'info');
+
+    try {
+        const response = await fetchWithAuth('/api/hosts/bulk-trivy-update', {
+            method: 'POST'
+        });
+
+        if (response.ok) {
+            const result = await response.json();
+            showNotification(`Trivy DB update initiated on ${result.updated} agent(s)`, 'success');
+            setTimeout(loadHosts, 2000);
+        } else {
+            const error = await response.json();
+            showNotification(`Failed: ${error.error || 'Unknown error'}`, 'error');
         }
     } catch (error) {
         showNotification('Error: ' + error.message, 'error');

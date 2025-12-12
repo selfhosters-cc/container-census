@@ -15,13 +15,14 @@ type Host struct {
 	AgentToken     string    `json:"agent_token,omitempty"` // API token for agent authentication
 	AgentStatus    string    `json:"agent_status,omitempty"` // online, offline, unknown
 	AgentVersion   string    `json:"agent_version,omitempty"` // version of the census agent
-	LastSeen       time.Time `json:"last_seen,omitempty"`
-	Enabled        bool      `json:"enabled"`
-	CollectStats   bool      `json:"collect_stats"` // whether to collect CPU/memory stats for this host
-	ContainerCount int       `json:"container_count,omitempty"` // total containers on this host
-	RunningCount   int       `json:"running_count,omitempty"`   // running containers on this host
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	LastSeen                   time.Time `json:"last_seen,omitempty"`
+	Enabled                    bool      `json:"enabled"`
+	CollectStats               bool      `json:"collect_stats"`                   // whether to collect CPU/memory stats for this host
+	EnableVulnerabilityScanning bool      `json:"enable_vulnerability_scanning"`   // whether to enable vulnerability scanning for this host
+	ContainerCount             int       `json:"container_count,omitempty"`       // total containers on this host
+	RunningCount               int       `json:"running_count,omitempty"`         // running containers on this host
+	CreatedAt                  time.Time `json:"created_at"`
+	UpdatedAt                  time.Time `json:"updated_at"`
 }
 
 // Container represents a Docker container found on a host
@@ -202,6 +203,14 @@ type VulnerabilityConfig struct {
 	MaxQueueSize           int    `yaml:"max_queue_size"`
 }
 
+// TrivyDBMetadata tracks Trivy database version and update status per host
+type TrivyDBMetadata struct {
+	HostID       int64     `json:"host_id"`
+	TrivyVersion string    `json:"trivy_version"`
+	DBVersion    string    `json:"db_version"`
+	LastUpdated  time.Time `json:"last_updated"`
+}
+
 // HostConfig contains host configuration
 type HostConfig struct {
 	Name        string `yaml:"name"`
@@ -211,12 +220,14 @@ type HostConfig struct {
 
 // AgentInfo represents agent metadata
 type AgentInfo struct {
-	Version    string    `json:"version"`
-	Hostname   string    `json:"hostname"`
-	OS         string    `json:"os"`
-	Arch       string    `json:"arch"`
-	DockerVersion string `json:"docker_version"`
-	StartedAt  time.Time `json:"started_at"`
+	Version       string    `json:"version"`
+	Hostname      string    `json:"hostname"`
+	OS            string    `json:"os"`
+	Arch          string    `json:"arch"`
+	DockerVersion string    `json:"docker_version"`
+	StartedAt     time.Time `json:"started_at"`
+	HasTrivy      bool      `json:"has_trivy"`       // Whether Trivy is available on this agent
+	TrivyVersion  string    `json:"trivy_version"`   // Trivy version if available
 }
 
 // AgentRequest wraps requests sent to agents

@@ -5,8 +5,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/container-census/container-census/internal/models"
-	"github.com/container-census/container-census/internal/storage"
+	"github.com/selfhosters-cc/container-census/internal/models"
+	"github.com/selfhosters-cc/container-census/internal/storage"
 )
 
 // BaselineCollector manages baseline statistics for anomaly detection

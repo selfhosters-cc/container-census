@@ -104,20 +104,33 @@ export default function Header({ onScan, onTelemetry }: HeaderProps) {
           <span>Census</span>
         </Link>
         {health && (
-          <span className="text-xs px-2 py-1 rounded bg-[var(--bg-tertiary)] text-[var(--text-tertiary)]">
-            {health.update_available ? (
-              <a
-                href={health.release_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[var(--accent)] hover:underline"
+          <div className="flex items-center gap-2">
+            <span
+              className="text-xs px-2 py-1 rounded bg-[var(--bg-tertiary)] text-[var(--text-tertiary)]"
+              title="Current version"
+            >
+              {health.update_available ? (
+                <a
+                  href={health.release_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[var(--accent)] hover:underline"
+                >
+                  v{health.version} → v{health.latest_version} ⬆️
+                </a>
+              ) : (
+                `v${health.version}`
+              )}
+            </span>
+            {health.build_time && health.build_time !== 'unknown' && (
+              <span
+                className="text-xs px-2 py-1 rounded bg-[var(--bg-tertiary)] text-[var(--text-tertiary)]"
+                title={`Built: ${new Date(health.build_time).toLocaleString()}`}
               >
-                v{health.version} → v{health.latest_version} ⬆️
-              </a>
-            ) : (
-              `v${health.version}`
+                🔨 {new Date(health.build_time).toLocaleDateString()} {new Date(health.build_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </span>
             )}
-          </span>
+          </div>
         )}
       </div>
 

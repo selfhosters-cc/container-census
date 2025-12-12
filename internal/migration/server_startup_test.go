@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/container-census/container-census/internal/config"
-	"github.com/container-census/container-census/internal/storage"
+	"github.com/selfhosters-cc/container-census/internal/config"
+	"github.com/selfhosters-cc/container-census/internal/storage"
 )
 
 // TestServerStartup_FirstRun simulates exactly what happens when the server starts for the first time

@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/container-census/container-census/internal/models"
-	"github.com/container-census/container-census/internal/storage"
+	"github.com/selfhosters-cc/container-census/internal/models"
+	"github.com/selfhosters-cc/container-census/internal/storage"
 )
 
 // InAppChannel implements in-app notifications (writes to notification_log)

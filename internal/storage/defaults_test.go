@@ -3,7 +3,7 @@ package storage
 import (
 	"testing"
 
-	"github.com/container-census/container-census/internal/models"
+	"github.com/selfhosters-cc/container-census/internal/models"
 )
 
 // TestInitializeDefaultRules tests that default notification rules are created

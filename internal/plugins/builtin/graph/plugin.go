@@ -5,7 +5,7 @@ import (
 	_ "embed"
 	"net/http"
 
-	"github.com/container-census/container-census/internal/plugins"
+	"github.com/selfhosters-cc/container-census/internal/plugins"
 )
 
 //go:embed frontend/bundle.js

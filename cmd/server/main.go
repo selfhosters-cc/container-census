@@ -13,21 +13,21 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/container-census/container-census/internal/api"
-	"github.com/container-census/container-census/internal/auth"
-	"github.com/container-census/container-census/internal/migration"
-	"github.com/container-census/container-census/internal/models"
-	"github.com/container-census/container-census/internal/notifications"
-	"github.com/container-census/container-census/internal/plugins"
-	"github.com/container-census/container-census/internal/plugins/builtin/graph"
-	"github.com/container-census/container-census/internal/plugins/builtin/npm"
-	"github.com/container-census/container-census/internal/plugins/builtin/security"
-	"github.com/container-census/container-census/internal/registry"
-	"github.com/container-census/container-census/internal/scanner"
-	"github.com/container-census/container-census/internal/storage"
-	"github.com/container-census/container-census/internal/telemetry"
-	"github.com/container-census/container-census/internal/version"
-	"github.com/container-census/container-census/internal/vulnerability"
+	"github.com/selfhosters-cc/container-census/internal/api"
+	"github.com/selfhosters-cc/container-census/internal/auth"
+	"github.com/selfhosters-cc/container-census/internal/migration"
+	"github.com/selfhosters-cc/container-census/internal/models"
+	"github.com/selfhosters-cc/container-census/internal/notifications"
+	"github.com/selfhosters-cc/container-census/internal/plugins"
+	"github.com/selfhosters-cc/container-census/internal/plugins/builtin/graph"
+	"github.com/selfhosters-cc/container-census/internal/plugins/builtin/npm"
+	"github.com/selfhosters-cc/container-census/internal/plugins/builtin/security"
+	"github.com/selfhosters-cc/container-census/internal/registry"
+	"github.com/selfhosters-cc/container-census/internal/scanner"
+	"github.com/selfhosters-cc/container-census/internal/storage"
+	"github.com/selfhosters-cc/container-census/internal/telemetry"
+	"github.com/selfhosters-cc/container-census/internal/version"
+	"github.com/selfhosters-cc/container-census/internal/vulnerability"
 )
 
 // Global scan interval that can be updated dynamically
@@ -345,7 +345,7 @@ func main() {
 		log.Printf("Loaded vulnerability settings from database (cache_dir: %s)", vulnConfig.GetCacheDir())
 
 		vulnScanner := vulnerability.NewScanner(vulnConfig, db)
-		vulnScheduler := vulnerability.NewScheduler(vulnScanner, vulnConfig)
+		vulnScheduler := vulnerability.NewScheduler(vulnScanner, vulnConfig, db)
 		vulnScheduler.Start()
 		log.Printf("Vulnerability scanner initialized (%d workers, auto-scan: %v)", vulnConfig.GetWorkerPoolSize(), vulnConfig.GetAutoScanNewImages())
 
@@ -572,9 +572,9 @@ func queueImagesForScanning(containers []models.Container, hostID int64, db *sto
 				log.Printf("Warning: Failed to update image-container mapping: %v", err)
 			}
 
-			// Queue for scanning (non-blocking)
-			// Note: QueueScan internally checks NeedsScan() and returns nil if already scanned recently
-			if err := vulnerabilitySchedulerGlobal.QueueScan(container.ImageID, container.Image, 0); err != nil {
+			// Queue for scanning with host context (enables routing to agent)
+			// Note: QueueScanWithHost internally checks NeedsScan() and returns nil if already scanned recently
+			if err := vulnerabilitySchedulerGlobal.QueueScanWithHost(container.ImageID, container.Image, hostID, 0); err != nil {
 				log.Printf("Warning: Failed to queue image for scanning: %v", err)
 			}
 		}
