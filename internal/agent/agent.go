@@ -28,6 +28,7 @@ import (
 // Info represents agent information
 type Info struct {
 	Version       string    `json:"version"`
+	BuildTime     string    `json:"build_time"`      // Build timestamp
 	Hostname      string    `json:"hostname"`
 	OS            string    `json:"os"`
 	Arch          string    `json:"arch"`
@@ -142,8 +143,10 @@ func (a *Agent) handleHealth(w http.ResponseWriter, r *http.Request) {
 	_, err := a.dockerClient.Ping(ctx)
 
 	health := map[string]interface{}{
-		"status": "healthy",
-		"time":   time.Now().Format(time.RFC3339),
+		"status":     "healthy",
+		"time":       time.Now().Format(time.RFC3339),
+		"version":    a.info.Version,
+		"build_time": a.info.BuildTime,
 	}
 
 	if err != nil {
@@ -840,13 +843,74 @@ func (a *Agent) handleScanImage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
 
-	result, err := a.runTrivyScan(ctx, req.ImageName)
+	result, err := a.runTrivyScanWithFallback(ctx, req.ImageID, req.ImageName)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Scan failed: "+err.Error())
 		return
 	}
 
 	respondJSON(w, http.StatusOK, result)
+}
+
+// runTrivyScanWithFallback tries multiple image references to find the image
+func (a *Agent) runTrivyScanWithFallback(ctx context.Context, imageID, imageName string) (map[string]interface{}, error) {
+	// Try 1: Original image name as provided
+	log.Printf("Attempting Trivy scan with original image name: %s", imageName)
+	result, err := a.runTrivyScan(ctx, imageName)
+	if err == nil {
+		return result, nil
+	}
+
+	// Check if error is "image not available" (not found)
+	if !strings.Contains(err.Error(), "image not available for scanning") {
+		// Different error (timeout, trivy crash, etc) - don't retry
+		return nil, err
+	}
+
+	// Try 2: Try adding/removing registry prefix
+	// Docker normalizes image names but local tags might not include the registry
+	alternativeNames := []string{}
+
+	// Check if image has a registry prefix (registry.domain/...)
+	// Common registries: docker.io, ghcr.io, gcr.io, quay.io, lscr.io, index.docker.io
+	parts := strings.SplitN(imageName, "/", 2)
+	hasRegistry := len(parts) == 2 && (strings.Contains(parts[0], ".") || parts[0] == "localhost")
+
+	if hasRegistry {
+		// Has registry prefix -> try without it
+		withoutRegistry := parts[1]
+		alternativeNames = append(alternativeNames, withoutRegistry)
+		log.Printf("Image has registry prefix %s, will try without it: %s", parts[0], withoutRegistry)
+	} else if !strings.Contains(imageName, "/") {
+		// No slash (library image like "nginx:latest" or "redis:alpine") -> try with docker.io/library/ prefix
+		alternativeNames = append(alternativeNames, "docker.io/library/"+imageName)
+	} else {
+		// Has slash but no registry prefix (like "louislam/uptime-kuma:1") -> try with docker.io/ prefix
+		alternativeNames = append(alternativeNames, "docker.io/"+imageName)
+	}
+
+	for _, altName := range alternativeNames {
+		log.Printf("Attempting Trivy scan with alternative name: %s", altName)
+		result, err := a.runTrivyScan(ctx, altName)
+		if err == nil {
+			return result, nil
+		}
+		if !strings.Contains(err.Error(), "image not available for scanning") {
+			return nil, err
+		}
+	}
+
+	// Try 3: Use image ID as last resort
+	if imageID != "" {
+		log.Printf("Attempting Trivy scan with image ID: %s", imageID)
+		result, err := a.runTrivyScan(ctx, imageID)
+		if err == nil {
+			return result, nil
+		}
+	}
+
+	// All attempts failed
+	return nil, fmt.Errorf("image not available for scanning")
 }
 
 // runTrivyScan executes Trivy CLI and returns raw JSON
