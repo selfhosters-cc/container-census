@@ -93,6 +93,8 @@ export const scanAllImages = (hostIds?: number[]) =>
   });
 export const getScanProgress = () =>
   fetchApi<import('@/types').ScanProgress>('/p/security/progress');
+export const getScanQueue = () =>
+  fetchApi<import('@/types').ScanQueueStatus>('/p/security/queue');
 export const getTrivyStatus = () =>
   fetchApi<import('@/types').TrivyStatusResponse>('/p/security/trivy-status');
 export const updateVulnerabilityDb = (hostIds?: number[]) =>

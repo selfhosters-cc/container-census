@@ -314,6 +314,25 @@ export interface ScanProgress {
   }>;
 }
 
+export interface ScanQueueStatus {
+  queued: number;
+  in_progress: number;
+  completed_today: number;
+  failed_today: number;
+  queue_items: ScanJob[];
+  total_workers: number;
+  active_workers: number;
+}
+
+export interface ScanJob {
+  image_id: string;
+  image_name: string;
+  host_id: number;
+  host_name: string;
+  queued_at: string;
+  priority: number;
+}
+
 export interface TrivyHostStatus {
   host_id: number;
   host_name: string;
