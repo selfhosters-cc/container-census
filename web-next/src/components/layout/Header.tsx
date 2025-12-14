@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { getHealth, getNotificationStatus, getNotificationLog, markAllNotificationsRead } from '@/lib/api';
 import type { HealthStatus, NotificationLog } from '@/types';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface HeaderProps {
   onScan: () => void;
@@ -11,6 +12,7 @@ interface HeaderProps {
 }
 
 export default function Header({ onScan, onTelemetry }: HeaderProps) {
+  const { logout } = useAuth();
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifications, setNotifications] = useState<NotificationLog[]>([]);
@@ -194,6 +196,15 @@ export default function Header({ onScan, onTelemetry }: HeaderProps) {
         >
           <span>⚙️</span>
         </Link>
+
+        {/* Logout button */}
+        <button
+          onClick={logout}
+          className="p-2 rounded hover:bg-[var(--bg-tertiary)] transition-colors"
+          title="Logout"
+        >
+          <span>🚪</span>
+        </button>
 
         {/* Notifications dropdown */}
         <div ref={notificationRef} className="relative">

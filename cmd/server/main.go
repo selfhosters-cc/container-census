@@ -621,6 +621,8 @@ func runDailyDatabaseCleanup(ctx context.Context, db *storage.DB) {
 // checkForUpdates performs a version check via the telemetry collector
 // This runs asynchronously on startup (non-blocking)
 func checkForUpdates(ctx context.Context, db *storage.DB) {
+	log.Println("Version check: Starting version check...")
+
 	// Get installation ID
 	installationID, err := getInstallationID(db)
 	if err != nil {
@@ -646,6 +648,8 @@ func checkForUpdates(ctx context.Context, db *storage.DB) {
 	if updateInfo.UpdateAvailable {
 		log.Printf("⚠️  UPDATE AVAILABLE: Container Census %s → %s", updateInfo.CurrentVersion, updateInfo.LatestVersion)
 		log.Printf("   Download: %s", updateInfo.ReleaseURL)
+	} else {
+		log.Printf("Version check: Running latest version %s", updateInfo.CurrentVersion)
 	}
 }
 

@@ -9,17 +9,17 @@ Community stats on container usage can be found here: [Selfhosters Stats](https:
 ##### Dashboard
 ![Dashboard](screenshots/server-dashboard.png)
 
-##### Resource Monitoring
-![Dashboard](screenshots/server-resource-monitoring.png)
-
 ##### View / Manage Containers
 ![Main server page](screenshots/server-01.png)
 
-##### Visualize relationships / networks / links / dependencies
-![Graph view](screenshots/server-02.png)
+##### Manage Multipe Hosts with Agents
+![Hosts view](screenshots/server-05.png)
 
 ##### View History of Container
 ![History view](screenshots/server-08.png)
+
+##### Visualize relationships / networks / links / dependencies
+![Graph view](screenshots/server-02.png)
 
 ##### Security Overview
 ![Security view](screenshots/server-security.png)
@@ -29,12 +29,6 @@ Community stats on container usage can be found here: [Selfhosters Stats](https:
 
 ##### Keep Images Up To Date
 ![Image Update](screenshots/server-image-update.png)
-
-##### Manage / Prune Images
-![Image view](screenshots/server-04.png)
-
-##### Manage Multipe Hosts with Agents
-![Hosts view](screenshots/server-05.png)
 
 ##### Manage Telemetry Collection
 Can enable public collection ([Selfhosters Stats](https://selfhosters.cc/stats)) or send telemetry information to your own private collector.

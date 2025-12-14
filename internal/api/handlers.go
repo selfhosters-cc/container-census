@@ -354,14 +354,24 @@ func (s *Server) setupRoutes() {
 				// Check if Basic Auth is provided
 				_, _, hasBasicAuth := r.BasicAuth()
 				if !hasBasicAuth {
-					http.Redirect(w, r, "/login.html", http.StatusFound)
+					// Redirect to /login for Next.js or /login.html for vanilla JS
+					http.Redirect(w, r, "/login", http.StatusFound)
 					return
 				}
 			}
 		}
 
 		// Allow login page and its dependencies without authentication
-		if r.URL.Path == "/login.html" || r.URL.Path == "/login.js" || r.URL.Path == "/styles.css" {
+		// Support both Next.js (/login, /login/, /_next/*) and vanilla JS (/login.html, /login.js)
+		isLoginPage := r.URL.Path == "/login" ||
+			r.URL.Path == "/login/" ||
+			strings.HasPrefix(r.URL.Path, "/login/") ||
+			r.URL.Path == "/login.html" ||
+			r.URL.Path == "/login.js" ||
+			r.URL.Path == "/styles.css" ||
+			strings.HasPrefix(r.URL.Path, "/_next/")
+
+		if isLoginPage {
 			noCacheFileServer.ServeHTTP(w, r)
 			return
 		}

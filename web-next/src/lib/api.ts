@@ -23,8 +23,11 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   });
 
   if (response.status === 401) {
-    // Redirect to login if unauthorized
-    window.location.href = '/login';
+    // Clear auth state and redirect to login
+    localStorage.removeItem('census-auth');
+    if (window.location.pathname !== '/login') {
+      window.location.href = '/login';
+    }
     throw new ApiError(401, 'Unauthorized');
   }
 
