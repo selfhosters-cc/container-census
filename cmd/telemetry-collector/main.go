@@ -278,9 +278,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]interface{}{
-		"status":  "healthy",
-		"version": version.Get(),
-		"time":    time.Now().Format(time.RFC3339),
+		"status":     "healthy",
+		"version":    version.Get(),
+		"build_time": version.GetBuildTime(),
+		"time":       time.Now().Format(time.RFC3339),
 	}
 
 	// Add update information if available
