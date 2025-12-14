@@ -376,11 +376,15 @@ func (s *Server) handleVersionCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Compare the requesting server's version against GitHub latest
+	// (not the collector's own version)
+	updateAvailable := version.IsNewerVersion(info.LatestVersion, req.CurrentVersion)
+
 	// Return version info
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"current_version":  req.CurrentVersion,
 		"latest_version":   info.LatestVersion,
-		"update_available": info.UpdateAvailable,
+		"update_available": updateAvailable,
 		"release_url":      info.ReleaseURL,
 		"checked_at":       time.Now().UTC(),
 	})

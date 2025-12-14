@@ -154,9 +154,9 @@ func cacheResult(info *UpdateInfo) {
 	cacheMutex.Unlock()
 }
 
-// isNewerVersion compares two semantic versions (X.Y.Z format)
+// IsNewerVersion compares two semantic versions (X.Y.Z format)
 // Returns true if newVer is newer than currentVer
-func isNewerVersion(newVer, currentVer string) bool {
+func IsNewerVersion(newVer, currentVer string) bool {
 	// Handle "dev" version
 	if currentVer == "dev" {
 		return false // Don't show updates for dev builds
@@ -177,6 +177,12 @@ func isNewerVersion(newVer, currentVer string) bool {
 	}
 
 	return false // Versions are equal
+}
+
+// isNewerVersion is a deprecated alias for IsNewerVersion
+// Kept for backward compatibility
+func isNewerVersion(newVer, currentVer string) bool {
+	return IsNewerVersion(newVer, currentVer)
 }
 
 // parseVersion splits a version string into [major, minor, patch]
