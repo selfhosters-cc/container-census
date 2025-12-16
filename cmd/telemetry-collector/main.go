@@ -337,12 +337,18 @@ func (s *Server) handleVersionCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("Version check: Failed to parse request body: %v", err)
 		respondError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
 
+	log.Printf("Version check: Received request - Installation: %s, Current Version: %s",
+		req.InstallationID, req.CurrentVersion)
+
 	// Validate required fields
 	if req.InstallationID == "" || req.CurrentVersion == "" {
+		log.Printf("Version check: Missing required fields (installation_id=%s, current_version=%s)",
+			req.InstallationID, req.CurrentVersion)
 		respondError(w, http.StatusBadRequest, "Missing installation_id or current_version")
 		return
 	}
@@ -356,16 +362,17 @@ func (s *Server) handleVersionCheck(w http.ResponseWriter, r *http.Request) {
 	`, req.InstallationID, req.CurrentVersion)
 
 	if err != nil {
-		log.Printf("Error recording version check: %v", err)
+		log.Printf("Version check: Error recording version check: %v", err)
 		// Continue anyway - don't fail the check
 	}
 
 	// Check GitHub API (using existing version package logic)
+	log.Printf("Version check: Querying GitHub for latest release...")
 	info := version.CheckLatestVersion()
 
 	// If there was an error checking GitHub, still return a valid response
 	if info.Error != nil {
-		log.Printf("Error checking GitHub for latest version: %v", info.Error)
+		log.Printf("Version check: ERROR checking GitHub: %v", info.Error)
 		respondJSON(w, http.StatusOK, map[string]interface{}{
 			"current_version":  req.CurrentVersion,
 			"latest_version":   "",
@@ -377,18 +384,29 @@ func (s *Server) handleVersionCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("Version check: GitHub reports latest version: %s", info.LatestVersion)
+
 	// Compare the requesting server's version against GitHub latest
 	// (not the collector's own version)
 	updateAvailable := version.IsNewerVersion(info.LatestVersion, req.CurrentVersion)
 
-	// Return version info
-	respondJSON(w, http.StatusOK, map[string]interface{}{
+	log.Printf("Version check: Comparison - IsNewerVersion(%s, %s) = %v",
+		info.LatestVersion, req.CurrentVersion, updateAvailable)
+
+	// Prepare response
+	response := map[string]interface{}{
 		"current_version":  req.CurrentVersion,
 		"latest_version":   info.LatestVersion,
 		"update_available": updateAvailable,
 		"release_url":      info.ReleaseURL,
 		"checked_at":       time.Now().UTC(),
-	})
+	}
+
+	log.Printf("Version check: Sending response - Current: %s, Latest: %s, Update Available: %v, Release URL: %s",
+		req.CurrentVersion, info.LatestVersion, updateAvailable, info.ReleaseURL)
+
+	// Return version info
+	respondJSON(w, http.StatusOK, response)
 }
 
 // Save telemetry to database
@@ -1682,6 +1700,7 @@ func (s *Server) handleDatabaseView(w http.ResponseWriter, r *http.Request) {
 		"telemetry_reports": true,
 		"image_stats":       true,
 		"submission_events": true,
+		"version_checks":    true,
 	}
 
 	if table == "" {
@@ -1695,9 +1714,12 @@ func (s *Server) handleDatabaseView(w http.ResponseWriter, r *http.Request) {
 
 	// Default sort
 	if sortBy == "" {
-		if table == "submission_events" {
+		switch table {
+		case "submission_events":
 			sortBy = "id"
-		} else {
+		case "version_checks":
+			sortBy = "checked_at"
+		default:
 			sortBy = "timestamp"
 		}
 	}
@@ -1792,6 +1814,25 @@ func (s *Server) handleDatabaseView(w http.ResponseWriter, r *http.Request) {
 		`, whereClause, sortBy, sortOrder, argNum, argNum+1)
 
 		countQuery = fmt.Sprintf("SELECT COUNT(*) FROM submission_events%s", whereClause)
+
+	case "version_checks":
+		// Validate sort column for version_checks
+		validSortCols := map[string]bool{
+			"installation_id": true, "current_version": true, "checked_at": true,
+		}
+		if !validSortCols[sortBy] {
+			sortBy = "checked_at"
+		}
+
+		query = fmt.Sprintf(`
+			SELECT installation_id, current_version, checked_at
+			FROM version_checks
+			%s
+			ORDER BY %s %s
+			LIMIT $%d OFFSET $%d
+		`, whereClause, sortBy, sortOrder, argNum, argNum+1)
+
+		countQuery = fmt.Sprintf("SELECT COUNT(*) FROM version_checks%s", whereClause)
 	}
 
 	args = append(args, limit, offset)

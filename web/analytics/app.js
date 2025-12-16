@@ -791,6 +791,7 @@ async function loadVersion() {
         const response = await fetch('/health');
         const data = await response.json();
         const badge = document.getElementById('versionBadge');
+        const buildTimeBadge = document.getElementById('buildTimeBadge');
 
         if (data.version) {
             // Format build time for display
@@ -798,6 +799,15 @@ async function loadVersion() {
             if (data.build_time && data.build_time !== 'unknown') {
                 const buildDate = new Date(data.build_time);
                 buildTimeText = `\nBuilt: ${buildDate.toLocaleString()}`;
+
+                // Show build time badge
+                const buildDateStr = buildDate.toLocaleDateString();
+                const buildTimeStr = buildDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                buildTimeBadge.textContent = `🔨 ${buildDateStr} ${buildTimeStr}`;
+                buildTimeBadge.title = `Built: ${buildDate.toLocaleString()}`;
+                buildTimeBadge.style.display = 'inline-block';
+            } else {
+                buildTimeBadge.style.display = 'none';
             }
 
             if (data.update_available && data.latest_version) {
@@ -1498,7 +1508,8 @@ async function loadDatabaseView() {
 
     // For telemetry_reports, sort by timestamp to show recently updated records first
     const sortBy = (table === 'telemetry_reports') ? 'timestamp' :
-                   (table === 'submission_events') ? 'id' : 'timestamp';
+                   (table === 'submission_events') ? 'id' :
+                   (table === 'version_checks') ? 'checked_at' : 'timestamp';
 
     const params = new URLSearchParams({
         table: table,
@@ -1594,6 +1605,16 @@ function renderDatabaseRecord(record, recordId, tableName) {
                     <span class="db-field"><strong>Count:</strong> ${record.count}</span>
                     <span class="db-field"><strong>Installation:</strong> ${truncateId(record.installation_id)}</span>
                     <span class="db-field"><strong>Timestamp:</strong> ${formatTimestamp(record.timestamp)}</span>
+                </div>
+            `;
+            break;
+
+        case 'version_checks':
+            summary = `
+                <div class="db-record-summary">
+                    <span class="db-field"><strong>Installation:</strong> ${truncateId(record.installation_id)}</span>
+                    <span class="db-field"><strong>Version:</strong> ${record.current_version || 'N/A'}</span>
+                    <span class="db-field"><strong>Checked:</strong> ${formatTimestamp(record.checked_at)}</span>
                 </div>
             `;
             break;

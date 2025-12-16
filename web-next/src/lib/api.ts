@@ -187,6 +187,20 @@ export const triggerScan = () =>
 // Telemetry
 export const submitTelemetry = () =>
   fetchApi<void>('/telemetry/submit', { method: 'POST' });
+export const getTelemetryEndpoints = () =>
+  fetchApi<import('@/types').TelemetryEndpoint[]>('/telemetry/endpoints');
+export const updateTelemetryEndpoint = (name: string, data: { enabled: boolean }) =>
+  fetchApi<void>(`/telemetry/endpoints/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify(data) });
+export const createTelemetryEndpoint = (endpoint: import('@/types').TelemetryEndpointCreate) =>
+  fetchApi<void>('/telemetry/endpoints', { method: 'POST', body: JSON.stringify(endpoint) });
+export const deleteTelemetryEndpoint = (name: string) =>
+  fetchApi<void>(`/telemetry/endpoints/${encodeURIComponent(name)}`, { method: 'DELETE' });
+export const getTelemetryStatus = () =>
+  fetchApi<import('@/types').TelemetryEndpoint[]>('/telemetry/status');
+export const getTelemetrySchedule = () =>
+  fetchApi<import('@/types').TelemetrySchedule>('/telemetry/schedule');
+export const testTelemetryEndpoint = (url: string, apiKey?: string) =>
+  fetchApi<void>('/telemetry/test-endpoint', { method: 'POST', body: JSON.stringify({ url, api_key: apiKey }) });
 
 // Container logs
 export const getContainerLogs = (hostId: number, containerId: string, tail?: number) =>

@@ -368,6 +368,32 @@ export interface UpdateDBResponse {
   }>;
 }
 
+// Telemetry types
+export interface TelemetryEndpoint {
+  name: string;
+  url: string;
+  enabled: boolean;
+  api_key?: string;
+  last_success?: string;
+  last_failure?: string;
+  last_failure_reason?: string;
+}
+
+export interface TelemetryEndpointCreate {
+  name: string;
+  url: string;
+  enabled?: boolean;
+  api_key?: string;
+}
+
+export interface TelemetrySchedule {
+  enabled_endpoints: number;
+  interval_hours: number;
+  last_submission?: string;
+  next_submission?: string;
+  message?: string;
+}
+
 // Auth types
 export interface LoginRequest {
   username: string;

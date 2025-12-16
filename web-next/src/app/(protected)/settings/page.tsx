@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getHealth, clearDismissedVersion } from '@/lib/api';
-import type { HealthStatus, VersionCheckResponse } from '@/types';
+import { getHealth, clearDismissedVersion, getTelemetryStatus, updateTelemetryEndpoint, createTelemetryEndpoint, deleteTelemetryEndpoint, testTelemetryEndpoint } from '@/lib/api';
+import type { HealthStatus, VersionCheckResponse, TelemetryEndpoint, TelemetryEndpointCreate } from '@/types';
 
 interface Settings {
   scanner: {
@@ -69,6 +69,28 @@ export default function SettingsPage() {
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [versionInfo, setVersionInfo] = useState<VersionCheckResponse | null>(null);
 
+  // Telemetry state
+  const [collectors, setCollectors] = useState<TelemetryEndpoint[]>([]);
+  const [togglingCollector, setTogglingCollector] = useState<string | null>(null);
+  const [deletingCollector, setDeletingCollector] = useState<string | null>(null);
+
+  // Add collector form state
+  const [newCollectorName, setNewCollectorName] = useState('');
+  const [newCollectorUrl, setNewCollectorUrl] = useState('');
+  const [newCollectorApiKey, setNewCollectorApiKey] = useState('');
+  const [addingCollector, setAddingCollector] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const loadCollectors = async () => {
+    try {
+      const data = await getTelemetryStatus();
+      setCollectors(data);
+    } catch (error) {
+      console.error('Failed to load collectors:', error);
+    }
+  };
+
   const loadData = async () => {
     try {
       const [settingsData, healthData] = await Promise.all([
@@ -86,6 +108,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     loadData();
+    loadCollectors();
   }, []);
 
   const handleCheckUpdates = async () => {
@@ -148,6 +171,85 @@ export default function SettingsPage() {
       telemetry: { ...settings.telemetry, interval_hours: parseInt(value) },
     };
     handleSave('telemetry_interval', updated);
+  };
+
+  const handleToggleCollector = async (name: string, enabled: boolean) => {
+    setTogglingCollector(name);
+    try {
+      await updateTelemetryEndpoint(name, { enabled });
+      await loadCollectors();
+    } catch (error) {
+      console.error('Failed to toggle collector:', error);
+    } finally {
+      setTogglingCollector(null);
+    }
+  };
+
+  const handleDeleteCollector = async (name: string) => {
+    if (!confirm(`Are you sure you want to delete the collector "${name}"?`)) return;
+
+    setDeletingCollector(name);
+    try {
+      await deleteTelemetryEndpoint(name);
+      await loadCollectors();
+    } catch (error) {
+      console.error('Failed to delete collector:', error);
+    } finally {
+      setDeletingCollector(null);
+    }
+  };
+
+  const handleTestConnection = async () => {
+    if (!newCollectorUrl) return;
+
+    setTestingConnection(true);
+    setTestResult(null);
+    try {
+      await testTelemetryEndpoint(newCollectorUrl, newCollectorApiKey || undefined);
+      setTestResult({ success: true, message: 'Connection successful!' });
+    } catch (error) {
+      setTestResult({ success: false, message: error instanceof Error ? error.message : 'Connection failed' });
+    } finally {
+      setTestingConnection(false);
+    }
+  };
+
+  const handleAddCollector = async () => {
+    if (!newCollectorName || !newCollectorUrl) return;
+
+    setAddingCollector(true);
+    try {
+      const endpoint: TelemetryEndpointCreate = {
+        name: newCollectorName,
+        url: newCollectorUrl,
+        enabled: true,
+        api_key: newCollectorApiKey || undefined,
+      };
+      await createTelemetryEndpoint(endpoint);
+      await loadCollectors();
+      // Reset form
+      setNewCollectorName('');
+      setNewCollectorUrl('');
+      setNewCollectorApiKey('');
+      setTestResult(null);
+    } catch (error) {
+      console.error('Failed to add collector:', error);
+      alert(error instanceof Error ? error.message : 'Failed to add collector');
+    } finally {
+      setAddingCollector(false);
+    }
+  };
+
+  const formatStatus = (collector: TelemetryEndpoint) => {
+    if (collector.last_success) {
+      const date = new Date(collector.last_success);
+      return { text: `Last success: ${date.toLocaleString()}`, type: 'success' as const };
+    }
+    if (collector.last_failure) {
+      const date = new Date(collector.last_failure);
+      return { text: `Last failure: ${date.toLocaleString()}`, type: 'error' as const };
+    }
+    return { text: 'No submissions yet', type: 'neutral' as const };
   };
 
   if (loading) {
@@ -231,10 +333,15 @@ export default function SettingsPage() {
 
       {/* Telemetry Settings */}
       <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg p-4">
-        <h2 className="text-lg font-semibold mb-4">Telemetry Settings</h2>
+        <h2 className="text-lg font-semibold mb-4">Telemetry Collectors</h2>
+        <p className="text-sm text-[var(--text-tertiary)] mb-4">
+          Configure telemetry endpoints to track anonymous container usage statistics.
+        </p>
+
+        {/* Submission Frequency */}
         <SettingRow
-          label="Report Frequency"
-          description="How often to submit anonymous telemetry data"
+          label="Submission Frequency"
+          description="How often to submit telemetry data to all enabled collectors"
         >
           <div className="flex items-center gap-2">
             <select
@@ -243,17 +350,240 @@ export default function SettingsPage() {
               disabled={saving === 'telemetry_interval'}
               className="bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-3 py-2 text-sm"
             >
-              <option value="0">Disabled</option>
               <option value="24">Daily</option>
-              <option value="168">Weekly</option>
+              <option value="168">Weekly (recommended)</option>
+              <option value="336">Every 2 weeks</option>
               <option value="720">Monthly</option>
             </select>
             {saving === 'telemetry_interval' && <span className="text-sm text-[var(--text-secondary)]">Saving...</span>}
           </div>
         </SettingRow>
-        <div className="text-xs text-[var(--text-secondary)] mt-2">
-          Telemetry helps improve Container Census by sharing anonymous usage statistics.
-          No container names, images, or sensitive data is collected.
+
+        {/* Community Collector */}
+        {(() => {
+          const communityCollector = collectors.find(c => c.name === 'community');
+          if (!communityCollector) return null;
+
+          const status = formatStatus(communityCollector);
+          return (
+            <div className="mt-6 p-4 bg-[var(--bg-tertiary)] rounded-lg border-2 border-[var(--accent)]">
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <h3 className="font-semibold flex items-center gap-2">
+                    Community Collector
+                    <span className={`px-2 py-0.5 text-xs rounded-full ${
+                      communityCollector.enabled
+                        ? 'bg-[var(--success)] text-white'
+                        : 'bg-[var(--text-tertiary)] text-white'
+                    }`}>
+                      {communityCollector.enabled ? 'Enabled' : 'Disabled'}
+                    </span>
+                  </h3>
+                  <p className="text-sm text-[var(--text-tertiary)] mt-1">
+                    Help improve Container Census by sharing anonymous usage statistics.
+                  </p>
+                  <p className="text-xs font-mono text-[var(--text-tertiary)] mt-1">
+                    {communityCollector.url}
+                  </p>
+                </div>
+                <button
+                  onClick={() => handleToggleCollector(communityCollector.name, !communityCollector.enabled)}
+                  disabled={togglingCollector === communityCollector.name}
+                  className={`px-4 py-2 text-sm rounded transition-colors ${
+                    communityCollector.enabled
+                      ? 'bg-[var(--warning)] text-white hover:opacity-90'
+                      : 'bg-[var(--accent)] text-white hover:opacity-90'
+                  } disabled:opacity-50`}
+                >
+                  {togglingCollector === communityCollector.name ? 'Updating...' : communityCollector.enabled ? 'Disable' : 'Enable'}
+                </button>
+              </div>
+
+              {/* Privacy Info */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-3 bg-[var(--bg-secondary)] rounded-lg mb-3">
+                <div>
+                  <h4 className="text-xs font-semibold text-[var(--success)] mb-2">What gets shared:</h4>
+                  <ul className="text-xs text-[var(--text-tertiary)] space-y-1">
+                    <li>Container Census version</li>
+                    <li>Number of containers and hosts</li>
+                    <li>Popular container images (names only)</li>
+                    <li>Container registry distribution</li>
+                    <li>Geographic region (timezone-based)</li>
+                  </ul>
+                </div>
+                <div>
+                  <h4 className="text-xs font-semibold text-[var(--danger)] mb-2">What is NOT shared:</h4>
+                  <ul className="text-xs text-[var(--text-tertiary)] space-y-1">
+                    <li>Host names or IP addresses</li>
+                    <li>Container names or env variables</li>
+                    <li>Any credentials or secrets</li>
+                    <li>Personal information</li>
+                  </ul>
+                </div>
+              </div>
+
+              {/* Status */}
+              <div className={`text-xs ${
+                status.type === 'success' ? 'text-[var(--success)]' :
+                status.type === 'error' ? 'text-[var(--danger)]' :
+                'text-[var(--text-tertiary)]'
+              }`}>
+                {status.text}
+              </div>
+              {communityCollector.last_failure_reason && (
+                <div className="text-xs text-[var(--danger)] mt-1" title={communityCollector.last_failure_reason}>
+                  {communityCollector.last_failure_reason.substring(0, 80)}
+                  {communityCollector.last_failure_reason.length > 80 ? '...' : ''}
+                </div>
+              )}
+
+              {/* View Dashboard Link */}
+              <div className="mt-3 pt-3 border-t border-[var(--border)]">
+                <a
+                  href="https://selfhosters.cc/stats"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-[var(--accent)] hover:underline"
+                >
+                  View Community Dashboard →
+                </a>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Custom Collectors */}
+        {(() => {
+          const customCollectors = collectors.filter(c => c.name !== 'community');
+          return (
+            <div className="mt-6">
+              <h3 className="font-semibold mb-3">Custom Collectors</h3>
+              {customCollectors.length === 0 ? (
+                <p className="text-sm text-[var(--text-tertiary)] italic">No custom collectors configured.</p>
+              ) : (
+                <div className="space-y-3">
+                  {customCollectors.map(collector => {
+                    const status = formatStatus(collector);
+                    return (
+                      <div key={collector.name} className="p-3 bg-[var(--bg-tertiary)] rounded-lg">
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <div className="font-medium flex items-center gap-2">
+                              {collector.name}
+                              <span className={`px-2 py-0.5 text-xs rounded-full ${
+                                collector.enabled
+                                  ? 'bg-[var(--success)] text-white'
+                                  : 'bg-[var(--text-tertiary)] text-white'
+                              }`}>
+                                {collector.enabled ? 'Enabled' : 'Disabled'}
+                              </span>
+                            </div>
+                            <p className="text-xs font-mono text-[var(--text-tertiary)] mt-1">{collector.url}</p>
+                            {collector.api_key && (
+                              <p className="text-xs text-[var(--text-tertiary)] mt-1">API Key configured</p>
+                            )}
+                            <div className={`text-xs mt-1 ${
+                              status.type === 'success' ? 'text-[var(--success)]' :
+                              status.type === 'error' ? 'text-[var(--danger)]' :
+                              'text-[var(--text-tertiary)]'
+                            }`}>
+                              {status.text}
+                            </div>
+                            {collector.last_failure_reason && (
+                              <div className="text-xs text-[var(--danger)] mt-1">
+                                {collector.last_failure_reason.substring(0, 60)}
+                                {collector.last_failure_reason.length > 60 ? '...' : ''}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleToggleCollector(collector.name, !collector.enabled)}
+                              disabled={togglingCollector === collector.name}
+                              className="px-3 py-1 text-xs bg-[var(--bg-secondary)] border border-[var(--border)] rounded hover:bg-[var(--bg-primary)] disabled:opacity-50"
+                            >
+                              {togglingCollector === collector.name ? '...' : collector.enabled ? 'Disable' : 'Enable'}
+                            </button>
+                            <button
+                              onClick={() => handleDeleteCollector(collector.name)}
+                              disabled={deletingCollector === collector.name}
+                              className="px-3 py-1 text-xs text-[var(--danger)] border border-[var(--danger)] rounded hover:bg-[var(--danger)] hover:text-white disabled:opacity-50"
+                            >
+                              {deletingCollector === collector.name ? '...' : 'Delete'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* Add New Collector Form */}
+        <div className="mt-6 p-4 bg-[var(--bg-tertiary)] rounded-lg">
+          <h3 className="font-semibold mb-3">Add New Collector</h3>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs text-[var(--text-tertiary)] mb-1">Name *</label>
+              <input
+                type="text"
+                value={newCollectorName}
+                onChange={(e) => setNewCollectorName(e.target.value)}
+                placeholder="My Telemetry Server"
+                className="w-full px-3 py-2 text-sm bg-[var(--bg-secondary)] border border-[var(--border)] rounded"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-[var(--text-tertiary)] mb-1">URL *</label>
+              <input
+                type="url"
+                value={newCollectorUrl}
+                onChange={(e) => setNewCollectorUrl(e.target.value)}
+                placeholder="https://telemetry.example.com/api/ingest"
+                className="w-full px-3 py-2 text-sm bg-[var(--bg-secondary)] border border-[var(--border)] rounded font-mono"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-[var(--text-tertiary)] mb-1">API Key (optional)</label>
+              <input
+                type="password"
+                value={newCollectorApiKey}
+                onChange={(e) => setNewCollectorApiKey(e.target.value)}
+                placeholder="Optional API key for authentication"
+                className="w-full px-3 py-2 text-sm bg-[var(--bg-secondary)] border border-[var(--border)] rounded"
+              />
+            </div>
+
+            {testResult && (
+              <div className={`p-2 rounded text-sm ${
+                testResult.success
+                  ? 'bg-[rgba(34,197,94,0.1)] text-[var(--success)] border border-[var(--success)]'
+                  : 'bg-[rgba(239,68,68,0.1)] text-[var(--danger)] border border-[var(--danger)]'
+              }`}>
+                {testResult.message}
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={handleTestConnection}
+                disabled={testingConnection || !newCollectorUrl}
+                className="px-4 py-2 text-sm bg-[var(--bg-secondary)] border border-[var(--border)] rounded hover:bg-[var(--bg-primary)] disabled:opacity-50"
+              >
+                {testingConnection ? 'Testing...' : 'Test Connection'}
+              </button>
+              <button
+                onClick={handleAddCollector}
+                disabled={addingCollector || !newCollectorName || !newCollectorUrl}
+                className="px-4 py-2 text-sm bg-[var(--accent)] text-white rounded hover:opacity-90 disabled:opacity-50"
+              >
+                {addingCollector ? 'Adding...' : 'Add Collector'}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
