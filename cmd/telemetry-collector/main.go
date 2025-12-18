@@ -2403,7 +2403,9 @@ func (s *Server) handleMoversStats(w http.ResponseWriter, r *http.Request) {
 	}
 	minInstallations := getQueryInt(r, "min_installations", s.config.StatsMinInstalls)
 
-	currentWeek := getWeekStart(time.Now().UTC())
+	// Use last complete week as "current" to avoid comparing incomplete data
+	// (the current week may only have partial data if we're mid-week)
+	currentWeek := getWeekStart(time.Now().UTC().AddDate(0, 0, -7))
 	previousWeek := currentWeek.AddDate(0, 0, -7*weeks)
 
 	type Mover struct {
@@ -2500,6 +2502,7 @@ func (s *Server) handleMoversStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Also include images that disappeared (were in previous but not current)
+	// Show previous installations count for context (not 0)
 	for image, previous := range previousStats {
 		if _, exists := currentStats[image]; !exists && previous.installations >= minInstallations {
 			movers = append(movers, Mover{
@@ -2508,7 +2511,7 @@ func (s *Server) handleMoversStats(w http.ResponseWriter, r *http.Request) {
 				PreviousCount:         previous.count,
 				Change:                -previous.count,
 				ChangePercentage:      -100.0,
-				CurrentInstallations:  0,
+				CurrentInstallations:  previous.installations, // Show previous count for context
 				PreviousInstallations: previous.installations,
 			})
 		}
