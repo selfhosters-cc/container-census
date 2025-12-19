@@ -109,7 +109,7 @@ interface ChannelFormModalProps {
 
 function ChannelFormModal({ isOpen, onClose, onSubmit, editChannel }: ChannelFormModalProps) {
   const [name, setName] = useState('');
-  const [type, setType] = useState<'webhook' | 'ntfy' | 'in_app'>('webhook');
+  const [type, setType] = useState<'webhook' | 'ntfy' | 'in_app' | 'discord'>('webhook');
   const [enabled, setEnabled] = useState(true);
   const [config, setConfig] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -117,7 +117,7 @@ function ChannelFormModal({ isOpen, onClose, onSubmit, editChannel }: ChannelFor
   useEffect(() => {
     if (editChannel) {
       setName(editChannel.name);
-      setType(editChannel.type);
+      setType(editChannel.type as 'webhook' | 'ntfy' | 'in_app' | 'discord');
       setEnabled(editChannel.enabled);
       setConfig((editChannel.config || {}) as Record<string, string>);
     } else {
@@ -163,10 +163,11 @@ function ChannelFormModal({ isOpen, onClose, onSubmit, editChannel }: ChannelFor
             <label className="block text-sm text-[var(--text-tertiary)] mb-1">Type</label>
             <select
               value={type}
-              onChange={(e) => setType(e.target.value as 'webhook' | 'ntfy' | 'in_app')}
+              onChange={(e) => setType(e.target.value as 'webhook' | 'ntfy' | 'in_app' | 'discord')}
               className="w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-3 py-2"
             >
               <option value="webhook">Webhook</option>
+              <option value="discord">Discord</option>
               <option value="ntfy">Ntfy</option>
               <option value="in_app">In-App</option>
             </select>
@@ -182,6 +183,23 @@ function ChannelFormModal({ isOpen, onClose, onSubmit, editChannel }: ChannelFor
                 required
                 className="w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-3 py-2"
               />
+            </div>
+          )}
+
+          {type === 'discord' && (
+            <div>
+              <label className="block text-sm text-[var(--text-tertiary)] mb-1">Discord Webhook URL</label>
+              <input
+                type="url"
+                value={config.webhook_url || ''}
+                onChange={(e) => setConfig({ ...config, webhook_url: e.target.value })}
+                required
+                placeholder="https://discord.com/api/webhooks/..."
+                className="w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-3 py-2"
+              />
+              <p className="text-xs text-[var(--text-tertiary)] mt-1">
+                Create a webhook in Discord: Server Settings → Integrations → Webhooks
+              </p>
             </div>
           )}
 

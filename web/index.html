@@ -1370,6 +1370,7 @@
                         <select id="channelType" required>
                             <option value="">Select type...</option>
                             <option value="webhook">Webhook</option>
+                            <option value="discord">Discord</option>
                             <option value="ntfy">Ntfy</option>
                             <option value="in_app">In-App (Default)</option>
                         </select>
@@ -1382,6 +1383,13 @@
                         <div class="form-group">
                             <label for="webhookHeaders">Custom Headers (JSON)</label>
                             <textarea id="webhookHeaders" placeholder='{"Authorization": "Bearer token"}'></textarea>
+                        </div>
+                    </div>
+                    <div id="discordConfig" class="channel-config" style="display: none;">
+                        <div class="form-group">
+                            <label for="discordWebhookURL">Discord Webhook URL *</label>
+                            <input type="url" id="discordWebhookURL" placeholder="https://discord.com/api/webhooks/...">
+                            <small class="form-help">Create a webhook in Discord: Server Settings → Integrations → Webhooks</small>
                         </div>
                     </div>
                     <div id="ntfyConfig" class="channel-config" style="display: none;">

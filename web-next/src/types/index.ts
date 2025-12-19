@@ -138,7 +138,7 @@ export interface VulnerabilitySummary {
 export interface NotificationChannel {
   id: number;
   name: string;
-  type: 'webhook' | 'ntfy' | 'in_app';
+  type: 'webhook' | 'ntfy' | 'in_app' | 'discord';
   enabled: boolean;
   config: Record<string, unknown>;
   created_at: string;

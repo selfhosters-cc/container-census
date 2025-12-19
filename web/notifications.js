@@ -355,6 +355,10 @@ function renderChannelDetails(channel) {
                 <div class="channel-detail"><span class="detail-label">URL:</span> <span class="detail-value">${config.url || 'N/A'}</span></div>
                 ${config.headers ? `<div class="channel-detail"><span class="detail-label">Headers:</span> <span class="detail-value">Configured</span></div>` : ''}
             `;
+        case 'discord':
+            return `
+                <div class="channel-detail"><span class="detail-label">Webhook:</span> <span class="detail-value">${config.webhook_url ? 'Configured' : 'N/A'}</span></div>
+            `;
         case 'ntfy':
             return `
                 <div class="channel-detail"><span class="detail-label">Server:</span> <span class="detail-value">${config.server_url || 'https://ntfy.sh'}</span></div>
@@ -539,6 +543,7 @@ function closeAddChannelModal() {
 function updateChannelConfigFields() {
     const type = document.getElementById('channelType').value;
     document.getElementById('webhookConfig').style.display = type === 'webhook' ? 'block' : 'none';
+    document.getElementById('discordConfig').style.display = type === 'discord' ? 'block' : 'none';
     document.getElementById('ntfyConfig').style.display = type === 'ntfy' ? 'block' : 'none';
 }
 
@@ -567,6 +572,8 @@ async function handleAddChannel() {
                 return;
             }
         }
+    } else if (type === 'discord') {
+        config.webhook_url = document.getElementById('discordWebhookURL').value;
     } else if (type === 'ntfy') {
         config.server_url = document.getElementById('ntfyServerURL').value || 'https://ntfy.sh';
         config.topic = document.getElementById('ntfyTopic').value;
@@ -892,6 +899,8 @@ function editChannel(id) {
         if (channel.config.headers) {
             document.getElementById('webhookHeaders').value = JSON.stringify(channel.config.headers, null, 2);
         }
+    } else if (channel.type === 'discord') {
+        document.getElementById('discordWebhookURL').value = channel.config.webhook_url || '';
     } else if (channel.type === 'ntfy') {
         document.getElementById('ntfyServerURL').value = channel.config.server_url || 'https://ntfy.sh';
         document.getElementById('ntfyTopic').value = channel.config.topic || '';
@@ -920,6 +929,8 @@ async function handleUpdateChannel(id) {
                 return;
             }
         }
+    } else if (type === 'discord') {
+        config.webhook_url = document.getElementById('discordWebhookURL').value;
     } else if (type === 'ntfy') {
         config.server_url = document.getElementById('ntfyServerURL').value || 'https://ntfy.sh';
         config.topic = document.getElementById('ntfyTopic').value;

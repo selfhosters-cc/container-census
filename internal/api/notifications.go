@@ -30,8 +30,8 @@ func (s *Server) handleCreateNotificationChannel(w http.ResponseWriter, r *http.
 	}
 
 	// Validate channel type
-	if channel.Type != models.ChannelTypeWebhook && channel.Type != models.ChannelTypeNtfy && channel.Type != models.ChannelTypeInApp {
-		respondError(w, http.StatusBadRequest, "Invalid channel type. Must be: webhook, ntfy, or in_app")
+	if channel.Type != models.ChannelTypeWebhook && channel.Type != models.ChannelTypeNtfy && channel.Type != models.ChannelTypeInApp && channel.Type != models.ChannelTypeDiscord {
+		respondError(w, http.StatusBadRequest, "Invalid channel type. Must be: webhook, ntfy, in_app, or discord")
 		return
 	}
 
@@ -44,6 +44,11 @@ func (s *Server) handleCreateNotificationChannel(w http.ResponseWriter, r *http.
 	} else if channel.Type == models.ChannelTypeNtfy {
 		if topic, ok := channel.Config["topic"].(string); !ok || topic == "" {
 			respondError(w, http.StatusBadRequest, "Ntfy channel requires 'topic' in config")
+			return
+		}
+	} else if channel.Type == models.ChannelTypeDiscord {
+		if webhookURL, ok := channel.Config["webhook_url"].(string); !ok || webhookURL == "" {
+			respondError(w, http.StatusBadRequest, "Discord channel requires 'webhook_url' in config")
 			return
 		}
 	}

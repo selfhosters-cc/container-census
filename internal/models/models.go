@@ -446,6 +446,7 @@ const (
 	ChannelTypeWebhook = "webhook"
 	ChannelTypeNtfy    = "ntfy"
 	ChannelTypeInApp   = "in_app"
+	ChannelTypeDiscord = "discord"
 )
 
 // NotificationChannel represents a notification delivery channel
@@ -470,6 +471,11 @@ type NtfyConfig struct {
 	ServerURL string `json:"server_url"` // e.g., https://ntfy.sh or custom server
 	Token     string `json:"token,omitempty"`
 	Topic     string `json:"topic"`
+}
+
+// DiscordConfig represents Discord webhook-specific configuration
+type DiscordConfig struct {
+	WebhookURL string `json:"webhook_url"`
 }
 
 // NotificationRule represents a rule that triggers notifications

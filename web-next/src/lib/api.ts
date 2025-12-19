@@ -119,8 +119,10 @@ export const updateNotificationChannel = (id: number, channel: Partial<import('@
   fetchApi<import('@/types').NotificationChannel>(`/notifications/channels/${id}`, { method: 'PUT', body: JSON.stringify(channel) });
 export const deleteNotificationChannel = (id: number) =>
   fetchApi<void>(`/notifications/channels/${id}`, { method: 'DELETE' });
-export const testNotificationChannel = (id: number) =>
-  fetchApi<{ success: boolean; error?: string }>(`/notifications/channels/${id}/test`, { method: 'POST' });
+export const testNotificationChannel = async (id: number): Promise<{ success: boolean; error?: string }> => {
+  const result = await fetchApi<{ status: string; message: string }>(`/notifications/channels/${id}/test`, { method: 'POST' });
+  return { success: result.status === 'success', error: result.status !== 'success' ? result.message : undefined };
+};
 
 export const getNotificationRules = () =>
   fetchApi<import('@/types').NotificationRule[]>('/notifications/rules');

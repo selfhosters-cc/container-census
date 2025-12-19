@@ -652,6 +652,8 @@ func (ns *NotificationService) createChannelInstance(ch *models.NotificationChan
 		return channels.NewNtfyChannel(ch)
 	case models.ChannelTypeInApp:
 		return channels.NewInAppChannel(ch, ns.db)
+	case models.ChannelTypeDiscord:
+		return channels.NewDiscordChannel(ch)
 	default:
 		return nil, fmt.Errorf("unknown channel type: %s", ch.Type)
 	}
