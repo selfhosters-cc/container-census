@@ -621,7 +621,8 @@ func runDailyDatabaseCleanup(ctx context.Context, db *storage.DB) {
 // checkForUpdates performs a version check via the telemetry collector
 // This runs asynchronously on startup (non-blocking)
 func checkForUpdates(ctx context.Context, db *storage.DB) {
-	log.Println("Version check: Starting version check...")
+	currentVersion := version.Get()
+	log.Printf("Version check: Starting version check (current version: %s)...", currentVersion)
 
 	// Get installation ID
 	installationID, err := getInstallationID(db)
@@ -629,27 +630,34 @@ func checkForUpdates(ctx context.Context, db *storage.DB) {
 		log.Printf("Version check: failed to get installation ID: %v", err)
 		return
 	}
+	log.Printf("Version check: Installation ID: %s", installationID)
 
-	// Get the first enabled telemetry endpoint URL as collector URL
-	collectorURL := getCollectorURL(db)
+	// Get collector URL for version checking
+	// Always use community collector unless overridden by env var
+	collectorURL := os.Getenv("VERSION_CHECK_COLLECTOR_URL")
 	if collectorURL == "" {
-		log.Println("Version check: No telemetry collector configured, skipping version check")
-		return
+		collectorURL = "https://cc-telemetry.selfhosters.cc"
 	}
+	log.Printf("Version check: Collector URL: %s", collectorURL)
 
 	// Perform version check
+	log.Printf("Version check: Calling collector at %s/api/version/check...", collectorURL)
 	updateInfo := version.CheckViaCollector(collectorURL, installationID)
 	if updateInfo.Error != nil {
-		log.Printf("Version check: %v", updateInfo.Error)
+		log.Printf("Version check: ERROR: %v", updateInfo.Error)
 		return
 	}
+
+	// Log the response details
+	log.Printf("Version check: Response - Current: %s, Latest: %s, Update Available: %v",
+		updateInfo.CurrentVersion, updateInfo.LatestVersion, updateInfo.UpdateAvailable)
 
 	// Log update availability
 	if updateInfo.UpdateAvailable {
 		log.Printf("⚠️  UPDATE AVAILABLE: Container Census %s → %s", updateInfo.CurrentVersion, updateInfo.LatestVersion)
 		log.Printf("   Download: %s", updateInfo.ReleaseURL)
 	} else {
-		log.Printf("Version check: Running latest version %s", updateInfo.CurrentVersion)
+		log.Printf("Version check: ✓ Running latest version %s", updateInfo.CurrentVersion)
 	}
 }
 

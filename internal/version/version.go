@@ -3,6 +3,7 @@ package version
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -166,16 +167,24 @@ func IsNewerVersion(newVer, currentVer string) bool {
 	newParts := parseVersion(newVer)
 	currentParts := parseVersion(currentVer)
 
+	// Debug logging
+	log.Printf("IsNewerVersion: Comparing newVer=%s [%d.%d.%d] vs currentVer=%s [%d.%d.%d]",
+		newVer, newParts[0], newParts[1], newParts[2],
+		currentVer, currentParts[0], currentParts[1], currentParts[2])
+
 	// Compare major.minor.patch
 	for i := 0; i < 3; i++ {
 		if newParts[i] > currentParts[i] {
+			log.Printf("IsNewerVersion: newParts[%d]=%d > currentParts[%d]=%d, returning true", i, newParts[i], i, currentParts[i])
 			return true
 		}
 		if newParts[i] < currentParts[i] {
+			log.Printf("IsNewerVersion: newParts[%d]=%d < currentParts[%d]=%d, returning false", i, newParts[i], i, currentParts[i])
 			return false
 		}
 	}
 
+	log.Printf("IsNewerVersion: Versions are equal, returning false")
 	return false // Versions are equal
 }
 
