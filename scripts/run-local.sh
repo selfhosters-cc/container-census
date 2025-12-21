@@ -161,7 +161,6 @@ echo ""
 echo -e "${YELLOW}Starting server on http://localhost:3333${NC}"
 echo ""
 
-# VERSION_CHECK_COLLECTOR_URL=http://192.168.5.12:3334
 DOCKER_HOST="${DOCKER_HOST:-unix:///var/run/docker.sock}" \
 SERVER_PORT=3333 \
 CONFIG_PATH=/opt/docker-compose/census-server/census/config/${CONFIG_FILE} \
@@ -173,4 +172,5 @@ DATABASE_PATH=/opt/docker-compose/census-server/census/server/${DB_FILE} \
 TRIVY_CACHE_DIR=/tmp/trivy-cache \
 WEB_DIR=${WEB_DIR} \
 TELEMETRY_ENDPOINT_URL=http://100.91.119.113:3334/api/ingest \
+VERSION_CHECK_COLLECTOR_URL=http://192.168.5.12:3334 \
 /tmp/census-server
