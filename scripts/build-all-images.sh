@@ -16,6 +16,10 @@ NC='\033[0m' # No Color
 # Version file location
 VERSION_FILE="./.version"
 
+# Ntfy configuration
+NTFY_SERVER="ntfy.home.gregfroese.com"
+NTFY_TOPIC="container-census"
+
 # Function to print colored output
 print_info() {
     echo -e "${BLUE}ℹ${NC} $1"
@@ -39,6 +43,21 @@ print_header() {
     echo -e "${CYAN}  $1${NC}"
     echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
     echo ""
+}
+
+# Function to send ntfy notification
+notify() {
+    local title="$1"
+    local message="$2"
+    local priority="${3:-default}"
+    local tags="${4:-package}"
+
+    curl -s \
+        -H "Title: $title" \
+        -H "Priority: $priority" \
+        -H "Tags: $tags" \
+        -d "$message" \
+        "https://${NTFY_SERVER}/${NTFY_TOPIC}" > /dev/null 2>&1 || true
 }
 
 # Function to get current version
@@ -112,111 +131,86 @@ setup_builder() {
     print_success "Builder ready"
 }
 
-# Function to build an image
-build_image() {
+# Function to build an image for a single platform
+build_image_platform() {
     local name=$1
     local dockerfile=$2
     local version=$3
-    local platforms=${4:-"linux/amd64,linux/arm64"}
+    local platform=$4
+    local build_time=$5
 
-    print_header "Building $name:$version"
-
-    print_info "Platforms: $platforms"
-    print_info "Dockerfile: $dockerfile"
+    local arch_name=$(echo "$platform" | sed 's/linux\///')
+    print_info "Building $name:$version for $arch_name..."
+    notify "Building $name ($arch_name)" "Version: $version" "default" "hammer"
 
     # Build arguments
     local build_args=""
     if [[ "$dockerfile" == "Dockerfile" || "$dockerfile" == "Dockerfile.agent" ]]; then
-        # Use default GID for portability (runtime override via group_add)
         build_args="--build-arg DOCKER_GID=999"
     fi
-
-    # Add BUILD_TIME for all images
-    local build_time=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     build_args="$build_args --build-arg BUILD_TIME=$build_time"
 
-    # Determine if this is a multi-platform build
-    local platform_count=$(echo "$platforms" | tr ',' '\n' | wc -l)
-    local load_flag=""
-
-    if [ "$platform_count" -eq 1 ]; then
-        # Single platform - can use --load to load into local Docker
-        load_flag="--load"
-        print_info "Building single-platform image (will be available locally)..."
-    else
-        # Multi-platform - cannot use --load
-        # Image will be in build cache but not in 'docker images' until pushed
-        print_info "Building multi-platform image (cache only - use --push to make available)..."
-        print_warning "Multi-arch images won't appear in 'docker images' until pushed to registry"
-    fi
-
-    # Build
-    docker buildx build \
-        --platform "$platforms" \
+    # Build with --load for single platform
+    if docker buildx build \
+        --platform "$platform" \
         $build_args \
         -t "$name:$version" \
         -t "$name:latest" \
         -f "$dockerfile" \
-        $load_flag \
+        --load \
         --progress=plain \
-        . || {
-            print_error "Build failed for $name"
-            return 1
-        }
-
-    print_success "$name:$version built successfully"
-
-    # Show image size (only works for single platform with --load)
-    if [ "$platform_count" -eq 1 ]; then
-        local size=$(docker images "$name:$version" --format "{{.Size}}" 2>/dev/null | head -n1)
-        if [ -n "$size" ]; then
-            print_info "Image size: $size"
-        fi
+        . ; then
+        print_success "$name:$version ($arch_name) built successfully"
+        notify "$name ($arch_name) ✓" "Built successfully" "default" "white_check_mark"
+        return 0
     else
-        print_info "Image built in cache (not loaded locally)"
-        print_info "To use locally, either:"
-        print_info "  1. Build for single platform, or"
-        print_info "  2. Push to registry and pull back"
+        print_error "Build failed for $name ($arch_name)"
+        notify "$name ($arch_name) ✗" "Build FAILED" "high" "x"
+        return 1
     fi
-
-    return 0
 }
 
-# Function to build and optionally push
-build_and_push() {
+# Function to build and push multi-arch image
+build_and_push_multiarch() {
     local name=$1
     local dockerfile=$2
     local version=$3
     local platforms=$4
     local registry=$5
+    local build_time=$6
 
-    if [ -n "$registry" ]; then
-        print_header "Building and Pushing $registry/$name:$version"
+    print_info "Building and pushing $registry/$name:$version (multi-arch)..."
+    notify "Pushing $name" "Building multi-arch and pushing to $registry" "default" "rocket"
 
-        local build_args=""
-        if [[ "$dockerfile" == "Dockerfile" || "$dockerfile" == "Dockerfile.agent" ]]; then
-            build_args="--build-arg DOCKER_GID=999"
-        fi
+    local build_args=""
+    if [[ "$dockerfile" == "Dockerfile" || "$dockerfile" == "Dockerfile.agent" ]]; then
+        build_args="--build-arg DOCKER_GID=999"
+    fi
+    build_args="$build_args --build-arg BUILD_TIME=$build_time"
 
-        # Add BUILD_TIME for all images
-        local build_time=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-        build_args="$build_args --build-arg BUILD_TIME=$build_time"
-
-        docker buildx build \
-            --platform "$platforms" \
-            $build_args \
-            -t "$registry/$name:$version" \
-            -t "$registry/$name:latest" \
-            -f "$dockerfile" \
-            --push \
-            --progress=plain \
-            .
-
+    if docker buildx build \
+        --platform "$platforms" \
+        $build_args \
+        -t "$registry/$name:$version" \
+        -t "$registry/$name:latest" \
+        -f "$dockerfile" \
+        --push \
+        --progress=plain \
+        . ; then
         print_success "Pushed to $registry/$name:$version"
+        notify "$name pushed ✓" "Pushed to $registry" "default" "white_check_mark"
+        return 0
+    else
+        print_error "Push failed for $name"
+        notify "$name push ✗" "Push FAILED" "high" "x"
+        return 1
     fi
 }
 
-# Main script starts here
+# ==============================================================================
+# MAIN SCRIPT - COLLECT ALL OPTIONS UPFRONT
+# ==============================================================================
+
 clear
 print_header "Container Census - Multi-Architecture Build Script"
 
@@ -229,8 +223,13 @@ setup_builder
 CURRENT_VERSION=$(get_current_version)
 print_info "Current version: ${CYAN}$CURRENT_VERSION${NC}"
 
-# Ask for version increment
+print_header "Configuration - Answer All Questions First"
+
+# ==============================================================================
+# Question 1: Version
+# ==============================================================================
 echo ""
+echo -e "${YELLOW}[1/7] Version Selection${NC}"
 echo "Select version increment:"
 echo -e "  ${GREEN}1${NC}) Patch (${CURRENT_VERSION} → $(increment_version "$CURRENT_VERSION" patch))  - Bug fixes, small changes"
 echo -e "  ${GREEN}2${NC}) Minor (${CURRENT_VERSION} → $(increment_version "$CURRENT_VERSION" minor))  - New features, backward compatible"
@@ -241,18 +240,10 @@ echo ""
 read -p "Choice [1-5]: " version_choice
 
 case $version_choice in
-    1)
-        NEW_VERSION=$(increment_version "$CURRENT_VERSION" patch)
-        ;;
-    2)
-        NEW_VERSION=$(increment_version "$CURRENT_VERSION" minor)
-        ;;
-    3)
-        NEW_VERSION=$(increment_version "$CURRENT_VERSION" major)
-        ;;
-    4)
-        NEW_VERSION=$CURRENT_VERSION
-        ;;
+    1) NEW_VERSION=$(increment_version "$CURRENT_VERSION" patch) ;;
+    2) NEW_VERSION=$(increment_version "$CURRENT_VERSION" minor) ;;
+    3) NEW_VERSION=$(increment_version "$CURRENT_VERSION" major) ;;
+    4) NEW_VERSION=$CURRENT_VERSION ;;
     5)
         read -p "Enter version (e.g., 1.2.3): " NEW_VERSION
         if ! [[ $NEW_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -260,17 +251,17 @@ case $version_choice in
             exit 1
         fi
         ;;
-    *)
-        print_error "Invalid choice"
-        exit 1
-        ;;
+    *) print_error "Invalid choice"; exit 1 ;;
 esac
 
-print_success "Selected version: ${GREEN}$NEW_VERSION${NC}"
+print_success "Version: ${GREEN}$NEW_VERSION${NC}"
 
-# Select images to build
+# ==============================================================================
+# Question 2: Images to build
+# ==============================================================================
 echo ""
-print_info "Select images to build:"
+echo -e "${YELLOW}[2/7] Image Selection${NC}"
+echo "Select images to build:"
 echo -e "  ${GREEN}1${NC}) Server (container-census)"
 echo -e "  ${GREEN}2${NC}) Agent (census-agent)"
 echo -e "  ${GREEN}3${NC}) Telemetry Collector (telemetry-collector)"
@@ -283,29 +274,37 @@ BUILD_AGENT=false
 BUILD_TELEMETRY=false
 
 case $image_choice in
-    1)
-        BUILD_SERVER=true
-        ;;
-    2)
-        BUILD_AGENT=true
-        ;;
-    3)
-        BUILD_TELEMETRY=true
-        ;;
-    4)
-        BUILD_SERVER=true
-        BUILD_AGENT=true
-        BUILD_TELEMETRY=true
-        ;;
-    *)
-        print_error "Invalid choice"
-        exit 1
-        ;;
+    1) BUILD_SERVER=true ;;
+    2) BUILD_AGENT=true ;;
+    3) BUILD_TELEMETRY=true ;;
+    4) BUILD_SERVER=true; BUILD_AGENT=true; BUILD_TELEMETRY=true ;;
+    *) print_error "Invalid choice"; exit 1 ;;
 esac
 
-# Select platforms
+# ==============================================================================
+# Question 3: Agent variant (if building agent)
+# ==============================================================================
+AGENT_VARIANT=1
+if [ "$BUILD_AGENT" = true ]; then
+    echo ""
+    echo -e "${YELLOW}[3/7] Agent Variant${NC}"
+    echo "Which agent variant(s) to build?"
+    echo -e "  ${GREEN}1${NC}) Lightweight (no Trivy) - census-agent:latest"
+    echo -e "  ${GREEN}2${NC}) With Trivy - census-agent:with-trivy"
+    echo -e "  ${GREEN}3${NC}) Both variants"
+    echo ""
+    read -p "Choice [1-3]: " AGENT_VARIANT
+else
+    echo ""
+    echo -e "${YELLOW}[3/7] Agent Variant${NC} - Skipped (not building agent)"
+fi
+
+# ==============================================================================
+# Question 4: Platforms
+# ==============================================================================
 echo ""
-print_info "Select target platforms:"
+echo -e "${YELLOW}[4/7] Platform Selection${NC}"
+echo "Select target platforms:"
 echo -e "  ${GREEN}1${NC}) linux/amd64 (x86_64 only)"
 echo -e "  ${GREEN}2${NC}) linux/arm64 (ARM64 only)"
 echo -e "  ${GREEN}3${NC}) linux/amd64,linux/arm64 (Both - recommended)"
@@ -313,23 +312,17 @@ echo ""
 read -p "Choice [1-3]: " platform_choice
 
 case $platform_choice in
-    1)
-        PLATFORMS="linux/amd64"
-        ;;
-    2)
-        PLATFORMS="linux/arm64"
-        ;;
-    3)
-        PLATFORMS="linux/amd64,linux/arm64"
-        ;;
-    *)
-        print_error "Invalid choice"
-        exit 1
-        ;;
+    1) PLATFORMS="linux/amd64" ;;
+    2) PLATFORMS="linux/arm64" ;;
+    3) PLATFORMS="linux/amd64,linux/arm64" ;;
+    *) print_error "Invalid choice"; exit 1 ;;
 esac
 
-# Ask about registry push
+# ==============================================================================
+# Question 5: Registry push
+# ==============================================================================
 echo ""
+echo -e "${YELLOW}[5/7] Registry Push${NC}"
 read -p "Push to registry? (y/N): " push_choice
 PUSH_TO_REGISTRY=false
 REGISTRY=""
@@ -357,26 +350,62 @@ if [[ $push_choice =~ ^[Yy]$ ]]; then
             read -p "Custom registry URL (e.g., registry.example.com/path): " custom_registry
             REGISTRY="$custom_registry"
             ;;
-        *)
-            print_error "Invalid choice"
-            exit 1
-            ;;
+        *) print_error "Invalid choice"; exit 1 ;;
     esac
-
-    print_info "Will push to: $REGISTRY"
 fi
 
-# Summary
+# ==============================================================================
+# Question 6: Build Next.js frontend (if building server)
+# ==============================================================================
+BUILD_FRONTEND=false
+if [ "$BUILD_SERVER" = true ]; then
+    echo ""
+    echo -e "${YELLOW}[6/7] Frontend Build${NC}"
+    read -p "Build Next.js frontend? (Y/n): " build_frontend
+    if [[ ! $build_frontend =~ ^[Nn]$ ]]; then
+        BUILD_FRONTEND=true
+    fi
+else
+    echo ""
+    echo -e "${YELLOW}[6/7] Frontend Build${NC} - Skipped (not building server)"
+fi
+
+# ==============================================================================
+# Question 7: GitHub Release
+# ==============================================================================
+CREATE_RELEASE=false
+if [ "$PUSH_TO_REGISTRY" = true ]; then
+    echo ""
+    echo -e "${YELLOW}[7/7] GitHub Release${NC}"
+    read -p "Create GitHub Release after push? (y/N): " create_release_choice
+    if [[ $create_release_choice =~ ^[Yy]$ ]]; then
+        CREATE_RELEASE=true
+    fi
+else
+    echo ""
+    echo -e "${YELLOW}[7/7] GitHub Release${NC} - Skipped (not pushing to registry)"
+fi
+
+# ==============================================================================
+# Summary and Confirmation
+# ==============================================================================
 print_header "Build Summary"
 echo -e "Version:   ${GREEN}$NEW_VERSION${NC}"
 echo -e "Platforms: ${CYAN}$PLATFORMS${NC}"
-echo "Images:"
-[ "$BUILD_SERVER" = true ] && echo -e "  - ${GREEN}✓${NC} container-census"
-[ "$BUILD_AGENT" = true ] && echo -e "  - ${GREEN}✓${NC} census-agent"
-[ "$BUILD_TELEMETRY" = true ] && echo -e "  - ${GREEN}✓${NC} telemetry-collector"
+echo ""
+echo "Images to build:"
+[ "$BUILD_SERVER" = true ] && echo -e "  ${GREEN}✓${NC} container-census"
+[ "$BUILD_AGENT" = true ] && echo -e "  ${GREEN}✓${NC} census-agent (variant: $AGENT_VARIANT)"
+[ "$BUILD_TELEMETRY" = true ] && echo -e "  ${GREEN}✓${NC} telemetry-collector"
+echo ""
+[ "$BUILD_FRONTEND" = true ] && echo -e "Frontend:  ${GREEN}✓${NC} Build Next.js"
+[ "$BUILD_FRONTEND" = false ] && [ "$BUILD_SERVER" = true ] && echo -e "Frontend:  ${YELLOW}○${NC} Skip (use vanilla JS)"
 if [ "$PUSH_TO_REGISTRY" = true ]; then
     echo -e "Registry:  ${CYAN}$REGISTRY${NC}"
+    [ "$CREATE_RELEASE" = true ] && echo -e "Release:   ${GREEN}✓${NC} Create GitHub Release"
 fi
+echo ""
+echo -e "Notifications: ${CYAN}https://${NTFY_SERVER}/${NTFY_TOPIC}${NC}"
 echo ""
 read -p "Proceed with build? (Y/n): " confirm
 
@@ -385,22 +414,34 @@ if [[ $confirm =~ ^[Nn]$ ]]; then
     exit 0
 fi
 
+# ==============================================================================
+# START BUILD PROCESS
+# ==============================================================================
+
 # Save version BEFORE building so it gets embedded in the image
 save_version "$NEW_VERSION"
 
-# Start building
+# Notify build start
+notify "Build Started 🚀" "Version: $NEW_VERSION | Images: $([ "$BUILD_SERVER" = true ] && echo "server ")$([ "$BUILD_AGENT" = true ] && echo "agent ")$([ "$BUILD_TELEMETRY" = true ] && echo "collector")" "default" "rocket"
+
 print_header "Starting Build Process"
 
-# Build Next.js frontend (if building server)
+# Get build time once for all images
+BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+print_info "Build timestamp: $BUILD_TIME"
+
+# Get project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# ==============================================================================
+# Build Frontends (if building server)
+# ==============================================================================
 if [ "$BUILD_SERVER" = true ]; then
-    echo ""
-    read -p "Build Next.js frontend? (Y/n): " build_frontend
-
-    if [[ ! $build_frontend =~ ^[Nn]$ ]]; then
-        print_info "Building Next.js frontend..."
-
-        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+    # Build Next.js frontend
+    if [ "$BUILD_FRONTEND" = true ]; then
+        print_header "Building Next.js Frontend"
+        notify "Building Frontend" "Next.js build started" "default" "hammer"
 
         if [ ! -d "$PROJECT_ROOT/web-next/node_modules" ]; then
             print_info "Installing npm dependencies..."
@@ -408,175 +449,196 @@ if [ "$BUILD_SERVER" = true ]; then
         fi
 
         (cd "$PROJECT_ROOT/web-next" && npm run build)
-
         print_success "Next.js frontend built successfully!"
-        print_info "Static files available in: $PROJECT_ROOT/web-next/out/"
-    else
-        print_warning "Skipping Next.js frontend build (vanilla JS will be used)"
+        notify "Frontend ✓" "Next.js build complete" "default" "white_check_mark"
     fi
-fi
 
-# Build Graph Plugin Frontend (if building server)
-if [ "$BUILD_SERVER" = true ]; then
+    # Build Graph Plugin Frontend
     GRAPH_PLUGIN_DIR="$PROJECT_ROOT/internal/plugins/builtin/graph/frontend"
     if [ -d "$GRAPH_PLUGIN_DIR/src" ]; then
         print_info "Building Graph Plugin frontend..."
-
         if [ ! -d "$GRAPH_PLUGIN_DIR/node_modules" ]; then
-            print_info "Installing Graph Plugin npm dependencies..."
             (cd "$GRAPH_PLUGIN_DIR" && npm install)
         fi
-
         (cd "$GRAPH_PLUGIN_DIR" && npm run build)
-
-        print_success "Graph Plugin frontend built successfully!"
+        print_success "Graph Plugin frontend built!"
     fi
-fi
 
-# Build Security Plugin Frontend (if building server)
-if [ "$BUILD_SERVER" = true ]; then
+    # Build Security Plugin Frontend
     SECURITY_PLUGIN_DIR="$PROJECT_ROOT/internal/plugins/builtin/security/frontend"
     if [ -d "$SECURITY_PLUGIN_DIR/src" ]; then
         print_info "Building Security Plugin frontend..."
-
         if [ ! -d "$SECURITY_PLUGIN_DIR/node_modules" ]; then
-            print_info "Installing Security Plugin npm dependencies..."
             (cd "$SECURITY_PLUGIN_DIR" && npm install)
         fi
-
         (cd "$SECURITY_PLUGIN_DIR" && npm run build)
-
-        print_success "Security Plugin frontend built successfully!"
+        print_success "Security Plugin frontend built!"
     fi
 fi
 
 BUILD_SUCCESS=true
 
-# Build server
+# ==============================================================================
+# Build Server
+# ==============================================================================
 if [ "$BUILD_SERVER" = true ]; then
-    if build_image "container-census" "Dockerfile" "$NEW_VERSION" "$PLATFORMS"; then
-        if [ "$PUSH_TO_REGISTRY" = true ]; then
-            build_and_push "container-census" "Dockerfile" "$NEW_VERSION" "$PLATFORMS" "$REGISTRY"
+    print_header "Building Server"
+
+    # Build for each platform
+    IFS=',' read -ra PLATFORM_ARRAY <<< "$PLATFORMS"
+    for platform in "${PLATFORM_ARRAY[@]}"; do
+        if ! build_image_platform "container-census" "Dockerfile" "$NEW_VERSION" "$platform" "$BUILD_TIME"; then
+            BUILD_SUCCESS=false
         fi
-    else
-        BUILD_SUCCESS=false
+    done
+
+    # Push multi-arch if requested
+    if [ "$PUSH_TO_REGISTRY" = true ] && [ "$BUILD_SUCCESS" = true ]; then
+        build_and_push_multiarch "container-census" "Dockerfile" "$NEW_VERSION" "$PLATFORMS" "$REGISTRY" "$BUILD_TIME"
     fi
 fi
 
-# Build agent
+# ==============================================================================
+# Build Agent
+# ==============================================================================
 if [ "$BUILD_AGENT" = true ]; then
-    print_header "Agent Build Options"
-    echo -e "Which agent variant(s) to build?"
-    echo -e "  ${GREEN}1${NC}) Lightweight (no Trivy) - census-agent:latest"
-    echo -e "  ${GREEN}2${NC}) With Trivy - census-agent:with-trivy"
-    echo -e "  ${GREEN}3${NC}) Both variants"
-    echo ""
-    read -p "Choice [1-3]: " AGENT_VARIANT
+    print_header "Building Agent"
+
+    IFS=',' read -ra PLATFORM_ARRAY <<< "$PLATFORMS"
 
     case "$AGENT_VARIANT" in
         1)
-            print_info "Building lightweight agent (no Trivy)..."
-            if build_image "census-agent" "Dockerfile.agent" "$NEW_VERSION" "$PLATFORMS"; then
-                if [ "$PUSH_TO_REGISTRY" = true ]; then
-                    build_and_push "census-agent" "Dockerfile.agent" "$NEW_VERSION" "$PLATFORMS" "$REGISTRY"
+            # Lightweight only
+            for platform in "${PLATFORM_ARRAY[@]}"; do
+                if ! build_image_platform "census-agent" "Dockerfile.agent" "$NEW_VERSION" "$platform" "$BUILD_TIME"; then
+                    BUILD_SUCCESS=false
                 fi
-            else
-                BUILD_SUCCESS=false
+            done
+            if [ "$PUSH_TO_REGISTRY" = true ] && [ "$BUILD_SUCCESS" = true ]; then
+                build_and_push_multiarch "census-agent" "Dockerfile.agent" "$NEW_VERSION" "$PLATFORMS" "$REGISTRY" "$BUILD_TIME"
             fi
             ;;
         2)
-            print_info "Building agent with Trivy..."
-            # Build with Trivy using --build-arg
-            if docker buildx build \
-                --platform "$PLATFORMS" \
-                --build-arg DOCKER_GID=999 \
-                --build-arg INSTALL_TRIVY=true \
-                -t "census-agent:with-trivy-$NEW_VERSION" \
-                -t "census-agent:with-trivy" \
-                -f "Dockerfile.agent" \
-                $([ $(echo "$PLATFORMS" | tr ',' '\n' | wc -l) -eq 1 ] && echo "--load" || echo "") \
-                --progress=plain \
-                . ; then
-                print_success "census-agent:with-trivy built successfully"
-                if [ "$PUSH_TO_REGISTRY" = true ] && [ -n "$REGISTRY" ]; then
-                    docker buildx build \
-                        --platform "$PLATFORMS" \
-                        --build-arg DOCKER_GID=999 \
-                        --build-arg INSTALL_TRIVY=true \
-                        -t "$REGISTRY/census-agent:with-trivy-$NEW_VERSION" \
-                        -t "$REGISTRY/census-agent:with-trivy" \
-                        -f "Dockerfile.agent" \
-                        --push \
-                        --progress=plain \
-                        .
-                    print_success "Pushed to $REGISTRY/census-agent:with-trivy"
+            # With Trivy only
+            for platform in "${PLATFORM_ARRAY[@]}"; do
+                arch_name=$(echo "$platform" | sed 's/linux\///')
+                print_info "Building census-agent:with-trivy for $arch_name..."
+                notify "Building agent:with-trivy ($arch_name)" "Version: $NEW_VERSION" "default" "hammer"
+
+                if docker buildx build \
+                    --platform "$platform" \
+                    --build-arg DOCKER_GID=999 \
+                    --build-arg INSTALL_TRIVY=true \
+                    --build-arg BUILD_TIME="$BUILD_TIME" \
+                    -t "census-agent:with-trivy-$NEW_VERSION" \
+                    -t "census-agent:with-trivy" \
+                    -f "Dockerfile.agent" \
+                    --load \
+                    --progress=plain \
+                    . ; then
+                    print_success "census-agent:with-trivy ($arch_name) built"
+                    notify "agent:with-trivy ($arch_name) ✓" "Built successfully" "default" "white_check_mark"
+                else
+                    BUILD_SUCCESS=false
+                    notify "agent:with-trivy ($arch_name) ✗" "Build FAILED" "high" "x"
                 fi
-            else
-                BUILD_SUCCESS=false
+            done
+            if [ "$PUSH_TO_REGISTRY" = true ] && [ "$BUILD_SUCCESS" = true ]; then
+                notify "Pushing agent:with-trivy" "Multi-arch push to $REGISTRY" "default" "rocket"
+                docker buildx build \
+                    --platform "$PLATFORMS" \
+                    --build-arg DOCKER_GID=999 \
+                    --build-arg INSTALL_TRIVY=true \
+                    --build-arg BUILD_TIME="$BUILD_TIME" \
+                    -t "$REGISTRY/census-agent:with-trivy-$NEW_VERSION" \
+                    -t "$REGISTRY/census-agent:with-trivy" \
+                    -f "Dockerfile.agent" \
+                    --push \
+                    --progress=plain \
+                    .
+                notify "agent:with-trivy pushed ✓" "Pushed to $REGISTRY" "default" "white_check_mark"
             fi
             ;;
         3)
-            print_info "Building both agent variants..."
-            # Build lightweight
-            if build_image "census-agent" "Dockerfile.agent" "$NEW_VERSION" "$PLATFORMS"; then
-                if [ "$PUSH_TO_REGISTRY" = true ]; then
-                    build_and_push "census-agent" "Dockerfile.agent" "$NEW_VERSION" "$PLATFORMS" "$REGISTRY"
+            # Both variants
+            # Lightweight
+            for platform in "${PLATFORM_ARRAY[@]}"; do
+                if ! build_image_platform "census-agent" "Dockerfile.agent" "$NEW_VERSION" "$platform" "$BUILD_TIME"; then
+                    BUILD_SUCCESS=false
                 fi
-            else
-                BUILD_SUCCESS=false
+            done
+            if [ "$PUSH_TO_REGISTRY" = true ] && [ "$BUILD_SUCCESS" = true ]; then
+                build_and_push_multiarch "census-agent" "Dockerfile.agent" "$NEW_VERSION" "$PLATFORMS" "$REGISTRY" "$BUILD_TIME"
             fi
 
-            # Build with Trivy
-            if docker buildx build \
-                --platform "$PLATFORMS" \
-                --build-arg DOCKER_GID=999 \
-                --build-arg INSTALL_TRIVY=true \
-                -t "census-agent:with-trivy-$NEW_VERSION" \
-                -t "census-agent:with-trivy" \
-                -f "Dockerfile.agent" \
-                $([ $(echo "$PLATFORMS" | tr ',' '\n' | wc -l) -eq 1 ] && echo "--load" || echo "") \
-                --progress=plain \
-                . ; then
-                print_success "census-agent:with-trivy built successfully"
-                if [ "$PUSH_TO_REGISTRY" = true ] && [ -n "$REGISTRY" ]; then
-                    docker buildx build \
-                        --platform "$PLATFORMS" \
-                        --build-arg DOCKER_GID=999 \
-                        --build-arg INSTALL_TRIVY=true \
-                        -t "$REGISTRY/census-agent:with-trivy-$NEW_VERSION" \
-                        -t "$REGISTRY/census-agent:with-trivy" \
-                        -f "Dockerfile.agent" \
-                        --push \
-                        --progress=plain \
-                        .
-                    print_success "Pushed to $REGISTRY/census-agent:with-trivy"
+            # With Trivy
+            for platform in "${PLATFORM_ARRAY[@]}"; do
+                arch_name=$(echo "$platform" | sed 's/linux\///')
+                print_info "Building census-agent:with-trivy for $arch_name..."
+                notify "Building agent:with-trivy ($arch_name)" "Version: $NEW_VERSION" "default" "hammer"
+
+                if docker buildx build \
+                    --platform "$platform" \
+                    --build-arg DOCKER_GID=999 \
+                    --build-arg INSTALL_TRIVY=true \
+                    --build-arg BUILD_TIME="$BUILD_TIME" \
+                    -t "census-agent:with-trivy-$NEW_VERSION" \
+                    -t "census-agent:with-trivy" \
+                    -f "Dockerfile.agent" \
+                    --load \
+                    --progress=plain \
+                    . ; then
+                    print_success "census-agent:with-trivy ($arch_name) built"
+                    notify "agent:with-trivy ($arch_name) ✓" "Built successfully" "default" "white_check_mark"
+                else
+                    BUILD_SUCCESS=false
+                    notify "agent:with-trivy ($arch_name) ✗" "Build FAILED" "high" "x"
                 fi
-            else
-                BUILD_SUCCESS=false
+            done
+            if [ "$PUSH_TO_REGISTRY" = true ] && [ "$BUILD_SUCCESS" = true ]; then
+                notify "Pushing agent:with-trivy" "Multi-arch push to $REGISTRY" "default" "rocket"
+                docker buildx build \
+                    --platform "$PLATFORMS" \
+                    --build-arg DOCKER_GID=999 \
+                    --build-arg INSTALL_TRIVY=true \
+                    --build-arg BUILD_TIME="$BUILD_TIME" \
+                    -t "$REGISTRY/census-agent:with-trivy-$NEW_VERSION" \
+                    -t "$REGISTRY/census-agent:with-trivy" \
+                    -f "Dockerfile.agent" \
+                    --push \
+                    --progress=plain \
+                    .
+                notify "agent:with-trivy pushed ✓" "Pushed to $REGISTRY" "default" "white_check_mark"
             fi
-            ;;
-        *)
-            print_error "Invalid choice. Skipping agent build."
             ;;
     esac
 fi
 
-# Build telemetry collector
+# ==============================================================================
+# Build Telemetry Collector
+# ==============================================================================
 if [ "$BUILD_TELEMETRY" = true ]; then
-    if build_image "telemetry-collector" "Dockerfile.telemetry-collector" "$NEW_VERSION" "$PLATFORMS"; then
-        if [ "$PUSH_TO_REGISTRY" = true ]; then
-            build_and_push "telemetry-collector" "Dockerfile.telemetry-collector" "$NEW_VERSION" "$PLATFORMS" "$REGISTRY"
+    print_header "Building Telemetry Collector"
+
+    IFS=',' read -ra PLATFORM_ARRAY <<< "$PLATFORMS"
+    for platform in "${PLATFORM_ARRAY[@]}"; do
+        if ! build_image_platform "telemetry-collector" "Dockerfile.telemetry-collector" "$NEW_VERSION" "$platform" "$BUILD_TIME"; then
+            BUILD_SUCCESS=false
         fi
-    else
-        BUILD_SUCCESS=false
+    done
+
+    if [ "$PUSH_TO_REGISTRY" = true ] && [ "$BUILD_SUCCESS" = true ]; then
+        build_and_push_multiarch "telemetry-collector" "Dockerfile.telemetry-collector" "$NEW_VERSION" "$PLATFORMS" "$REGISTRY" "$BUILD_TIME"
     fi
 fi
 
-# Wrap up build results
+# ==============================================================================
+# Results
+# ==============================================================================
 if [ "$BUILD_SUCCESS" = true ]; then
     print_header "Build Complete! 🎉"
 
-    # Show built images (only visible for single-platform builds)
+    # Show built images
     platform_count=$(echo "$PLATFORMS" | tr ',' '\n' | wc -l)
     if [ "$platform_count" -eq 1 ]; then
         echo "Built images:"
@@ -587,349 +649,33 @@ if [ "$BUILD_SUCCESS" = true ]; then
     print_success "All images built successfully!"
     print_info "Version: ${GREEN}$NEW_VERSION${NC}"
 
-    if [ "$PUSH_TO_REGISTRY" = true ]; then
+    # Create GitHub Release if requested
+    if [ "$CREATE_RELEASE" = true ]; then
         echo ""
-        print_success "Images pushed to registry: $REGISTRY"
+        print_info "Creating GitHub Release..."
+        notify "Creating Release" "GitHub release v$NEW_VERSION" "default" "bookmark"
 
-        # Offer to create GitHub release
-        echo ""
-        print_info "GitHub Release Creation"
-        echo ""
-        read -p "Create GitHub Release for v${NEW_VERSION}? (y/N): " create_release
-
-        if [[ $create_release =~ ^[Yy]$ ]]; then
-            # Check if gh CLI is installed
-            if command -v gh &> /dev/null; then
-                print_info "Creating GitHub release v${NEW_VERSION}..."
-
-                # Check if already logged in to GitHub
-                if gh auth status &> /dev/null; then
-                    # Try to create the release
-                    if gh release create "v${NEW_VERSION}" \
-                        --repo selfhosters-cc/container-census \
-                        --title "v${NEW_VERSION}" \
-                        --generate-notes; then
-                        print_success "GitHub release v${NEW_VERSION} created successfully!"
-                        print_info "View at: https://github.com/selfhosters-cc/container-census/releases/tag/v${NEW_VERSION}"
-                    else
-                        print_warning "Failed to create GitHub release (may already exist)"
-                        print_info "You can create it manually at: https://github.com/selfhosters-cc/container-census/releases/new"
-                    fi
-                else
-                    print_warning "Not logged in to GitHub CLI"
-                    print_info "Login with: gh auth login"
-                    print_info "Then create release manually at: https://github.com/selfhosters-cc/container-census/releases/new"
-                fi
+        if command -v gh &> /dev/null && gh auth status &> /dev/null; then
+            if gh release create "v${NEW_VERSION}" \
+                --repo selfhosters-cc/container-census \
+                --title "v${NEW_VERSION}" \
+                --generate-notes; then
+                print_success "GitHub release v${NEW_VERSION} created!"
+                notify "Release Created ✓" "v$NEW_VERSION published on GitHub" "default" "tada"
             else
-                print_warning "GitHub CLI (gh) not installed"
-                print_info "Install from: https://cli.github.com/"
-                print_info "Or create release manually at: https://github.com/selfhosters-cc/container-census/releases/new"
+                print_warning "Failed to create release (may already exist)"
+                notify "Release Warning" "Could not create GitHub release" "default" "warning"
             fi
         else
-            print_info "Skipping GitHub release creation"
-            print_info "You can create it manually later at: https://github.com/selfhosters-cc/container-census/releases/new"
+            print_warning "GitHub CLI not available or not logged in"
         fi
-    elif [ "$platform_count" -gt 1 ]; then
-        echo ""
-        print_warning "Multi-architecture images are in build cache only"
-        print_info "To use these images locally:"
-        echo "  1. Push to a registry and pull back, OR"
-        echo "  2. Re-build for single platform (option 1 or 2)"
     fi
 
-    # Generate docker-compose file
-    echo ""
-    read -p "Generate sample docker-compose.yml for these images? (y/N): " gen_compose
-    if [[ $gen_compose =~ ^[Yy]$ ]]; then
-        COMPOSE_FILE="docker-compose.images-${NEW_VERSION}.yml"
-
-        cat > "$COMPOSE_FILE" << EOF
-# Container Census - Pre-built Images Deployment
-# Version: ${NEW_VERSION}
-# Generated: $(date '+%Y-%m-%d %H:%M:%S')
-
-version: '3.8'
-
-services:
-EOF
-
-        if [ "$BUILD_SERVER" = true ]; then
-            server_image="container-census:${NEW_VERSION}"
-            if [ "$PUSH_TO_REGISTRY" = true ]; then
-                server_image="${REGISTRY}/container-census:${NEW_VERSION}"
-            fi
-
-            cat >> "$COMPOSE_FILE" << EOF
-  # Container Census Server
-  census-server:
-    image: ${server_image}
-    container_name: container-census
-    restart: unless-stopped
-
-    # Runtime Docker socket GID configuration
-    group_add:
-      - "\${DOCKER_GID:-999}"
-
-    ports:
-      - "8080:8080"
-
-    volumes:
-      # Docker socket for scanning local containers
-      - /var/run/docker.sock:/var/run/docker.sock
-      # Persistent data directory
-      - ./data:/app/data
-      # Optional: Mount config file
-      # - ./config/config.yaml:/app/config/config.yaml
-
-    environment:
-      TZ: \${TZ:-UTC}
-      # CONFIG_PATH: /app/config/config.yaml
-
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/health"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 10s
-
-    networks:
-      - census-network
-
-EOF
-        fi
-
-        if [ "$BUILD_AGENT" = true ]; then
-            agent_image="census-agent:${NEW_VERSION}"
-            if [ "$PUSH_TO_REGISTRY" = true ]; then
-                agent_image="${REGISTRY}/census-agent:${NEW_VERSION}"
-            fi
-
-            cat >> "$COMPOSE_FILE" << EOF
-  # Container Census Agent
-  census-agent:
-    image: ${agent_image}
-    container_name: census-agent
-    restart: unless-stopped
-
-    # Runtime Docker socket GID configuration
-    group_add:
-      - "\${DOCKER_GID:-999}"
-
-    ports:
-      - "9876:9876"
-
-    volumes:
-      # Docker socket for local container management
-      - /var/run/docker.sock:/var/run/docker.sock
-
-    environment:
-      API_TOKEN: \${AGENT_API_TOKEN:-}
-      PORT: 9876
-      TZ: \${TZ:-UTC}
-
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9876/health"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 5s
-
-    networks:
-      - census-network
-
-EOF
-        fi
-
-        if [ "$BUILD_TELEMETRY" = true ]; then
-            telemetry_image="telemetry-collector:${NEW_VERSION}"
-            if [ "$PUSH_TO_REGISTRY" = true ]; then
-                telemetry_image="${REGISTRY}/telemetry-collector:${NEW_VERSION}"
-            fi
-
-            cat >> "$COMPOSE_FILE" << EOF
-  # Telemetry Collector (requires PostgreSQL)
-  telemetry-postgres:
-    image: postgres:15-alpine
-    container_name: telemetry-postgres
-    restart: unless-stopped
-
-    environment:
-      POSTGRES_DB: telemetry
-      POSTGRES_USER: \${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: \${POSTGRES_PASSWORD:-postgres}
-      PGDATA: /var/lib/postgresql/data/pgdata
-
-    volumes:
-      - telemetry-db:/var/lib/postgresql/data
-
-    networks:
-      - census-network
-
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  telemetry-collector:
-    image: ${telemetry_image}
-    container_name: telemetry-collector
-    restart: unless-stopped
-
-    ports:
-      - "8081:8081"
-
-    environment:
-      DATABASE_URL: postgres://\${POSTGRES_USER:-postgres}:\${POSTGRES_PASSWORD:-postgres}@telemetry-postgres:5432/telemetry?sslmode=disable
-      PORT: 8081
-      API_KEY: \${TELEMETRY_API_KEY:-}
-      TZ: \${TZ:-UTC}
-
-    depends_on:
-      telemetry-postgres:
-        condition: service_healthy
-
-    networks:
-      - census-network
-
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8081/health"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 10s
-
-EOF
-        fi
-
-        cat >> "$COMPOSE_FILE" << EOF
-networks:
-  census-network:
-    name: census-network
-    driver: bridge
-
-EOF
-
-        if [ "$BUILD_TELEMETRY" = true ]; then
-            cat >> "$COMPOSE_FILE" << EOF
-volumes:
-  telemetry-db:
-    name: telemetry-db
-
-EOF
-        fi
-
-        cat >> "$COMPOSE_FILE" << EOF
-# ==============================================================================
-# Quick Start
-# ==============================================================================
-#
-# 1. Create .env file:
-#    echo "DOCKER_GID=\$(stat -c '%g' /var/run/docker.sock)" > .env
-#
-# 2. Start services:
-#    docker-compose -f ${COMPOSE_FILE} up -d
-#
-# 3. Access services:
-EOF
-
-        if [ "$BUILD_SERVER" = true ]; then
-            cat >> "$COMPOSE_FILE" << EOF
-#    - Server: http://localhost:8080
-EOF
-        fi
-
-        if [ "$BUILD_AGENT" = true ]; then
-            cat >> "$COMPOSE_FILE" << EOF
-#    - Agent: http://localhost:9876 (get token from logs)
-EOF
-        fi
-
-        if [ "$BUILD_TELEMETRY" = true ]; then
-            cat >> "$COMPOSE_FILE" << EOF
-#    - Analytics: http://localhost:8081
-EOF
-        fi
-
-        cat >> "$COMPOSE_FILE" << EOF
-#
-# ==============================================================================
-# Environment Variables
-# ==============================================================================
-#
-# Required:
-#   DOCKER_GID            - Docker socket GID (auto-detect: stat -c '%g' /var/run/docker.sock)
-#
-# Optional:
-#   TZ                    - Timezone (default: UTC)
-EOF
-
-        if [ "$BUILD_AGENT" = true ]; then
-            cat >> "$COMPOSE_FILE" << EOF
-#   AGENT_API_TOKEN       - Agent API token (auto-generated if not set)
-EOF
-        fi
-
-        if [ "$BUILD_TELEMETRY" = true ]; then
-            cat >> "$COMPOSE_FILE" << EOF
-#   POSTGRES_USER         - PostgreSQL username (default: postgres)
-#   POSTGRES_PASSWORD     - PostgreSQL password (default: postgres)
-#   TELEMETRY_API_KEY     - Telemetry API key (optional)
-EOF
-        fi
-
-        cat >> "$COMPOSE_FILE" << EOF
-#
-# ==============================================================================
-EOF
-
-        print_success "Generated: ${GREEN}$COMPOSE_FILE${NC}"
-
-        # Generate .env.example
-        ENV_EXAMPLE_FILE=".env.images-${NEW_VERSION}.example"
-        cat > "$ENV_EXAMPLE_FILE" << EOF
-# Container Census - Environment Variables
-# Version: ${NEW_VERSION}
-
-# Docker socket GID (required for server and agent)
-# Auto-detect with: stat -c '%g' /var/run/docker.sock
-DOCKER_GID=999
-
-# Timezone
-TZ=UTC
-EOF
-
-        if [ "$BUILD_AGENT" = true ]; then
-            cat >> "$ENV_EXAMPLE_FILE" << EOF
-
-# Agent API Token (leave empty for auto-generation)
-AGENT_API_TOKEN=
-EOF
-        fi
-
-        if [ "$BUILD_TELEMETRY" = true ]; then
-            cat >> "$ENV_EXAMPLE_FILE" << EOF
-
-# PostgreSQL Configuration
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=change-this-password
-
-# Telemetry API Key (optional)
-TELEMETRY_API_KEY=
-EOF
-        fi
-
-        print_success "Generated: ${GREEN}$ENV_EXAMPLE_FILE${NC}"
-
-        echo ""
-        print_info "To use:"
-        echo "  1. cp $ENV_EXAMPLE_FILE .env"
-        echo "  2. Edit .env with your settings"
-        echo "  3. docker-compose -f $COMPOSE_FILE up -d"
-    fi
-
+    # Final notification
+    notify "Build Complete 🎉" "Version $NEW_VERSION built successfully!" "default" "tada"
 else
-    print_error "Build failed! Version not saved."
+    print_header "Build Failed! ❌"
+    notify "Build Failed ❌" "Version $NEW_VERSION build failed" "high" "x"
     exit 1
 fi
 
