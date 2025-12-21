@@ -288,8 +288,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	updateInfo := version.GetUpdateInfo()
 	if updateInfo != nil && updateInfo.Error == nil {
 		response["latest_version"] = updateInfo.LatestVersion
-		response["update_available"] = updateInfo.UpdateAvailable
-		if updateInfo.UpdateAvailable {
+		// Always recompute update_available by comparing latest with current version
+		// This ensures correctness even if cache was populated before a version upgrade
+		updateAvailable := version.IsNewerVersion(updateInfo.LatestVersion, version.Get())
+		response["update_available"] = updateAvailable
+		if updateAvailable {
 			response["release_url"] = updateInfo.ReleaseURL
 		}
 	}
