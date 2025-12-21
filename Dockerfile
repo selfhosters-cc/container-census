@@ -24,8 +24,8 @@ COPY . .
 RUN go mod tidy -e
 
 # Build the binary with proper tags for Alpine and inject build timestamp
-RUN BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ") && \
-    CGO_ENABLED=1 GOOS=linux go build \
+ARG BUILD_TIME
+RUN CGO_ENABLED=1 GOOS=linux go build \
     -buildvcs=false \
     -tags "sqlite_omit_load_extension" \
     -ldflags "-X github.com/selfhosters-cc/container-census/internal/version.BuildTime=${BUILD_TIME}" \

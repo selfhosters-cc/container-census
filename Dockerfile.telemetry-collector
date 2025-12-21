@@ -22,8 +22,11 @@ COPY . .
 # Tidy if needed (rarely changes cache)
 RUN go mod tidy -e
 
-# Build the telemetry collector binary
-RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags="-w -s" -o telemetry-collector ./cmd/telemetry-collector
+# Build the telemetry collector binary with build time injection
+ARG BUILD_TIME
+RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false \
+    -ldflags="-w -s -X github.com/selfhosters-cc/container-census/internal/version.BuildTime=${BUILD_TIME}" \
+    -o telemetry-collector ./cmd/telemetry-collector
 
 # Stage 2: Create minimal runtime image
 FROM alpine:3.21

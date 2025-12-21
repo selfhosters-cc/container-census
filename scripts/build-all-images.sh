@@ -131,6 +131,10 @@ build_image() {
         build_args="--build-arg DOCKER_GID=999"
     fi
 
+    # Add BUILD_TIME for all images
+    local build_time=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    build_args="$build_args --build-arg BUILD_TIME=$build_time"
+
     # Determine if this is a multi-platform build
     local platform_count=$(echo "$platforms" | tr ',' '\n' | wc -l)
     local load_flag=""
@@ -193,6 +197,10 @@ build_and_push() {
         if [[ "$dockerfile" == "Dockerfile" || "$dockerfile" == "Dockerfile.agent" ]]; then
             build_args="--build-arg DOCKER_GID=999"
         fi
+
+        # Add BUILD_TIME for all images
+        local build_time=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        build_args="$build_args --build-arg BUILD_TIME=$build_time"
 
         docker buildx build \
             --platform "$platforms" \
