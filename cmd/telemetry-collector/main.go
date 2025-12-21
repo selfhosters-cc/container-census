@@ -2422,13 +2422,13 @@ func (s *Server) handleMoversStats(w http.ResponseWriter, r *http.Request) {
 		PreviousInstallations int     `json:"previous_installations"`
 	}
 
-	// Get current week stats
+	// Get current week stats (no filter - we need all data for accurate comparisons)
 	currentQuery := `
 		SELECT image, total_count, installation_count
 		FROM image_stats_weekly
-		WHERE week_start = $1 AND installation_count >= $2
+		WHERE week_start = $1
 	`
-	currentRows, err := s.db.Query(currentQuery, currentWeek, minInstallations)
+	currentRows, err := s.db.Query(currentQuery, currentWeek)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Query failed: "+err.Error())
 		return
@@ -2451,13 +2451,13 @@ func (s *Server) handleMoversStats(w http.ResponseWriter, r *http.Request) {
 		}{count, installations}
 	}
 
-	// Get previous week stats
+	// Get previous week stats (no filter - we need all data for accurate comparisons)
 	previousQuery := `
 		SELECT image, total_count, installation_count
 		FROM image_stats_weekly
-		WHERE week_start = $1 AND installation_count >= $2
+		WHERE week_start = $1
 	`
-	previousRows, err := s.db.Query(previousQuery, previousWeek, minInstallations)
+	previousRows, err := s.db.Query(previousQuery, previousWeek)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Query failed: "+err.Error())
 		return
@@ -2481,9 +2481,18 @@ func (s *Server) handleMoversStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Calculate changes
+	// Apply min_installations filter: include if EITHER week meets threshold
 	var movers []Mover
+	processedImages := make(map[string]bool)
+
 	for image, current := range currentStats {
 		previous := previousStats[image]
+		// Include if either week has enough installations
+		if current.installations < minInstallations && previous.installations < minInstallations {
+			continue
+		}
+		processedImages[image] = true
+
 		change := current.count - previous.count
 		var changePercent float64
 		if previous.count > 0 {
@@ -2504,20 +2513,23 @@ func (s *Server) handleMoversStats(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Also include images that disappeared (were in previous but not current)
-	// Show previous installations count for context (not 0)
+	// Also include images that were in previous but not in current week at all
 	for image, previous := range previousStats {
-		if _, exists := currentStats[image]; !exists && previous.installations >= minInstallations {
-			movers = append(movers, Mover{
-				Image:                 image,
-				CurrentCount:          0,
-				PreviousCount:         previous.count,
-				Change:                -previous.count,
-				ChangePercentage:      -100.0,
-				CurrentInstallations:  previous.installations, // Show previous count for context
-				PreviousInstallations: previous.installations,
-			})
+		if processedImages[image] {
+			continue
 		}
+		if previous.installations < minInstallations {
+			continue
+		}
+		movers = append(movers, Mover{
+			Image:                 image,
+			CurrentCount:          0,
+			PreviousCount:         previous.count,
+			Change:                -previous.count,
+			ChangePercentage:      -100.0,
+			CurrentInstallations:  0,
+			PreviousInstallations: previous.installations,
+		})
 	}
 
 	// Separate into risers and fallers
