@@ -13,7 +13,7 @@ fi
 
 # Match production telemetry setup from /opt/docker-compose/telemetry
 export DATABASE_URL="${DATABASE_URL:-postgres://postgres:telemetry-postgres-password@localhost:5444/telemetry?sslmode=disable}"
-export PORT="${PORT:-8081}"
+export PORT="${PORT:-3334}"
 export TZ="${TZ:-UTC}"
 export COLLECTOR_AUTH_ENABLED="${COLLECTOR_AUTH_ENABLED:-false}"
 export COLLECTOR_AUTH_USERNAME="${COLLECTOR_AUTH_USERNAME:-collector_user}"
