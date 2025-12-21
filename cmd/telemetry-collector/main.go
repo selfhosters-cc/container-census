@@ -340,18 +340,14 @@ func (s *Server) handleVersionCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Printf("Version check: Failed to parse request body: %v", err)
+		log.Printf("[VERSION CHECK] Failed to parse request: %v", err)
 		respondError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
 
-	log.Printf("Version check: Received request - Installation: %s, Current Version: %s",
-		req.InstallationID, req.CurrentVersion)
-
 	// Validate required fields
 	if req.InstallationID == "" || req.CurrentVersion == "" {
-		log.Printf("Version check: Missing required fields (installation_id=%s, current_version=%s)",
-			req.InstallationID, req.CurrentVersion)
+		log.Printf("[VERSION CHECK] Missing required fields")
 		respondError(w, http.StatusBadRequest, "Missing installation_id or current_version")
 		return
 	}
@@ -365,17 +361,16 @@ func (s *Server) handleVersionCheck(w http.ResponseWriter, r *http.Request) {
 	`, req.InstallationID, req.CurrentVersion)
 
 	if err != nil {
-		log.Printf("Version check: Error recording version check: %v", err)
+		log.Printf("[VERSION CHECK] Error recording to DB: %v", err)
 		// Continue anyway - don't fail the check
 	}
 
 	// Check GitHub API (using existing version package logic)
-	log.Printf("Version check: Querying GitHub for latest release...")
 	info := version.CheckLatestVersion()
 
 	// If there was an error checking GitHub, still return a valid response
 	if info.Error != nil {
-		log.Printf("Version check: ERROR checking GitHub: %v", info.Error)
+		log.Printf("[VERSION CHECK] %s (v%s) - GitHub error: %v", req.InstallationID, req.CurrentVersion, info.Error)
 		respondJSON(w, http.StatusOK, map[string]interface{}{
 			"current_version":  req.CurrentVersion,
 			"latest_version":   "",
@@ -387,14 +382,16 @@ func (s *Server) handleVersionCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Version check: GitHub reports latest version: %s", info.LatestVersion)
-
 	// Compare the requesting server's version against GitHub latest
 	// (not the collector's own version)
 	updateAvailable := version.IsNewerVersion(info.LatestVersion, req.CurrentVersion)
 
-	log.Printf("Version check: Comparison - IsNewerVersion(%s, %s) = %v",
-		info.LatestVersion, req.CurrentVersion, updateAvailable)
+	// Log the version check with result
+	if updateAvailable {
+		log.Printf("[VERSION CHECK] %s: v%s → v%s (update available)", req.InstallationID, req.CurrentVersion, info.LatestVersion)
+	} else {
+		log.Printf("[VERSION CHECK] %s: v%s (up to date)", req.InstallationID, req.CurrentVersion)
+	}
 
 	// Prepare response
 	response := map[string]interface{}{
@@ -404,9 +401,6 @@ func (s *Server) handleVersionCheck(w http.ResponseWriter, r *http.Request) {
 		"release_url":      info.ReleaseURL,
 		"checked_at":       time.Now().UTC(),
 	}
-
-	log.Printf("Version check: Sending response - Current: %s, Latest: %s, Update Available: %v, Release URL: %s",
-		req.CurrentVersion, info.LatestVersion, updateAvailable, info.ReleaseURL)
 
 	// Return version info
 	respondJSON(w, http.StatusOK, response)
