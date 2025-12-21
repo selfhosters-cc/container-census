@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getHealth, clearDismissedVersion, getTelemetryStatus, updateTelemetryEndpoint, createTelemetryEndpoint, deleteTelemetryEndpoint, testTelemetryEndpoint } from '@/lib/api';
+import { getHealth, checkVersion, clearDismissedVersion, getTelemetryStatus, updateTelemetryEndpoint, createTelemetryEndpoint, deleteTelemetryEndpoint, testTelemetryEndpoint } from '@/lib/api';
 import type { HealthStatus, VersionCheckResponse, TelemetryEndpoint, TelemetryEndpointCreate } from '@/types';
 
 interface Settings {
@@ -117,21 +117,13 @@ export default function SettingsPage() {
       // Clear any previous dismissals when manually checking
       await clearDismissedVersion();
 
-      // Refresh health status (which includes version check from server)
+      // Trigger fresh version check via collector
+      const versionData = await checkVersion();
+      setVersionInfo(versionData);
+
+      // Also refresh health status to update header
       const healthData = await getHealth();
       setHealth(healthData);
-
-      // Convert health data to version info format
-      if (healthData.update_available !== undefined && healthData.latest_version) {
-        const versionData: VersionCheckResponse = {
-          current_version: healthData.version,
-          latest_version: healthData.latest_version,
-          update_available: healthData.update_available,
-          release_url: healthData.release_url || '',
-          checked_at: new Date().toISOString()
-        };
-        setVersionInfo(versionData);
-      }
 
       // Show modal with results
       setShowUpdateModal(true);

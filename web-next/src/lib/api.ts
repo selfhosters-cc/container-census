@@ -245,47 +245,9 @@ export const getContainerLifecycleSummaries = (limit: number = 200, hostId?: num
   return fetchApi<import('@/types').ContainerLifecycleSummary[]>(`/containers/lifecycle?${params}`);
 };
 
-// Version checking via telemetry collector
-export const checkVersion = async (): Promise<import('@/types').VersionCheckResponse> => {
-  // Get installation ID from health endpoint
-  const health = await fetchApi<import('@/types').HealthStatus>('/health');
-
-  // Get installation ID from localStorage or generate
-  let installationId: string = localStorage.getItem('installation_id') || '';
-  if (!installationId) {
-    // Try to fetch from server
-    const response = await fetch('/api/installation-id', {
-      credentials: 'include',
-    });
-    if (response.ok) {
-      const data = await response.json();
-      installationId = data.installation_id || 'browser-' + Math.random().toString(36).substring(2);
-    } else {
-      // Fallback: use a browser-specific ID
-      installationId = 'browser-' + Math.random().toString(36).substring(2);
-    }
-    localStorage.setItem('installation_id', installationId);
-  }
-
-  // Call telemetry collector (public endpoint)
-  const collectorUrl = process.env.NEXT_PUBLIC_TELEMETRY_COLLECTOR_URL ||
-                       'https://telemetry.container-census.com';
-
-  const response = await fetch(`${collectorUrl}/api/version/check`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      installation_id: installationId,
-      current_version: health.version
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error('Version check failed');
-  }
-
-  return response.json();
-};
+// Version checking via server (which calls telemetry collector)
+export const checkVersion = () =>
+  fetchApi<import('@/types').VersionCheckResponse>('/version/check', { method: 'POST' });
 
 // Dismissed version preferences
 export const getDismissedVersion = () =>

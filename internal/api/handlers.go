@@ -310,6 +310,9 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/preferences/dismiss-version", s.handleDismissVersion).Methods("POST")
 	api.HandleFunc("/preferences/dismissed-version", s.handleClearDismissedVersion).Methods("DELETE")
 
+	// Version check endpoint (triggers fresh check via collector)
+	api.HandleFunc("/version/check", s.handleVersionCheck).Methods("POST")
+
 	// Danger Zone endpoints (destructive operations)
 	api.HandleFunc("/settings/reset", s.handleResetSettings).Methods("POST")
 	api.HandleFunc("/settings/clear-history", s.handleClearContainerHistory).Methods("POST")
@@ -1028,6 +1031,51 @@ func (s *Server) handleInstallationID(w http.ResponseWriter, r *http.Request) {
 
 	respondJSON(w, http.StatusOK, map[string]string{
 		"installation_id": strings.TrimSpace(string(id)),
+	})
+}
+
+// handleVersionCheck triggers a fresh version check via the telemetry collector
+func (s *Server) handleVersionCheck(w http.ResponseWriter, r *http.Request) {
+	// Get installation ID
+	installationIDFile := "/app/data/.installation_id"
+	if _, err := os.Stat("/app/data"); os.IsNotExist(err) {
+		installationIDFile = "./data/.installation_id"
+	}
+
+	installationID := ""
+	if data, err := os.ReadFile(installationIDFile); err == nil {
+		installationID = strings.TrimSpace(string(data))
+	}
+	if installationID == "" {
+		installationID = "unknown"
+	}
+
+	// Get collector URL - use community collector by default
+	collectorURL := os.Getenv("VERSION_CHECK_COLLECTOR_URL")
+	if collectorURL == "" {
+		collectorURL = "https://cc-telemetry.selfhosters.cc"
+	}
+
+	// Invalidate cache to force fresh check
+	version.InvalidateCache()
+
+	// Perform version check
+	updateInfo := version.CheckViaCollector(collectorURL, installationID)
+	if updateInfo.Error != nil {
+		respondError(w, http.StatusInternalServerError, "Version check failed: "+updateInfo.Error.Error())
+		return
+	}
+
+	// Recompute update_available based on current version
+	currentVersion := version.Get()
+	updateAvailable := version.IsNewerVersion(updateInfo.LatestVersion, currentVersion)
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"current_version":  currentVersion,
+		"latest_version":   updateInfo.LatestVersion,
+		"update_available": updateAvailable,
+		"release_url":      updateInfo.ReleaseURL,
+		"checked_at":       updateInfo.CheckedAt,
 	})
 }
 
