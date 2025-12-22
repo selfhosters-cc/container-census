@@ -16,9 +16,15 @@ NC='\033[0m' # No Color
 # Version file location
 VERSION_FILE="./.version"
 
-# Ntfy configuration
-NTFY_SERVER=""
-NTFY_TOPIC=""
+# Load configuration from .env file if it exists
+SCRIPT_DIR_ENV="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR_ENV/.env" ]; then
+    source "$SCRIPT_DIR_ENV/.env"
+fi
+
+# Ntfy configuration (can be overridden by .env or environment)
+NTFY_SERVER="${NTFY_SERVER:-}"
+NTFY_TOPIC="${NTFY_TOPIC:-}"
 
 # Function to print colored output
 print_info() {
@@ -45,8 +51,11 @@ print_header() {
     echo ""
 }
 
-# Function to send ntfy notification
+# Function to send ntfy notification (no-op if not configured)
 notify() {
+    # Skip if ntfy is not configured
+    [ -z "$NTFY_SERVER" ] || [ -z "$NTFY_TOPIC" ] && return 0
+
     local title="$1"
     local message="$2"
     local priority="${3:-default}"
@@ -405,7 +414,11 @@ if [ "$PUSH_TO_REGISTRY" = true ]; then
     [ "$CREATE_RELEASE" = true ] && echo -e "Release:   ${GREEN}✓${NC} Create GitHub Release"
 fi
 echo ""
-echo -e "Notifications: ${CYAN}https://${NTFY_SERVER}/${NTFY_TOPIC}${NC}"
+if [ -n "$NTFY_SERVER" ] && [ -n "$NTFY_TOPIC" ]; then
+    echo -e "Notifications: ${CYAN}https://${NTFY_SERVER}/${NTFY_TOPIC}${NC}"
+else
+    echo -e "Notifications: ${YELLOW}○${NC} Not configured (see scripts/.env.example)"
+fi
 echo ""
 read -p "Proceed with build? (Y/n): " confirm
 
