@@ -668,6 +668,66 @@ func (s *Scanner) PullImage(ctx context.Context, host models.Host, imageName str
 	return nil
 }
 
+// PullProgressCallback is called with progress updates during image pull
+// layerID is the Docker layer ID (short hash)
+// status is the current operation (e.g., "Downloading", "Extracting", "Pull complete")
+// current and total are byte counts for download/extract progress
+type PullProgressCallback func(layerID string, status string, current, total int64)
+
+// PullImageWithProgress pulls an image and reports progress via callback
+func (s *Scanner) PullImageWithProgress(ctx context.Context, host models.Host, imageName string, onProgress PullProgressCallback) error {
+	if isAgentHost(host.Address) {
+		return s.pullAgentImageWithProgress(ctx, host, imageName, onProgress)
+	}
+
+	dockerClient, err := s.createClient(host.Address)
+	if err != nil {
+		return fmt.Errorf("failed to create docker client: %w", err)
+	}
+	defer dockerClient.Close()
+
+	// Pull the image with extended timeout
+	pullCtx, cancel := context.WithTimeout(ctx, imagePullTimeout)
+	defer cancel()
+
+	reader, err := dockerClient.ImagePull(pullCtx, imageName, imagetypes.PullOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to pull image: %w", err)
+	}
+	defer reader.Close()
+
+	// Decode progress events from Docker
+	decoder := json.NewDecoder(reader)
+	for {
+		var msg struct {
+			Status         string `json:"status"`
+			ID             string `json:"id"`
+			ProgressDetail struct {
+				Current int64 `json:"current"`
+				Total   int64 `json:"total"`
+			} `json:"progressDetail"`
+			Error string `json:"error"`
+		}
+
+		if err := decoder.Decode(&msg); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("failed to decode progress: %w", err)
+		}
+
+		if msg.Error != "" {
+			return fmt.Errorf("pull failed: %s", msg.Error)
+		}
+
+		if onProgress != nil && msg.ID != "" {
+			onProgress(msg.ID, msg.Status, msg.ProgressDetail.Current, msg.ProgressDetail.Total)
+		}
+	}
+
+	return nil
+}
+
 // RecreateContainer recreates a container with a new image while preserving configuration
 func (s *Scanner) RecreateContainer(ctx context.Context, host models.Host, containerID string, dryRun bool) (*models.ContainerRecreateResult, error) {
 	if isAgentHost(host.Address) {

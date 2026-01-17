@@ -47,6 +47,7 @@ type Server struct {
 	pluginManager         *plugins.Manager
 	apiRouter             *mux.Router // Subrouter for /api with auth middleware
 	jobManager            *UpdateJobManager
+	pullJobManager        *PullJobManager
 }
 
 // TelemetryScheduler interface for submitting telemetry on demand
@@ -65,6 +66,7 @@ func New(db *storage.DB, scanner *scanner.Scanner, scanInterval int, authConfig 
 		scanInterval:   scanInterval,
 		authConfig:     authConfig,
 		jobManager:     NewUpdateJobManager(),
+		pullJobManager: NewPullJobManager(),
 	}
 
 	s.setupRoutes()
@@ -99,6 +101,7 @@ func (s *Server) SetNotificationService(ns *notifications.NotificationService) {
 // CleanupOldUpdateJobs removes old update check jobs from memory
 func (s *Server) CleanupOldUpdateJobs() {
 	s.jobManager.CleanupOldJobs()
+	s.pullJobManager.CleanupOldJobs()
 }
 
 // RestartTelemetry stops and restarts the telemetry scheduler with new configuration
@@ -239,6 +242,7 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/containers/bulk-check-updates", s.handleBulkCheckUpdates).Methods("POST")
 	api.HandleFunc("/containers/check-progress/{job_id}", s.handleCheckProgress).Methods("GET")
 	api.HandleFunc("/containers/bulk-update", s.handleBulkUpdate).Methods("POST")
+	api.HandleFunc("/containers/pull-progress/{job_id}", s.handlePullProgress).Methods("GET")
 
 	// Scan endpoints
 	api.HandleFunc("/scan", s.handleTriggerScan).Methods("POST")
@@ -2068,8 +2072,9 @@ func (s *Server) handleUpdateContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check for dry_run parameter
+	// Check for dry_run and stream_progress parameters
 	dryRun := r.URL.Query().Get("dry_run") == "true"
+	streamProgress := r.URL.Query().Get("stream_progress") == "true"
 
 	// Get host
 	host, err := s.db.GetHost(hostID)
@@ -2099,14 +2104,29 @@ func (s *Server) handleUpdateContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Determine image to pull
+	imageToPull := container.Image
+	if len(container.ImageTags) > 0 {
+		imageToPull = container.ImageTags[0]
+	}
+
+	// If streaming progress is requested, use async job-based flow
+	if streamProgress && !dryRun {
+		jobID := s.pullJobManager.CreateJob(imageToPull, hostID, host.Name, container.ID)
+
+		// Launch goroutine to perform update with progress tracking
+		go s.performUpdateWithProgress(jobID, *host, container, imageToPull)
+
+		// Return job ID immediately
+		respondJSON(w, http.StatusOK, map[string]string{
+			"job_id": jobID,
+		})
+		return
+	}
+
+	// Original blocking flow
 	if !dryRun {
-		// Pull the new image first
-		// Use the first image tag if available (container.Image might be a digest like sha256:...)
-		imageToPull := container.Image
-		if len(container.ImageTags) > 0 {
-			imageToPull = container.ImageTags[0]
-		}
-		log.Printf("Pulling image %s on host %s", imageToPull, host.Name)
+		log.Printf("Pulling image %s on host %s (this may take up to 10 minutes for large images)", imageToPull, host.Name)
 		if err := s.scanner.PullImage(r.Context(), *host, imageToPull); err != nil {
 			respondError(w, http.StatusInternalServerError, "Failed to pull image: "+err.Error())
 			return
@@ -2132,6 +2152,46 @@ func (s *Server) handleUpdateContainer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, result)
+}
+
+// performUpdateWithProgress performs container update with progress tracking
+func (s *Server) performUpdateWithProgress(jobID string, host models.Host, container *models.Container, imageToPull string) {
+	ctx := context.Background()
+
+	// Pull image with progress callback
+	s.pullJobManager.SetMessage(jobID, "Pulling image...")
+	log.Printf("Pulling image %s on host %s with progress tracking", imageToPull, host.Name)
+
+	err := s.scanner.PullImageWithProgress(ctx, host, imageToPull, func(layerID, status string, current, total int64) {
+		s.pullJobManager.UpdateLayerProgress(jobID, layerID, status, current, total)
+	})
+
+	if err != nil {
+		log.Printf("Failed to pull image: %v", err)
+		s.pullJobManager.SetError(jobID, err)
+		return
+	}
+
+	// Recreate container
+	s.pullJobManager.SetMessage(jobID, "Recreating container...")
+	_, err = s.scanner.RecreateContainer(ctx, host, container.Name, false)
+	if err != nil {
+		log.Printf("Failed to recreate container: %v", err)
+		s.pullJobManager.SetError(jobID, fmt.Errorf("image pulled but failed to recreate container: %w", err))
+		return
+	}
+
+	// Trigger scan to update state
+	s.pullJobManager.SetMessage(jobID, "Scanning host...")
+	go func() {
+		log.Printf("Triggering scan for host %s after container update", host.Name)
+		if _, err := s.scanner.ScanHost(ctx, host); err != nil {
+			log.Printf("Failed to scan host after update: %v", err)
+		}
+	}()
+
+	s.pullJobManager.SetMessage(jobID, "Container updated successfully")
+	s.pullJobManager.CompleteJob(jobID)
 }
 
 // handleBulkCheckUpdates checks multiple containers for updates (async with job tracking)
@@ -2330,6 +2390,79 @@ func (s *Server) handleCheckProgress(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handlePullProgress streams progress updates for an image pull job via Server-Sent Events
+func (s *Server) handlePullProgress(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	jobID := vars["job_id"]
+
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("X-Accel-Buffering", "no") // Disable nginx buffering
+
+	// Check if streaming is supported
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	// Poll job state every 250ms (more frequent for responsive progress)
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			// Client disconnected
+			return
+		case <-ticker.C:
+			snapshot, err := s.pullJobManager.GetJobSnapshot(jobID)
+			if err != nil {
+				// Job not found
+				errorData := map[string]string{"error": err.Error()}
+				jsonData, _ := json.Marshal(errorData)
+				fmt.Fprintf(w, "event: error\ndata: %s\n\n", jsonData)
+				flusher.Flush()
+				return
+			}
+
+			// Send progress event
+			progressData := map[string]interface{}{
+				"status":           snapshot["status"],
+				"image_name":       snapshot["image_name"],
+				"host_name":        snapshot["host_name"],
+				"layers":           snapshot["layers"],
+				"layer_count":      snapshot["layer_count"],
+				"completed_layers": snapshot["completed_layers"],
+				"total_bytes":      snapshot["total_bytes"],
+				"downloaded_bytes": snapshot["downloaded_bytes"],
+				"overall_percent":  snapshot["overall_percent"],
+				"message":          snapshot["message"],
+			}
+			jsonData, _ := json.Marshal(progressData)
+			fmt.Fprintf(w, "event: progress\ndata: %s\n\n", jsonData)
+			flusher.Flush()
+
+			// If job is complete or errored, send final event and close
+			status := snapshot["status"].(string)
+			if status == "complete" || status == "error" {
+				completeData := map[string]interface{}{
+					"status":  status,
+					"error":   snapshot["error"],
+					"message": snapshot["message"],
+				}
+				jsonData, _ := json.Marshal(completeData)
+				fmt.Fprintf(w, "event: complete\ndata: %s\n\n", jsonData)
+				flusher.Flush()
+				return
+			}
+		}
+	}
+}
+
 // handleBulkUpdate updates multiple containers
 func (s *Server) handleBulkUpdate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -2389,7 +2522,7 @@ func (s *Server) handleBulkUpdate(w http.ResponseWriter, r *http.Request) {
 		if len(container.ImageTags) > 0 {
 			imageToPull = container.ImageTags[0]
 		}
-		log.Printf("Pulling image %s on host %s", imageToPull, host.Name)
+		log.Printf("Pulling image %s on host %s (this may take up to 10 minutes for large images)", imageToPull, host.Name)
 		if err := s.scanner.PullImage(r.Context(), *host, imageToPull); err != nil {
 			results[fmt.Sprintf("%d-%s", c.HostID, c.ContainerID)] = map[string]interface{}{
 				"success": false,

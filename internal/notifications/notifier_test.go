@@ -884,6 +884,234 @@ func TestAnomalyDetection(t *testing.T) {
 	}
 }
 
+// TestSilenceMatches_Recurring tests that recurring silences work correctly
+func TestSilenceMatches_Recurring(t *testing.T) {
+	ns, db := setupTestNotifier(t)
+
+	host := models.Host{Name: "test-host", Address: "unix:///", Enabled: true}
+	hostID, err := db.AddHost(host)
+	if err != nil {
+		t.Fatalf("Failed to add host: %v", err)
+	}
+	host.ID = hostID
+
+	// Create a recurring silence that covers the current time
+	// We'll create one that covers 00:00-23:59 to ensure it's active during tests
+	recurringSilence := &models.NotificationSilence{
+		HostID:           &host.ID,
+		ContainerPattern: "recurring-*",
+		SilencedUntil:    time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC),
+		Reason:           "Test recurring silence",
+		IsRecurring:      true,
+		DailyStartTime:   "00:00",
+		DailyEndTime:     "23:59",
+		Timezone:         "UTC",
+	}
+	if err := db.SaveNotificationSilence(recurringSilence); err != nil {
+		t.Fatalf("Failed to save recurring silence: %v", err)
+	}
+
+	// Create a one-time silence for comparison
+	onetimeSilence := &models.NotificationSilence{
+		HostID:           &host.ID,
+		ContainerPattern: "onetime-*",
+		SilencedUntil:    time.Now().Add(1 * time.Hour),
+		Reason:           "Test one-time silence",
+		IsRecurring:      false,
+	}
+	if err := db.SaveNotificationSilence(onetimeSilence); err != nil {
+		t.Fatalf("Failed to save one-time silence: %v", err)
+	}
+
+	// Test events that should be silenced by recurring pattern
+	event1 := models.NotificationEvent{
+		ContainerID:   "recurring1",
+		ContainerName: "recurring-test",
+		HostID:        host.ID,
+		HostName:      host.Name,
+		EventType:     "container_stopped",
+		Timestamp:     time.Now(),
+	}
+
+	// Test event that should be silenced by one-time pattern
+	event2 := models.NotificationEvent{
+		ContainerID:   "onetime1",
+		ContainerName: "onetime-test",
+		HostID:        host.ID,
+		HostName:      host.Name,
+		EventType:     "container_stopped",
+		Timestamp:     time.Now(),
+	}
+
+	// Test event that should NOT be silenced
+	event3 := models.NotificationEvent{
+		ContainerID:   "active1",
+		ContainerName: "active-test",
+		HostID:        host.ID,
+		HostName:      host.Name,
+		EventType:     "container_stopped",
+		Timestamp:     time.Now(),
+	}
+
+	// Check silence matching directly
+	silences, err := db.GetActiveSilences()
+	if err != nil {
+		t.Fatalf("GetActiveSilences failed: %v", err)
+	}
+
+	if len(silences) != 2 {
+		t.Fatalf("Expected 2 active silences, got %d", len(silences))
+	}
+
+	// Test silenceMatches function
+	matchRecurring := false
+	matchOnetime := false
+	matchActive := false
+
+	for _, silence := range silences {
+		if ns.silenceMatches(silence, event1) {
+			matchRecurring = true
+		}
+		if ns.silenceMatches(silence, event2) {
+			matchOnetime = true
+		}
+		if ns.silenceMatches(silence, event3) {
+			matchActive = true
+		}
+	}
+
+	if !matchRecurring {
+		t.Error("Expected recurring-test to be silenced by recurring silence")
+	}
+	if !matchOnetime {
+		t.Error("Expected onetime-test to be silenced by one-time silence")
+	}
+	if matchActive {
+		t.Error("active-test should NOT be silenced")
+	}
+}
+
+// TestSilenceMatches_RecurringOutsideWindow tests that recurring silences don't match outside window
+func TestSilenceMatches_RecurringOutsideWindow(t *testing.T) {
+	ns, db := setupTestNotifier(t)
+
+	host := models.Host{Name: "test-host", Address: "unix:///", Enabled: true}
+	hostID, err := db.AddHost(host)
+	if err != nil {
+		t.Fatalf("Failed to add host: %v", err)
+	}
+	host.ID = hostID
+
+	// Create a recurring silence with a very narrow window that won't include current time
+	// Use a time window that's definitely not now (e.g., if it's daytime, use 03:00-04:00)
+	currentHour := time.Now().UTC().Hour()
+	// Pick a window that's at least 12 hours away from current time
+	windowStart := (currentHour + 12) % 24
+	windowEnd := (currentHour + 13) % 24
+
+	recurringSilence := &models.NotificationSilence{
+		HostID:           &host.ID,
+		ContainerPattern: "narrow-*",
+		SilencedUntil:    time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC),
+		Reason:           "Narrow window silence",
+		IsRecurring:      true,
+		DailyStartTime:   time.Date(0, 1, 1, windowStart, 0, 0, 0, time.UTC).Format("15:04"),
+		DailyEndTime:     time.Date(0, 1, 1, windowEnd, 0, 0, 0, time.UTC).Format("15:04"),
+		Timezone:         "UTC",
+	}
+	if err := db.SaveNotificationSilence(recurringSilence); err != nil {
+		t.Fatalf("Failed to save recurring silence: %v", err)
+	}
+
+	event := models.NotificationEvent{
+		ContainerID:   "narrow1",
+		ContainerName: "narrow-test",
+		HostID:        host.ID,
+		HostName:      host.Name,
+		EventType:     "container_stopped",
+		Timestamp:     time.Now(),
+	}
+
+	silences, err := db.GetActiveSilences()
+	if err != nil {
+		t.Fatalf("GetActiveSilences failed: %v", err)
+	}
+
+	// The silence should be retrieved (it's "active" in terms of not expired)
+	if len(silences) == 0 {
+		t.Fatal("Expected to get the recurring silence from DB")
+	}
+
+	// But silenceMatches should return false because we're outside the daily window
+	matched := false
+	for _, silence := range silences {
+		if ns.silenceMatches(silence, event) {
+			matched = true
+		}
+	}
+
+	if matched {
+		t.Errorf("Recurring silence should NOT match outside its daily window (%02d:00-%02d:00 UTC)",
+			windowStart, windowEnd)
+	}
+}
+
+// TestSilenceMatches_RecurringExpired tests that expired recurring silences don't match
+func TestSilenceMatches_RecurringExpired(t *testing.T) {
+	ns, db := setupTestNotifier(t)
+
+	host := models.Host{Name: "test-host", Address: "unix:///", Enabled: true}
+	hostID, err := db.AddHost(host)
+	if err != nil {
+		t.Fatalf("Failed to add host: %v", err)
+	}
+	host.ID = hostID
+
+	// Create a recurring silence that has expired overall
+	pastExpiry := time.Now().Add(-1 * time.Hour)
+	expiredRecurringSilence := &models.NotificationSilence{
+		HostID:             &host.ID,
+		ContainerPattern:   "expired-*",
+		SilencedUntil:      time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC),
+		Reason:             "Expired recurring",
+		IsRecurring:        true,
+		DailyStartTime:     "00:00",
+		DailyEndTime:       "23:59",
+		Timezone:           "UTC",
+		RecurringExpiresAt: &pastExpiry,
+	}
+	if err := db.SaveNotificationSilence(expiredRecurringSilence); err != nil {
+		t.Fatalf("Failed to save expired recurring silence: %v", err)
+	}
+
+	event := models.NotificationEvent{
+		ContainerID:   "expired1",
+		ContainerName: "expired-test",
+		HostID:        host.ID,
+		HostName:      host.Name,
+		EventType:     "container_stopped",
+		Timestamp:     time.Now(),
+	}
+
+	// The expired silence should NOT be returned by GetActiveSilences
+	silences, err := db.GetActiveSilences()
+	if err != nil {
+		t.Fatalf("GetActiveSilences failed: %v", err)
+	}
+
+	// Verify the expired silence is filtered out at DB level
+	for _, silence := range silences {
+		if silence.ContainerPattern == "expired-*" {
+			t.Error("Expired recurring silence should not be returned by GetActiveSilences")
+		}
+	}
+
+	// Even if it were somehow returned, silenceMatches should return false
+	if ns.silenceMatches(*expiredRecurringSilence, event) {
+		t.Error("silenceMatches should return false for expired recurring silence")
+	}
+}
+
 // TestDisabledRule tests that disabled rules don't generate notifications
 func TestDisabledRule(t *testing.T) {
 	ns, db := setupTestNotifier(t)

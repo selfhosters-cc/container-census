@@ -412,12 +412,17 @@ func (db *DB) ClearAllNotifications() error {
 }
 
 // GetActiveSilences retrieves active notification silences
+// For one-time silences: silenced_until > now
+// For recurring silences: no overall expiry OR recurring_expires_at > now
 func (db *DB) GetActiveSilences() ([]models.NotificationSilence, error) {
+	// Use datetime() to normalize timestamp comparison (handles ISO8601 with timezone offsets)
 	rows, err := db.conn.Query(`
 		SELECT id, host_id, container_id, container_name, host_pattern, container_pattern,
-		       silenced_until, reason, created_at
+		       silenced_until, reason, created_at,
+		       is_recurring, daily_start_time, daily_end_time, timezone, recurring_expires_at
 		FROM notification_silences
-		WHERE silenced_until > datetime('now')
+		WHERE (is_recurring = 0 AND datetime(silenced_until) > datetime('now'))
+		   OR (is_recurring = 1 AND (recurring_expires_at IS NULL OR datetime(recurring_expires_at) > datetime('now')))
 		ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -431,10 +436,13 @@ func (db *DB) GetActiveSilences() ([]models.NotificationSilence, error) {
 		var s models.NotificationSilence
 		var hostID sql.NullInt64
 		var containerID, containerName, hostPattern, containerPattern, reason sql.NullString
+		var dailyStartTime, dailyEndTime, timezone sql.NullString
+		var recurringExpiresAt sql.NullTime
 
 		err := rows.Scan(
 			&s.ID, &hostID, &containerID, &containerName, &hostPattern, &containerPattern,
 			&s.SilencedUntil, &reason, &s.CreatedAt,
+			&s.IsRecurring, &dailyStartTime, &dailyEndTime, &timezone, &recurringExpiresAt,
 		)
 		if err != nil {
 			return nil, err
@@ -459,6 +467,19 @@ func (db *DB) GetActiveSilences() ([]models.NotificationSilence, error) {
 		if reason.Valid {
 			s.Reason = reason.String
 		}
+		if dailyStartTime.Valid {
+			s.DailyStartTime = dailyStartTime.String
+		}
+		if dailyEndTime.Valid {
+			s.DailyEndTime = dailyEndTime.String
+		}
+		if timezone.Valid {
+			s.Timezone = timezone.String
+		}
+		if recurringExpiresAt.Valid {
+			t := recurringExpiresAt.Time
+			s.RecurringExpiresAt = &t
+		}
 
 		silences = append(silences, s)
 	}
@@ -470,10 +491,12 @@ func (db *DB) GetActiveSilences() ([]models.NotificationSilence, error) {
 func (db *DB) SaveNotificationSilence(silence *models.NotificationSilence) error {
 	result, err := db.conn.Exec(`
 		INSERT INTO notification_silences
-		(host_id, container_id, container_name, host_pattern, container_pattern, silenced_until, reason)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		(host_id, container_id, container_name, host_pattern, container_pattern, silenced_until, reason,
+		 is_recurring, daily_start_time, daily_end_time, timezone, recurring_expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, silence.HostID, silence.ContainerID, silence.ContainerName, silence.HostPattern,
-		silence.ContainerPattern, silence.SilencedUntil, silence.Reason)
+		silence.ContainerPattern, silence.SilencedUntil, silence.Reason,
+		silence.IsRecurring, silence.DailyStartTime, silence.DailyEndTime, silence.Timezone, silence.RecurringExpiresAt)
 
 	if err != nil {
 		return err

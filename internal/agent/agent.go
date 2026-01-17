@@ -582,8 +582,11 @@ func (a *Agent) handlePruneImages(w http.ResponseWriter, r *http.Request) {
 }
 
 // Pull image handler
+// Supports optional streaming via ?stream=true query parameter
+// When streaming, returns newline-delimited JSON (NDJSON) with Docker pull progress events
 func (a *Agent) handlePullImage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	stream := r.URL.Query().Get("stream") == "true"
 
 	var req struct {
 		Image string `json:"image"`
@@ -607,17 +610,57 @@ func (a *Agent) handlePullImage(w http.ResponseWriter, r *http.Request) {
 	}
 	defer reader.Close()
 
-	// Read the output to ensure the pull completes
-	_, err = io.Copy(io.Discard, reader)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to complete image pull: "+err.Error())
-		return
-	}
+	if stream {
+		// Stream progress events as NDJSON
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("X-Accel-Buffering", "no") // Disable nginx buffering
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			respondError(w, http.StatusInternalServerError, "Streaming not supported")
+			return
+		}
 
-	respondJSON(w, http.StatusOK, map[string]string{
-		"message": "Image pulled successfully",
-		"image":   req.Image,
-	})
+		// Decode and forward each JSON message from Docker
+		decoder := json.NewDecoder(reader)
+		encoder := json.NewEncoder(w)
+		for {
+			var msg map[string]interface{}
+			if err := decoder.Decode(&msg); err != nil {
+				if err == io.EOF {
+					break
+				}
+				// Send error as final message
+				encoder.Encode(map[string]interface{}{
+					"error": err.Error(),
+				})
+				flusher.Flush()
+				return
+			}
+			encoder.Encode(msg)
+			flusher.Flush()
+		}
+
+		// Send completion message
+		encoder.Encode(map[string]interface{}{
+			"status":  "complete",
+			"message": "Image pulled successfully",
+			"image":   req.Image,
+		})
+		flusher.Flush()
+	} else {
+		// Original behavior - discard stream, wait for completion
+		_, err = io.Copy(io.Discard, reader)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "Failed to complete image pull: "+err.Error())
+			return
+		}
+
+		respondJSON(w, http.StatusOK, map[string]string{
+			"message": "Image pulled successfully",
+			"image":   req.Image,
+		})
+	}
 }
 
 // Recreate container handler

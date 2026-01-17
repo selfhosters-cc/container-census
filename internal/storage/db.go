@@ -579,6 +579,31 @@ func (db *DB) runMigrations() error {
 		}
 	}
 
+	// Check if is_recurring column exists in notification_silences (for recurring silences)
+	var isRecurringExists int
+	err = db.conn.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('notification_silences') WHERE name = 'is_recurring'`).Scan(&isRecurringExists)
+	if err != nil {
+		return err
+	}
+
+	if isRecurringExists == 0 {
+		recurringSilenceMigrations := []string{
+			`ALTER TABLE notification_silences ADD COLUMN is_recurring BOOLEAN NOT NULL DEFAULT 0`,
+			`ALTER TABLE notification_silences ADD COLUMN daily_start_time TEXT`,
+			`ALTER TABLE notification_silences ADD COLUMN daily_end_time TEXT`,
+			`ALTER TABLE notification_silences ADD COLUMN timezone TEXT DEFAULT 'UTC'`,
+			`ALTER TABLE notification_silences ADD COLUMN recurring_expires_at TIMESTAMP`,
+		}
+
+		for _, migration := range recurringSilenceMigrations {
+			if _, err := db.conn.Exec(migration); err != nil {
+				if !isSQLiteRecurringSilenceColumnExistsError(err) {
+					return err
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -615,6 +640,16 @@ func isSQLiteUpdateColumnExistsError(err error) bool {
 	return err != nil && (
 		err.Error() == "duplicate column name: update_available" ||
 		err.Error() == "duplicate column name: last_update_check")
+}
+
+// isSQLiteRecurringSilenceColumnExistsError checks if error is about duplicate recurring silence column
+func isSQLiteRecurringSilenceColumnExistsError(err error) bool {
+	return err != nil && (
+		err.Error() == "duplicate column name: is_recurring" ||
+		err.Error() == "duplicate column name: daily_start_time" ||
+		err.Error() == "duplicate column name: daily_end_time" ||
+		err.Error() == "duplicate column name: timezone" ||
+		err.Error() == "duplicate column name: recurring_expires_at")
 }
 
 // Host operations

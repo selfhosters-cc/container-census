@@ -269,6 +269,475 @@ function ChannelFormModal({ isOpen, onClose, onSubmit, editChannel }: ChannelFor
   );
 }
 
+interface RuleFormModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSubmit: (rule: Partial<NotificationRule>) => Promise<void>;
+  editRule?: NotificationRule | null;
+  channels: NotificationChannel[];
+}
+
+const EVENT_TYPES = [
+  { value: 'container_started', label: 'Container Started' },
+  { value: 'container_stopped', label: 'Container Stopped' },
+  { value: 'new_image', label: 'New Image' },
+  { value: 'high_cpu', label: 'High CPU' },
+  { value: 'high_memory', label: 'High Memory' },
+  { value: 'image_update_available', label: 'Update Available' },
+];
+
+function RuleFormModal({ isOpen, onClose, onSubmit, editRule, channels }: RuleFormModalProps) {
+  const [name, setName] = useState('');
+  const [enabled, setEnabled] = useState(true);
+  const [eventTypes, setEventTypes] = useState<string[]>([]);
+  const [containerPattern, setContainerPattern] = useState('');
+  const [imagePattern, setImagePattern] = useState('');
+  const [cpuThreshold, setCpuThreshold] = useState('');
+  const [memoryThreshold, setMemoryThreshold] = useState('');
+  const [cooldownPeriod, setCooldownSeconds] = useState('300');
+  const [channelIds, setChannelIds] = useState<number[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (editRule) {
+      setName(editRule.name);
+      setEnabled(editRule.enabled);
+      setEventTypes(editRule.event_types || []);
+      setContainerPattern(editRule.container_pattern || '');
+      setImagePattern(editRule.image_pattern || '');
+      setCpuThreshold(editRule.cpu_threshold?.toString() || '');
+      setMemoryThreshold(editRule.memory_threshold?.toString() || '');
+      setCooldownSeconds(editRule.cooldown_period?.toString() || '300');
+      setChannelIds(editRule.channel_ids || []);
+    } else {
+      setName('');
+      setEnabled(true);
+      setEventTypes([]);
+      setContainerPattern('');
+      setImagePattern('');
+      setCpuThreshold('');
+      setMemoryThreshold('');
+      setCooldownSeconds('300');
+      setChannelIds([]);
+    }
+  }, [editRule, isOpen]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (eventTypes.length === 0) {
+      alert('Please select at least one event type');
+      return;
+    }
+    if (channelIds.length === 0) {
+      alert('Please select at least one channel');
+      return;
+    }
+    setLoading(true);
+    try {
+      await onSubmit({
+        name,
+        enabled,
+        event_types: eventTypes,
+        container_pattern: containerPattern || undefined,
+        image_pattern: imagePattern || undefined,
+        cpu_threshold: cpuThreshold ? parseFloat(cpuThreshold) : undefined,
+        memory_threshold: memoryThreshold ? parseFloat(memoryThreshold) : undefined,
+        cooldown_period: parseInt(cooldownPeriod) || 300,
+        channel_ids: channelIds,
+      });
+      onClose();
+    } catch (error) {
+      console.error('Failed to save rule:', error);
+      alert('Failed to save rule');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggleEventType = (type: string) => {
+    setEventTypes(prev =>
+      prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+    );
+  };
+
+  const toggleChannel = (id: number) => {
+    setChannelIds(prev =>
+      prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]
+    );
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
+        <h2 className="text-xl font-bold mb-4">{editRule ? 'Edit Rule' : 'Add Rule'}</h2>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm text-[var(--text-tertiary)] mb-1">Name</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+              className="w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-3 py-2"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm text-[var(--text-tertiary)] mb-1">Event Types</label>
+            <div className="flex flex-wrap gap-2">
+              {EVENT_TYPES.map(et => (
+                <label key={et.value} className="flex items-center gap-1 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={eventTypes.includes(et.value)}
+                    onChange={() => toggleEventType(et.value)}
+                  />
+                  {et.label}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm text-[var(--text-tertiary)] mb-1">Channels</label>
+            <div className="flex flex-wrap gap-2">
+              {channels.map(ch => (
+                <label key={ch.id} className="flex items-center gap-1 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={channelIds.includes(ch.id)}
+                    onChange={() => toggleChannel(ch.id)}
+                  />
+                  {ch.name}
+                </label>
+              ))}
+            </div>
+            {channels.length === 0 && (
+              <p className="text-xs text-[var(--text-tertiary)]">No channels configured. Add a channel first.</p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-[var(--text-tertiary)] mb-1">Container Pattern</label>
+              <input
+                type="text"
+                value={containerPattern}
+                onChange={(e) => setContainerPattern(e.target.value)}
+                placeholder="e.g., web-*"
+                className="w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-3 py-2"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-[var(--text-tertiary)] mb-1">Image Pattern</label>
+              <input
+                type="text"
+                value={imagePattern}
+                onChange={(e) => setImagePattern(e.target.value)}
+                placeholder="e.g., nginx:*"
+                className="w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-3 py-2"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-[var(--text-tertiary)] mb-1">CPU Threshold (%)</label>
+              <input
+                type="number"
+                value={cpuThreshold}
+                onChange={(e) => setCpuThreshold(e.target.value)}
+                min="0"
+                max="100"
+                placeholder="e.g., 80"
+                className="w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-3 py-2"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-[var(--text-tertiary)] mb-1">Memory Threshold (%)</label>
+              <input
+                type="number"
+                value={memoryThreshold}
+                onChange={(e) => setMemoryThreshold(e.target.value)}
+                min="0"
+                max="100"
+                placeholder="e.g., 90"
+                className="w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-3 py-2"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm text-[var(--text-tertiary)] mb-1">Cooldown (seconds)</label>
+            <input
+              type="number"
+              value={cooldownPeriod}
+              onChange={(e) => setCooldownSeconds(e.target.value)}
+              min="0"
+              className="w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-3 py-2"
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="ruleEnabled"
+              checked={enabled}
+              onChange={(e) => setEnabled(e.target.checked)}
+            />
+            <label htmlFor="ruleEnabled" className="text-sm">Enabled</label>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-4">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm border border-[var(--border)] rounded hover:bg-[var(--bg-tertiary)]"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="px-4 py-2 text-sm bg-[var(--accent)] text-white rounded hover:opacity-80 disabled:opacity-50"
+            >
+              {loading ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+interface SilenceFormModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSubmit: (silence: Record<string, unknown>) => Promise<void>;
+}
+
+const COMMON_TIMEZONES = [
+  'UTC',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'America/Toronto',
+  'Europe/London',
+  'Europe/Paris',
+  'Europe/Berlin',
+  'Asia/Tokyo',
+  'Asia/Shanghai',
+  'Australia/Sydney',
+];
+
+function SilenceFormModal({ isOpen, onClose, onSubmit }: SilenceFormModalProps) {
+  const [containerPattern, setContainerPattern] = useState('');
+  const [reason, setReason] = useState('');
+  const [isRecurring, setIsRecurring] = useState(false);
+  // One-time fields
+  const [silencedUntil, setSilencedUntil] = useState('');
+  // Recurring fields
+  const [dailyStartTime, setDailyStartTime] = useState('23:00');
+  const [dailyEndTime, setDailyEndTime] = useState('06:00');
+  const [timezone, setTimezone] = useState('UTC');
+  const [recurringExpiresAt, setRecurringExpiresAt] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setContainerPattern('');
+      setReason('');
+      setIsRecurring(false);
+      // Default to 1 hour from now for one-time
+      const defaultExpiry = new Date();
+      defaultExpiry.setHours(defaultExpiry.getHours() + 1);
+      setSilencedUntil(defaultExpiry.toISOString().slice(0, 16));
+      // Default recurring settings
+      setDailyStartTime('23:00');
+      setDailyEndTime('06:00');
+      setTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+      setRecurringExpiresAt('');
+    }
+  }, [isOpen]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const silenceData: Record<string, unknown> = {
+        container_pattern: containerPattern || undefined,
+        reason: reason || undefined,
+        is_recurring: isRecurring,
+      };
+
+      if (isRecurring) {
+        silenceData.daily_start_time = dailyStartTime;
+        silenceData.daily_end_time = dailyEndTime;
+        silenceData.timezone = timezone;
+        if (recurringExpiresAt) {
+          silenceData.recurring_expires_at = new Date(recurringExpiresAt).toISOString();
+        }
+      } else {
+        silenceData.silenced_until = silencedUntil ? new Date(silencedUntil).toISOString() : undefined;
+      }
+
+      await onSubmit(silenceData);
+      onClose();
+    } catch (error) {
+      console.error('Failed to create silence:', error);
+      alert('Failed to create silence');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
+        <h2 className="text-xl font-bold mb-4">Add Silence</h2>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm text-[var(--text-tertiary)] mb-1">Container Pattern</label>
+            <input
+              type="text"
+              value={containerPattern}
+              onChange={(e) => setContainerPattern(e.target.value)}
+              placeholder="e.g., test-* or leave empty for all"
+              className="w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-3 py-2"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm text-[var(--text-tertiary)] mb-1">Reason</label>
+            <input
+              type="text"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g., Maintenance window"
+              className="w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-3 py-2"
+            />
+          </div>
+
+          {/* Silence Type Toggle */}
+          <div className="flex gap-4 p-3 bg-[var(--bg-tertiary)] rounded-lg">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="silenceType"
+                checked={!isRecurring}
+                onChange={() => setIsRecurring(false)}
+              />
+              <span className="text-sm">One-time</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="silenceType"
+                checked={isRecurring}
+                onChange={() => setIsRecurring(true)}
+              />
+              <span className="text-sm">Daily Recurring</span>
+            </label>
+          </div>
+
+          {!isRecurring ? (
+            /* One-time silence fields */
+            <div>
+              <label className="block text-sm text-[var(--text-tertiary)] mb-1">Expires At</label>
+              <input
+                type="datetime-local"
+                value={silencedUntil}
+                onChange={(e) => setSilencedUntil(e.target.value)}
+                required
+                className="w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-3 py-2"
+              />
+            </div>
+          ) : (
+            /* Recurring silence fields */
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-[var(--text-tertiary)] mb-1">Start Time</label>
+                  <input
+                    type="time"
+                    value={dailyStartTime}
+                    onChange={(e) => setDailyStartTime(e.target.value)}
+                    required
+                    className="w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-[var(--text-tertiary)] mb-1">End Time</label>
+                  <input
+                    type="time"
+                    value={dailyEndTime}
+                    onChange={(e) => setDailyEndTime(e.target.value)}
+                    required
+                    className="w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-3 py-2"
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-[var(--text-tertiary)]">
+                Example: 23:00 to 06:00 silences notifications from 11 PM to 6 AM daily
+              </p>
+
+              <div>
+                <label className="block text-sm text-[var(--text-tertiary)] mb-1">Timezone</label>
+                <select
+                  value={timezone}
+                  onChange={(e) => setTimezone(e.target.value)}
+                  className="w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-3 py-2"
+                >
+                  {COMMON_TIMEZONES.map(tz => (
+                    <option key={tz} value={tz}>{tz}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm text-[var(--text-tertiary)] mb-1">
+                  Overall Expiry <span className="text-[var(--text-tertiary)]">(optional)</span>
+                </label>
+                <input
+                  type="datetime-local"
+                  value={recurringExpiresAt}
+                  onChange={(e) => setRecurringExpiresAt(e.target.value)}
+                  className="w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-3 py-2"
+                />
+                <p className="text-xs text-[var(--text-tertiary)] mt-1">
+                  Leave empty for indefinite recurring silence
+                </p>
+              </div>
+            </>
+          )}
+
+          <div className="flex justify-end gap-2 pt-4">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm border border-[var(--border)] rounded hover:bg-[var(--bg-tertiary)]"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="px-4 py-2 text-sm bg-[var(--accent)] text-white rounded hover:opacity-80 disabled:opacity-50"
+            >
+              {loading ? 'Creating...' : 'Create Silence'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function NotificationsPage() {
   const [activeTab, setActiveTab] = useState<Tab>('log');
   const [logs, setLogs] = useState<NotificationLog[]>([]);
@@ -279,6 +748,9 @@ export default function NotificationsPage() {
   const [loading, setLoading] = useState(true);
   const [channelModalOpen, setChannelModalOpen] = useState(false);
   const [editingChannel, setEditingChannel] = useState<NotificationChannel | null>(null);
+  const [ruleModalOpen, setRuleModalOpen] = useState(false);
+  const [editingRule, setEditingRule] = useState<NotificationRule | null>(null);
+  const [silenceModalOpen, setSilenceModalOpen] = useState(false);
 
   const loadData = async () => {
     try {
@@ -369,6 +841,27 @@ export default function NotificationsPage() {
     } catch (error) {
       alert(`Test failed: ${error}`);
     }
+  };
+
+  const handleSaveRule = async (ruleData: Partial<NotificationRule>) => {
+    if (editingRule) {
+      await updateNotificationRule(editingRule.id, ruleData);
+    } else {
+      await createNotificationRule(ruleData);
+    }
+    await loadData();
+  };
+
+  const handleDeleteRule = async (id: number) => {
+    if (confirm('Are you sure you want to delete this rule?')) {
+      await deleteNotificationRule(id);
+      await loadData();
+    }
+  };
+
+  const handleSaveSilence = async (silenceData: Record<string, unknown>) => {
+    await createNotificationSilence(silenceData);
+    await loadData();
   };
 
   if (loading) {
@@ -490,6 +983,13 @@ export default function NotificationsPage() {
 
       {activeTab === 'rules' && (
         <div className="space-y-4">
+          <button
+            onClick={() => { setEditingRule(null); setRuleModalOpen(true); }}
+            className="px-4 py-2 text-sm bg-[var(--accent)] text-white rounded hover:opacity-80"
+          >
+            + Add Rule
+          </button>
+
           {rules.length === 0 ? (
             <div className="text-center py-8 text-[var(--text-tertiary)]">
               No notification rules configured
@@ -517,6 +1017,20 @@ export default function NotificationsPage() {
                         </div>
                       )}
                     </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => { setEditingRule(rule); setRuleModalOpen(true); }}
+                        className="p-1 hover:bg-[var(--bg-secondary)] rounded"
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        onClick={() => handleDeleteRule(rule.id)}
+                        className="p-1 hover:bg-[var(--danger)] hover:text-white rounded"
+                      >
+                        🗑️
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -527,6 +1041,13 @@ export default function NotificationsPage() {
 
       {activeTab === 'silences' && (
         <div className="space-y-4">
+          <button
+            onClick={() => setSilenceModalOpen(true)}
+            className="px-4 py-2 text-sm bg-[var(--accent)] text-white rounded hover:opacity-80"
+          >
+            + Add Silence
+          </button>
+
           {silences.length === 0 ? (
             <div className="text-center py-8 text-[var(--text-tertiary)]">
               No active silences
@@ -536,10 +1057,29 @@ export default function NotificationsPage() {
               {silences.map(silence => (
                 <div key={silence.id} className="bg-[var(--bg-tertiary)] rounded-lg p-4 flex items-center justify-between">
                   <div>
-                    <div className="font-medium">{silence.container_pattern || silence.container_name || 'All'}</div>
-                    <div className="text-xs text-[var(--text-tertiary)]">
-                      Expires: {silence.expires_at ? formatDate(silence.expires_at) : 'Never'}
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium">{silence.container_pattern || silence.container_name || 'All'}</span>
+                      {silence.is_recurring && (
+                        <span className="px-2 py-0.5 text-xs bg-purple-500 text-white rounded">Recurring</span>
+                      )}
                     </div>
+                    <div className="text-xs text-[var(--text-tertiary)]">
+                      {silence.is_recurring ? (
+                        <>
+                          Daily: {silence.daily_start_time} - {silence.daily_end_time} ({silence.timezone || 'UTC'})
+                          {silence.recurring_expires_at && (
+                            <> · Until {formatDate(silence.recurring_expires_at)}</>
+                          )}
+                        </>
+                      ) : (
+                        <>Expires: {formatDate(silence.silenced_until)}</>
+                      )}
+                    </div>
+                    {silence.reason && (
+                      <div className="text-xs text-[var(--text-tertiary)] mt-1">
+                        Reason: {silence.reason}
+                      </div>
+                    )}
                   </div>
                   <button
                     onClick={() => deleteNotificationSilence(silence.id).then(loadData)}
@@ -560,6 +1100,22 @@ export default function NotificationsPage() {
         onClose={() => { setChannelModalOpen(false); setEditingChannel(null); }}
         onSubmit={handleSaveChannel}
         editChannel={editingChannel}
+      />
+
+      {/* Rule Form Modal */}
+      <RuleFormModal
+        isOpen={ruleModalOpen}
+        onClose={() => { setRuleModalOpen(false); setEditingRule(null); }}
+        onSubmit={handleSaveRule}
+        editRule={editingRule}
+        channels={channels}
+      />
+
+      {/* Silence Form Modal */}
+      <SilenceFormModal
+        isOpen={silenceModalOpen}
+        onClose={() => setSilenceModalOpen(false)}
+        onSubmit={handleSaveSilence}
       />
     </div>
   );

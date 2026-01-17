@@ -527,6 +527,91 @@ type NotificationSilence struct {
 	SilencedUntil    time.Time  `json:"silenced_until"`
 	Reason           string     `json:"reason,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
+
+	// Recurring silence fields
+	IsRecurring        bool       `json:"is_recurring"`
+	DailyStartTime     string     `json:"daily_start_time,omitempty"` // "HH:MM" format
+	DailyEndTime       string     `json:"daily_end_time,omitempty"`   // "HH:MM" format
+	Timezone           string     `json:"timezone,omitempty"`         // IANA timezone (e.g., "America/New_York")
+	RecurringExpiresAt *time.Time `json:"recurring_expires_at,omitempty"`
+}
+
+// IsActiveNow returns true if this silence is currently active.
+// For one-time silences, it checks if the current time is before SilencedUntil.
+// For recurring silences, it checks if the current time is within the daily window.
+func (s *NotificationSilence) IsActiveNow() bool {
+	now := time.Now()
+
+	if !s.IsRecurring {
+		// One-time silence: just check expiry
+		return now.Before(s.SilencedUntil)
+	}
+
+	// Recurring silence: check if overall expiry has passed
+	if s.RecurringExpiresAt != nil && now.After(*s.RecurringExpiresAt) {
+		return false
+	}
+
+	// Check if current time is within daily window
+	return s.isWithinDailyWindow(now)
+}
+
+// isWithinDailyWindow checks if the given time falls within the daily recurring window.
+// Handles overnight windows (e.g., 23:00-06:00) correctly.
+func (s *NotificationSilence) isWithinDailyWindow(t time.Time) bool {
+	if s.DailyStartTime == "" || s.DailyEndTime == "" {
+		return false
+	}
+
+	// Load timezone, default to UTC if invalid
+	loc := time.UTC
+	if s.Timezone != "" {
+		if parsed, err := time.LoadLocation(s.Timezone); err == nil {
+			loc = parsed
+		}
+	}
+
+	// Convert time to the silence's timezone
+	localTime := t.In(loc)
+
+	// Parse start and end times
+	startHour, startMin, err := parseTimeHHMM(s.DailyStartTime)
+	if err != nil {
+		return false
+	}
+	endHour, endMin, err := parseTimeHHMM(s.DailyEndTime)
+	if err != nil {
+		return false
+	}
+
+	// Convert current time to minutes since midnight
+	currentMinutes := localTime.Hour()*60 + localTime.Minute()
+	startMinutes := startHour*60 + startMin
+	endMinutes := endHour*60 + endMin
+
+	if startMinutes <= endMinutes {
+		// Normal window (e.g., 09:00-17:00)
+		return currentMinutes >= startMinutes && currentMinutes < endMinutes
+	}
+
+	// Overnight window (e.g., 23:00-06:00)
+	// Active if current time is >= start OR < end
+	return currentMinutes >= startMinutes || currentMinutes < endMinutes
+}
+
+// parseTimeHHMM parses a "HH:MM" string into hours and minutes
+func parseTimeHHMM(s string) (hour, min int, err error) {
+	if len(s) != 5 || s[2] != ':' {
+		return 0, 0, fmt.Errorf("invalid time format: %s", s)
+	}
+	_, err = fmt.Sscanf(s, "%d:%d", &hour, &min)
+	if err != nil {
+		return 0, 0, err
+	}
+	if hour < 0 || hour > 23 || min < 0 || min > 59 {
+		return 0, 0, fmt.Errorf("invalid time values: %s", s)
+	}
+	return hour, min, nil
 }
 
 // ContainerBaselineStats represents pre-change baseline for anomaly detection

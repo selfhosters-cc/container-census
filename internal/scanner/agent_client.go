@@ -35,6 +35,12 @@ func normalizeAgentURL(address string) string {
 }
 
 func (s *Scanner) agentRequest(ctx context.Context, host models.Host, method, path string, body interface{}) (*http.Response, error) {
+	return s.agentRequestWithTimeout(ctx, host, method, path, body, s.timeout)
+}
+
+// agentRequestWithTimeout makes a request to an agent with a custom timeout
+// Use this for long-running operations like image pulls
+func (s *Scanner) agentRequestWithTimeout(ctx context.Context, host models.Host, method, path string, body interface{}, timeout time.Duration) (*http.Response, error) {
 	agentURL := normalizeAgentURL(host.Address) + path
 
 	var reqBody io.Reader
@@ -56,7 +62,7 @@ func (s *Scanner) agentRequest(ctx context.Context, host models.Host, method, pa
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	client := &http.Client{Timeout: s.timeout}
+	client := &http.Client{Timeout: timeout}
 	return client.Do(req)
 }
 
@@ -260,11 +266,20 @@ func (s *Scanner) getAgentInfo(ctx context.Context, host models.Host) (*models.A
 
 // Agent-specific image update operations
 
+// imagePullTimeout is the timeout for pulling images from agents
+// Large images can take several minutes to pull, so we use a generous timeout
+const imagePullTimeout = 10 * time.Minute
+
 func (s *Scanner) pullAgentImage(ctx context.Context, host models.Host, imageName string) error {
 	body := map[string]string{"image": imageName}
-	resp, err := s.agentRequest(ctx, host, "POST", "/api/images/pull", body)
+	// Use extended timeout for image pulls - large images can take several minutes
+	resp, err := s.agentRequestWithTimeout(ctx, host, "POST", "/api/images/pull", body, imagePullTimeout)
 	if err != nil {
-		return err
+		// Provide clearer error message for timeouts
+		if ctx.Err() == context.DeadlineExceeded || strings.Contains(err.Error(), "context deadline exceeded") {
+			return fmt.Errorf("image pull timed out after 10 minutes - the image may be very large or the registry may be slow")
+		}
+		return fmt.Errorf("failed to pull image: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -275,6 +290,84 @@ func (s *Scanner) pullAgentImage(ctx context.Context, host models.Host, imageNam
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("agent returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
+}
+
+// pullAgentImageWithProgress pulls an image via agent with streaming progress
+func (s *Scanner) pullAgentImageWithProgress(ctx context.Context, host models.Host, imageName string, onProgress PullProgressCallback) error {
+	body := map[string]string{"image": imageName}
+
+	// Request streaming response from agent
+	agentURL := normalizeAgentURL(host.Address) + "/api/images/pull?stream=true"
+
+	jsonData, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", agentURL, bytes.NewReader(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("X-API-Token", host.AgentToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	// Use extended timeout for streaming pull
+	client := &http.Client{Timeout: imagePullTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded || strings.Contains(err.Error(), "context deadline exceeded") {
+			return fmt.Errorf("image pull timed out after 10 minutes - the image may be very large or the registry may be slow")
+		}
+		return fmt.Errorf("failed to pull image: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("agent does not support image pulling - please update your census-agent to the latest version")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("agent returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// Decode NDJSON stream from agent
+	decoder := json.NewDecoder(resp.Body)
+	for {
+		var msg struct {
+			Status         string `json:"status"`
+			ID             string `json:"id"`
+			ProgressDetail struct {
+				Current int64 `json:"current"`
+				Total   int64 `json:"total"`
+			} `json:"progressDetail"`
+			Error   string `json:"error"`
+			Message string `json:"message"`
+		}
+
+		if err := decoder.Decode(&msg); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("failed to decode progress: %w", err)
+		}
+
+		if msg.Error != "" {
+			return fmt.Errorf("pull failed: %s", msg.Error)
+		}
+
+		// Check for completion message from agent
+		if msg.Status == "complete" {
+			break
+		}
+
+		if onProgress != nil && msg.ID != "" {
+			onProgress(msg.ID, msg.Status, msg.ProgressDetail.Current, msg.ProgressDetail.Total)
+		}
 	}
 
 	return nil

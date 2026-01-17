@@ -459,33 +459,34 @@ func (ns *NotificationService) filterSilenced(tasks []notificationTask) []notifi
 
 // silenceMatches checks if a silence applies to an event
 func (ns *NotificationService) silenceMatches(silence models.NotificationSilence, event models.NotificationEvent) bool {
-	// Check if silence is still active
-	if time.Now().After(silence.SilencedUntil) {
+	// Check if silence is currently active (handles both one-time and recurring)
+	if !silence.IsActiveNow() {
 		return false
 	}
 
-	// Check exact host match
+	// Check exact container match (host + container ID)
 	if silence.HostID != nil && *silence.HostID == event.HostID {
-		// If container is also specified, check it
 		if silence.ContainerID != "" && silence.ContainerID == event.ContainerID {
 			return true
 		}
-		// If no container specified, silence applies to whole host
-		if silence.ContainerID == "" {
+	}
+
+	// Check pattern-based matching
+	if silence.ContainerPattern != "" {
+		matched, err := filepath.Match(silence.ContainerPattern, event.ContainerName)
+		if err == nil && matched {
+			// If host is specified, also require host match
+			if silence.HostID != nil {
+				return *silence.HostID == event.HostID
+			}
+			// Pattern matches and no host filter - match all hosts
 			return true
 		}
 	}
 
-	// Check exact container match
-	if silence.ContainerID != "" && silence.ContainerID == event.ContainerID &&
-	   silence.HostID != nil && *silence.HostID == event.HostID {
-		return true
-	}
-
-	// Check patterns
-	if silence.ContainerPattern != "" {
-		matched, err := filepath.Match(silence.ContainerPattern, event.ContainerName)
-		if err == nil && matched {
+	// Check whole-host silence (host specified, no container ID, no pattern)
+	if silence.HostID != nil && *silence.HostID == event.HostID {
+		if silence.ContainerID == "" && silence.ContainerPattern == "" {
 			return true
 		}
 	}

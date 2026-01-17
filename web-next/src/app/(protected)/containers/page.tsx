@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
-import { getContainers, getHosts, startContainer, stopContainer, restartContainer, removeContainer, getContainerLogs, getContainerStats, updateContainer, bulkCheckUpdates, bulkUpdate, getContainerLifecycleEvents, getContainerLifecycleSummaries, scanHost } from '@/lib/api';
+import { getContainers, getHosts, startContainer, stopContainer, restartContainer, removeContainer, getContainerLogs, getContainerStats, updateContainer, updateContainerWithProgress, bulkCheckUpdates, bulkUpdate, getContainerLifecycleEvents, getContainerLifecycleSummaries, scanHost, API_BASE } from '@/lib/api';
 import type { Container, Host, ContainerStatsPoint, ContainerLifecycleEvent, ContainerLifecycleSummary } from '@/types';
 import { formatUptime, extractImageTag, formatCpu, formatMemory as formatMemoryUtil, getStateIcon } from '@/lib/containerUtils';
 import InlineChart from '@/components/containers/InlineChart';
@@ -438,15 +438,44 @@ function HistoryModal({ container, onClose }: { container: Container | null; onC
   );
 }
 
+// Pull progress state for bulk update
+interface BulkPullProgress {
+  status: string;
+  message: string;
+  layers: Record<string, { id: string; status: string; current: number; total: number }>;
+  layer_count: number;
+  completed_layers: number;
+  total_bytes: number;
+  downloaded_bytes: number;
+  overall_percent: number;
+}
+
 // Bulk Update Modal Component
 function BulkUpdateModal({ isOpen, onClose, containers, onUpdate }: { isOpen: boolean; onClose: () => void; containers: Container[]; onUpdate: () => void }) {
   const [checking, setChecking] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [updatingKeys, setUpdatingKeys] = useState<Set<string>>(new Set());
+  const [currentUpdatingKey, setCurrentUpdatingKey] = useState<string | null>(null);
+  const [pullProgress, setPullProgress] = useState<BulkPullProgress | null>(null);
   const [updateResults, setUpdateResults] = useState<Record<string, { success: boolean; error?: string; new_container_id?: string }> | null>(null);
   const [results, setResults] = useState<Record<string, { available: boolean; message?: string }> | null>(null);
   const [selectedContainers, setSelectedContainers] = useState<Set<string>>(new Set());
   const [updateJobId, setUpdateJobId] = useState<string | null>(null);
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const [completedCount, setCompletedCount] = useState(0);
+  const [totalToUpdate, setTotalToUpdate] = useState(0);
+  // Snapshot of containers being updated (frozen at start of bulk update)
+  const [containersBeingUpdated, setContainersBeingUpdated] = useState<Container[]>([]);
+
+  // Track elapsed time during bulk update
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (updating) {
+      setElapsedTime(0);
+      interval = setInterval(() => setElapsedTime(t => t + 1), 1000);
+    }
+    return () => clearInterval(interval);
+  }, [updating]);
 
   // Import and use the SSE hook at the top of the file
   const { progress, complete, error: progressError } = useUpdateCheckProgress(updateJobId);
@@ -517,6 +546,7 @@ function BulkUpdateModal({ isOpen, onClose, containers, onUpdate }: { isOpen: bo
       setResults(null);
       setSelectedContainers(new Set());
       setUpdateResults(null);
+      setContainersBeingUpdated([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]); // Only depend on isOpen, not handleCheckUpdates
@@ -564,6 +594,15 @@ function BulkUpdateModal({ isOpen, onClose, containers, onUpdate }: { isOpen: bo
     setSelectedContainers(new Set());
   };
 
+  // Helper to format bytes for display
+  const formatBytes = (bytes: number): string => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  };
+
   const handleBulkUpdate = async () => {
     if (selectedContainers.size === 0) return;
 
@@ -571,42 +610,103 @@ function BulkUpdateModal({ isOpen, onClose, containers, onUpdate }: { isOpen: bo
       return;
     }
 
+    // Capture snapshot of containers to update (freeze the list)
+    const selectedKeys = Array.from(selectedContainers);
+    const snapshot = containersWithUpdates.filter(c => selectedKeys.includes(`${c.host_id}-${c.id}`));
+    setContainersBeingUpdated(snapshot);
+
     setUpdating(true);
     setUpdateResults({});
-    setUpdatingKeys(selectedContainers);
+    setUpdatingKeys(new Set(selectedContainers));
+    setCompletedCount(0);
+    setTotalToUpdate(selectedContainers.size);
+    setPullProgress(null);
 
-    try {
-      // Convert selected container keys to the format the API expects
-      const toUpdate = Array.from(selectedContainers).map(key => {
-        const [hostId, containerId] = key.split('-');
-        return {
-          host_id: parseInt(hostId),
-          container_id: containerId
-        };
-      });
+    const allResults: Record<string, { success: boolean; error?: string; new_container_id?: string }> = {};
 
-      const results = await bulkUpdate(toUpdate);
-      setUpdateResults(results);
-      setUpdatingKeys(new Set());
+    // Update containers one at a time with progress
+    for (const key of Array.from(selectedContainers)) {
+      const [hostIdStr, containerId] = key.split('-');
+      const hostId = parseInt(hostIdStr);
 
-      // Refresh data after updates (silently in background)
-      onUpdate();
-
-      // Show success message
-      const successCount = Object.values(results).filter(r => r.success).length;
-      const failCount = Object.values(results).filter(r => !r.success).length;
-
-      if (failCount === 0) {
-        // Don't close automatically - let user see results
-        // They can click Close when ready
+      // Find the container to get its name
+      const container = containers.find(c => c.host_id === hostId && c.id === containerId);
+      if (!container) {
+        allResults[key] = { success: false, error: 'Container not found' };
+        setCompletedCount(prev => prev + 1);
+        continue;
       }
-    } catch (error) {
-      console.error('Bulk update failed:', error);
-      alert('Bulk update failed. See console for details.');
-      setUpdatingKeys(new Set());
-    } finally {
-      setUpdating(false);
+
+      setCurrentUpdatingKey(key);
+      setPullProgress({ status: 'starting', message: 'Starting update...', layers: {}, layer_count: 0, completed_layers: 0, total_bytes: 0, downloaded_bytes: 0, overall_percent: 0 });
+
+      try {
+        // Start the streaming update
+        const response = await updateContainerWithProgress(hostId, container.name);
+        const jobId = response.job_id;
+
+        // Connect to SSE for progress updates
+        const result = await new Promise<{ success: boolean; error?: string; new_container_id?: string }>((resolve) => {
+          const eventSource = new EventSource(`${API_BASE}/containers/pull-progress/${jobId}`);
+
+          eventSource.addEventListener('progress', (event) => {
+            const data = JSON.parse(event.data);
+            setPullProgress({
+              status: data.status,
+              message: data.message || '',
+              layers: data.layers || {},
+              layer_count: data.layer_count || 0,
+              completed_layers: data.completed_layers || 0,
+              total_bytes: data.total_bytes || 0,
+              downloaded_bytes: data.downloaded_bytes || 0,
+              overall_percent: data.overall_percent || 0,
+            });
+          });
+
+          eventSource.addEventListener('complete', (event) => {
+            const data = JSON.parse(event.data);
+            eventSource.close();
+            resolve({ success: true, new_container_id: data.new_container_id });
+          });
+
+          eventSource.addEventListener('error', (event) => {
+            // Check if it's an SSE error event with data
+            if (event instanceof MessageEvent && event.data) {
+              const data = JSON.parse(event.data);
+              eventSource.close();
+              resolve({ success: false, error: data.error || 'Update failed' });
+            } else {
+              // Connection error
+              eventSource.close();
+              resolve({ success: false, error: 'Connection lost during update' });
+            }
+          });
+
+          // Timeout after 15 minutes
+          setTimeout(() => {
+            eventSource.close();
+            resolve({ success: false, error: 'Update timed out after 15 minutes' });
+          }, 15 * 60 * 1000);
+        });
+
+        allResults[key] = result;
+      } catch (error) {
+        allResults[key] = { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      }
+
+      setCompletedCount(prev => prev + 1);
+      setUpdateResults({ ...allResults });
     }
+
+    // All done
+    setCurrentUpdatingKey(null);
+    setPullProgress(null);
+    setUpdatingKeys(new Set());
+    setSelectedContainers(new Set()); // Clear selections after update completes
+    setUpdating(false);
+
+    // Refresh data after all updates
+    onUpdate();
   };
 
   if (!isOpen) return null;
@@ -703,7 +803,7 @@ function BulkUpdateModal({ isOpen, onClose, containers, onUpdate }: { isOpen: bo
                         </tr>
                       </thead>
                       <tbody>
-                        {containersWithUpdates.map(container => {
+                        {(containersBeingUpdated.length > 0 ? containersBeingUpdated : containersWithUpdates).map(container => {
                           const key = `${container.host_id}-${container.id}`;
                           const message = results[key]?.message;
 
@@ -728,13 +828,40 @@ function BulkUpdateModal({ isOpen, onClose, containers, onUpdate }: { isOpen: bo
                                       {message}
                                     </div>
                                   )}
-                                  {updatingKeys.has(key) && (
-                                    <div className="text-xs bg-[var(--warning)]/10 border border-[var(--warning)] rounded px-2 py-1 mt-1 flex items-center gap-2">
-                                      <span className="inline-block animate-spin">⏳</span>
-                                      <span>Updating container...</span>
+                                  {updatingKeys.has(key) && currentUpdatingKey === key && pullProgress && (
+                                    <div className="text-xs bg-[var(--warning)]/10 border border-[var(--warning)] rounded px-2 py-1 mt-1">
+                                      <div className="flex items-center gap-2 mb-2">
+                                        <span className="inline-block animate-spin">⏳</span>
+                                        <span className="font-medium">{pullProgress.message || 'Updating...'}</span>
+                                      </div>
+                                      {pullProgress.total_bytes > 0 && (
+                                        <div className="space-y-1">
+                                          <div className="flex justify-between text-[10px] text-[var(--text-secondary)]">
+                                            <span>{formatBytes(pullProgress.downloaded_bytes)} / {formatBytes(pullProgress.total_bytes)}</span>
+                                            <span>{Math.round(pullProgress.overall_percent)}%</span>
+                                          </div>
+                                          <div className="w-full bg-[var(--bg-tertiary)] rounded-full h-1.5">
+                                            <div
+                                              className="bg-[var(--accent)] h-1.5 rounded-full transition-all duration-300"
+                                              style={{ width: `${Math.min(100, pullProgress.overall_percent)}%` }}
+                                            />
+                                          </div>
+                                          <div className="text-[10px] text-[var(--text-tertiary)]">
+                                            {pullProgress.completed_layers} / {pullProgress.layer_count} layers
+                                          </div>
+                                        </div>
+                                      )}
                                     </div>
                                   )}
-                                  {updateResults && updateResults[key] && !updatingKeys.has(key) && (
+                                  {updatingKeys.has(key) && currentUpdatingKey !== key && !(updateResults && updateResults[key]) && (
+                                    <div className="text-xs bg-[var(--bg-tertiary)] border border-[var(--border)] rounded px-2 py-1 mt-1">
+                                      <div className="flex items-center gap-2 text-[var(--text-secondary)]">
+                                        <span>⏸️</span>
+                                        <span>Queued for update...</span>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {updateResults && updateResults[key] && (
                                     <div className={`text-xs rounded px-2 py-1 mt-1 ${
                                       updateResults[key].success
                                         ? 'bg-[var(--success)]/10 border border-[var(--success)] text-[var(--success)]'
@@ -779,13 +906,24 @@ function BulkUpdateModal({ isOpen, onClose, containers, onUpdate }: { isOpen: bo
           <button onClick={onClose} className="px-4 py-2 text-sm border border-[var(--border)] rounded hover:bg-[var(--bg-tertiary)] transition-colors">
             Close
           </button>
-          {containersWithUpdates.length > 0 && (
+          {/* Show button: during update, OR before update if there are containers to update */}
+          {/* Hide button: after update completes (results exist and not updating) */}
+          {(updating || (containersWithUpdates.length > 0 && !(updateResults && Object.keys(updateResults).length > 0))) && (
             <button
               onClick={handleBulkUpdate}
               disabled={selectedContainers.size === 0 || updating}
               className="px-4 py-2 text-sm bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)] transition-colors disabled:opacity-50"
             >
-              {updating ? `Updating ${selectedContainers.size}...` : `Update Selected (${selectedContainers.size})`}
+              {updating ? (
+                <>
+                  Updating {completedCount + 1} of {totalToUpdate}...
+                  {elapsedTime >= 10 && (
+                    <span className="ml-2 font-mono">
+                      ({Math.floor(elapsedTime / 60)}:{(elapsedTime % 60).toString().padStart(2, '0')})
+                    </span>
+                  )}
+                </>
+              ) : `Update Selected (${selectedContainers.size})`}
             </button>
           )}
         </div>
@@ -795,10 +933,48 @@ function BulkUpdateModal({ isOpen, onClose, containers, onUpdate }: { isOpen: bo
 }
 
 // Update Modal Component
+interface LayerProgress {
+  id: string;
+  status: string;
+  current: number;
+  total: number;
+}
+
+interface PullProgressState {
+  status: string;
+  message: string;
+  layers: Record<string, LayerProgress>;
+  layer_count: number;
+  completed_layers: number;
+  total_bytes: number;
+  downloaded_bytes: number;
+  overall_percent: number;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
 function UpdateModal({ container, onClose, onUpdate }: { container: Container | null; onClose: () => void; onUpdate: () => void }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const [pullProgress, setPullProgress] = useState<PullProgressState | null>(null);
+
+  // Track elapsed time during update
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (loading) {
+      setElapsedTime(0);
+      interval = setInterval(() => setElapsedTime(t => t + 1), 1000);
+    }
+    return () => clearInterval(interval);
+  }, [loading]);
 
   if (!container) return null;
 
@@ -806,15 +982,65 @@ function UpdateModal({ container, onClose, onUpdate }: { container: Container | 
     setLoading(true);
     setError(null);
     setSuccess(false);
+    setPullProgress(null);
     console.log('Updating container:', { host_id: container.host_id, name: container.name, id: container.id });
+
     try {
-      await updateContainer(container.host_id, container.name);
-      setSuccess(true);
-      onUpdate(); // Refresh data in background
-      // Auto-close after 2 seconds on success
-      setTimeout(() => {
-        onClose();
-      }, 2000);
+      // Start update with streaming progress
+      const response = await updateContainerWithProgress(container.host_id, container.name);
+      const jobId = response.job_id;
+
+      // Connect to SSE endpoint for progress updates
+      const eventSource = new EventSource(`/api/containers/pull-progress/${jobId}`);
+
+      eventSource.addEventListener('progress', (event) => {
+        const data = JSON.parse(event.data);
+        setPullProgress({
+          status: data.status,
+          message: data.message || '',
+          layers: data.layers || {},
+          layer_count: data.layer_count || 0,
+          completed_layers: data.completed_layers || 0,
+          total_bytes: data.total_bytes || 0,
+          downloaded_bytes: data.downloaded_bytes || 0,
+          overall_percent: data.overall_percent || 0,
+        });
+      });
+
+      eventSource.addEventListener('complete', (event) => {
+        const data = JSON.parse(event.data);
+        eventSource.close();
+
+        if (data.status === 'error') {
+          setError(data.error || 'Update failed');
+          setLoading(false);
+        } else {
+          setSuccess(true);
+          setLoading(false);
+          onUpdate(); // Refresh data in background
+          // Auto-close after 2 seconds on success
+          setTimeout(() => {
+            onClose();
+          }, 2000);
+        }
+      });
+
+      eventSource.addEventListener('error', (event) => {
+        const data = JSON.parse((event as MessageEvent).data || '{}');
+        eventSource.close();
+        setError(data.error || 'Connection lost');
+        setLoading(false);
+      });
+
+      eventSource.onerror = () => {
+        eventSource.close();
+        // Only set error if we're still loading (not already completed)
+        if (loading && !success) {
+          setError('Connection to server lost');
+          setLoading(false);
+        }
+      };
+
     } catch (error: unknown) {
       console.error('Failed to update container:', error);
       if (error instanceof Error) {
@@ -822,10 +1048,14 @@ function UpdateModal({ container, onClose, onUpdate }: { container: Container | 
       } else {
         setError('Unknown error occurred');
       }
-    } finally {
       setLoading(false);
     }
   };
+
+  // Get active layers (currently downloading/extracting)
+  const activeLayers = pullProgress ? Object.entries(pullProgress.layers)
+    .filter(([, layer]) => layer.status === 'Downloading' || layer.status === 'Extracting')
+    .slice(0, 5) : [];
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -849,7 +1079,7 @@ function UpdateModal({ container, onClose, onUpdate }: { container: Container | 
                 </ul>
               </div>
               <div className="bg-[var(--warning)]/10 border border-[var(--warning)] rounded p-3 text-sm">
-                <p className="font-medium">⚠️ Note:</p>
+                <p className="font-medium">Warning:</p>
                 <p className="mt-1">The old image will be kept for rollback. Container configuration (env vars, volumes, ports, networks) will be preserved.</p>
                 <p className="mt-1 text-[var(--danger)]">Non-volume data will be lost. Ensure important data is in volumes!</p>
               </div>
@@ -872,11 +1102,54 @@ function UpdateModal({ container, onClose, onUpdate }: { container: Container | 
         )}
 
         {loading && (
-          <div className="flex flex-col items-center justify-center py-8">
-            <div className="text-6xl mb-4 animate-spin">⏳</div>
-            <div className="text-lg font-semibold mb-2">Updating container...</div>
-            <div className="text-sm text-[var(--text-secondary)] text-center">
-              Pulling image, stopping container, and recreating with new version
+          <div className="flex flex-col items-center justify-center py-4">
+            <div className="text-4xl mb-3 animate-spin">⏳</div>
+            <div className="text-lg font-semibold mb-1">
+              {pullProgress?.message || 'Starting update...'}
+            </div>
+
+            {/* Overall progress bar */}
+            {pullProgress && pullProgress.total_bytes > 0 && (
+              <div className="w-full mt-4">
+                <div className="flex justify-between text-xs text-[var(--text-secondary)] mb-1">
+                  <span>{formatBytes(pullProgress.downloaded_bytes)} / {formatBytes(pullProgress.total_bytes)}</span>
+                  <span>{Math.round(pullProgress.overall_percent)}%</span>
+                </div>
+                <div className="w-full bg-[var(--bg-tertiary)] rounded-full h-2.5">
+                  <div
+                    className="bg-[var(--accent)] h-2.5 rounded-full transition-all duration-300"
+                    style={{ width: `${Math.min(100, pullProgress.overall_percent)}%` }}
+                  />
+                </div>
+                <div className="text-xs text-[var(--text-tertiary)] mt-1 text-center">
+                  {pullProgress.completed_layers} / {pullProgress.layer_count} layers complete
+                </div>
+              </div>
+            )}
+
+            {/* Active layer progress */}
+            {activeLayers.length > 0 && (
+              <div className="w-full mt-4 space-y-2">
+                {activeLayers.map(([layerId, layer]) => (
+                  <div key={layerId} className="text-xs">
+                    <div className="flex justify-between text-[var(--text-tertiary)] mb-0.5">
+                      <span className="font-mono">{layerId.slice(0, 12)}</span>
+                      <span>{layer.status}</span>
+                    </div>
+                    <div className="w-full bg-[var(--bg-tertiary)] rounded-full h-1.5">
+                      <div
+                        className="bg-[var(--info)] h-1.5 rounded-full transition-all duration-150"
+                        style={{ width: layer.total > 0 ? `${(layer.current / layer.total) * 100}%` : '0%' }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Elapsed time */}
+            <div className="text-sm text-[var(--text-secondary)] mt-4 font-mono">
+              Elapsed: {Math.floor(elapsedTime / 60)}:{(elapsedTime % 60).toString().padStart(2, '0')}
             </div>
           </div>
         )}

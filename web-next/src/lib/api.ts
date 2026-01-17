@@ -1,7 +1,7 @@
 // API client for Container Census
 // Uses session-based authentication
 
-const API_BASE = '/api';
+export const API_BASE = '/api';
 
 class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -148,7 +148,7 @@ export const clearOldNotifications = () =>
 
 export const getNotificationSilences = () =>
   fetchApi<import('@/types').NotificationSilence[]>('/notifications/silences');
-export const createNotificationSilence = (silence: Partial<import('@/types').NotificationSilence>) =>
+export const createNotificationSilence = (silence: Record<string, unknown>) =>
   fetchApi<import('@/types').NotificationSilence>('/notifications/silences', { method: 'POST', body: JSON.stringify(silence) });
 export const deleteNotificationSilence = (id: number) =>
   fetchApi<void>(`/notifications/silences/${id}`, { method: 'DELETE' });
@@ -213,6 +213,25 @@ export const checkContainerUpdate = (hostId: number, containerName: string) =>
   fetchApi<{ available: boolean; message?: string }>(`/containers/${hostId}/${encodeURIComponent(containerName)}/check-update`, { method: 'POST' });
 export const updateContainer = (hostId: number, containerName: string) =>
   fetchApi<{ success: boolean; message?: string; new_container_id?: string }>(`/containers/${hostId}/${encodeURIComponent(containerName)}/update`, { method: 'POST' });
+
+// Streaming container update with progress
+export const updateContainerWithProgress = (hostId: number, containerName: string) =>
+  fetchApi<{ job_id: string }>(`/containers/${hostId}/${encodeURIComponent(containerName)}/update?stream_progress=true`, { method: 'POST' });
+
+// Pull progress types
+export interface PullProgress {
+  status: string;
+  image_name: string;
+  host_name: string;
+  layers: Record<string, { id: string; status: string; current: number; total: number }>;
+  layer_count: number;
+  completed_layers: number;
+  total_bytes: number;
+  downloaded_bytes: number;
+  overall_percent: number;
+  message: string;
+  error?: string;
+}
 
 // Bulk update operations
 export const bulkCheckUpdates = (containers: Array<{ host_id: number; container_id: string }>) =>

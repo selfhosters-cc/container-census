@@ -2,12 +2,13 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
-	"github.com/selfhosters-cc/container-census/internal/models"
 	"github.com/gorilla/mux"
+	"github.com/selfhosters-cc/container-census/internal/models"
 )
 
 // Notification Channel Handlers
@@ -323,37 +324,18 @@ func (s *Server) handleCreateNotificationSilence(w http.ResponseWriter, r *http.
 		ContainerName    string `json:"container_name,omitempty"`
 		HostPattern      string `json:"host_pattern,omitempty"`
 		ContainerPattern string `json:"container_pattern,omitempty"`
-		SilencedUntil    string `json:"silenced_until"`
+		SilencedUntil    string `json:"silenced_until,omitempty"`
 		Reason           string `json:"reason,omitempty"`
+		// Recurring silence fields
+		IsRecurring        bool   `json:"is_recurring"`
+		DailyStartTime     string `json:"daily_start_time,omitempty"`
+		DailyEndTime       string `json:"daily_end_time,omitempty"`
+		Timezone           string `json:"timezone,omitempty"`
+		RecurringExpiresAt string `json:"recurring_expires_at,omitempty"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
-		return
-	}
-
-	// Parse the datetime with flexible format support
-	// HTML datetime-local inputs send: "2026-11-04T14:06" (without seconds/timezone)
-	var silencedUntil time.Time
-	var err error
-
-	// Try multiple datetime formats
-	formats := []string{
-		time.RFC3339,                // "2006-01-02T15:04:05Z07:00"
-		"2006-01-02T15:04:05",       // "2026-11-04T14:06:05"
-		"2006-01-02T15:04",          // "2026-11-04T14:06" (HTML datetime-local)
-		time.RFC3339Nano,            // with nanoseconds
-	}
-
-	for _, format := range formats {
-		silencedUntil, err = time.Parse(format, req.SilencedUntil)
-		if err == nil {
-			break
-		}
-	}
-
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid silenced_until format. Use ISO 8601 format (e.g., 2026-11-04T14:06)")
 		return
 	}
 
@@ -363,8 +345,88 @@ func (s *Server) handleCreateNotificationSilence(w http.ResponseWriter, r *http.
 		ContainerName:    req.ContainerName,
 		HostPattern:      req.HostPattern,
 		ContainerPattern: req.ContainerPattern,
-		SilencedUntil:    silencedUntil,
 		Reason:           req.Reason,
+		IsRecurring:      req.IsRecurring,
+		DailyStartTime:   req.DailyStartTime,
+		DailyEndTime:     req.DailyEndTime,
+		Timezone:         req.Timezone,
+	}
+
+	// Datetime formats for parsing
+	formats := []string{
+		time.RFC3339,          // "2006-01-02T15:04:05Z07:00"
+		"2006-01-02T15:04:05", // "2026-11-04T14:06:05"
+		"2006-01-02T15:04",    // "2026-11-04T14:06" (HTML datetime-local)
+		time.RFC3339Nano,      // with nanoseconds
+	}
+
+	if req.IsRecurring {
+		// Validate recurring silence fields
+		if req.DailyStartTime == "" || req.DailyEndTime == "" {
+			respondError(w, http.StatusBadRequest, "Recurring silences require daily_start_time and daily_end_time in HH:MM format")
+			return
+		}
+
+		// Validate time format (HH:MM)
+		if !isValidHHMM(req.DailyStartTime) {
+			respondError(w, http.StatusBadRequest, "Invalid daily_start_time format. Use HH:MM (e.g., 23:00)")
+			return
+		}
+		if !isValidHHMM(req.DailyEndTime) {
+			respondError(w, http.StatusBadRequest, "Invalid daily_end_time format. Use HH:MM (e.g., 06:00)")
+			return
+		}
+
+		// Validate timezone if provided
+		if req.Timezone != "" {
+			if _, err := time.LoadLocation(req.Timezone); err != nil {
+				respondError(w, http.StatusBadRequest, "Invalid timezone. Use IANA format (e.g., America/New_York, UTC)")
+				return
+			}
+		} else {
+			silence.Timezone = "UTC"
+		}
+
+		// Parse optional recurring expiry
+		if req.RecurringExpiresAt != "" {
+			var expiresAt time.Time
+			var err error
+			for _, format := range formats {
+				expiresAt, err = time.Parse(format, req.RecurringExpiresAt)
+				if err == nil {
+					break
+				}
+			}
+			if err != nil {
+				respondError(w, http.StatusBadRequest, "Invalid recurring_expires_at format. Use ISO 8601 format (e.g., 2026-11-04T14:06)")
+				return
+			}
+			silence.RecurringExpiresAt = &expiresAt
+		}
+
+		// For recurring silences, set a far-future SilencedUntil as a fallback
+		// (the actual logic uses IsActiveNow which checks the daily window)
+		silence.SilencedUntil = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
+	} else {
+		// One-time silence: require silenced_until
+		if req.SilencedUntil == "" {
+			respondError(w, http.StatusBadRequest, "One-time silences require silenced_until")
+			return
+		}
+
+		var silencedUntil time.Time
+		var err error
+		for _, format := range formats {
+			silencedUntil, err = time.Parse(format, req.SilencedUntil)
+			if err == nil {
+				break
+			}
+		}
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "Invalid silenced_until format. Use ISO 8601 format (e.g., 2026-11-04T14:06)")
+			return
+		}
+		silence.SilencedUntil = silencedUntil
 	}
 
 	// Validate that silence has either host_id, container_id, or patterns
@@ -379,6 +441,19 @@ func (s *Server) handleCreateNotificationSilence(w http.ResponseWriter, r *http.
 	}
 
 	respondJSON(w, http.StatusCreated, silence)
+}
+
+// isValidHHMM validates a time string in HH:MM format
+func isValidHHMM(s string) bool {
+	if len(s) != 5 || s[2] != ':' {
+		return false
+	}
+	var hour, min int
+	_, err := fmt.Sscanf(s, "%d:%d", &hour, &min)
+	if err != nil {
+		return false
+	}
+	return hour >= 0 && hour <= 23 && min >= 0 && min <= 59
 }
 
 func (s *Server) handleDeleteNotificationSilence(w http.ResponseWriter, r *http.Request) {

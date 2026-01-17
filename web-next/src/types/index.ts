@@ -185,8 +185,14 @@ export interface NotificationSilence {
   container_name?: string;
   container_pattern?: string;
   reason?: string;
-  expires_at?: string;
+  silenced_until: string;
   created_at: string;
+  // Recurring silence fields
+  is_recurring: boolean;
+  daily_start_time?: string;  // "HH:MM" format
+  daily_end_time?: string;    // "HH:MM" format
+  timezone?: string;          // IANA timezone (e.g., "America/New_York")
+  recurring_expires_at?: string;
 }
 
 // Stats types

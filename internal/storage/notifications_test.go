@@ -820,6 +820,208 @@ func TestThresholdState(t *testing.T) {
 }
 */
 
+// TestRecurringSilences tests recurring notification silences
+func TestRecurringSilences(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create host
+	host := models.Host{Name: "recurring-host", Address: "unix:///", Enabled: true}
+	hostID, err := db.AddHost(host)
+	if err != nil {
+		t.Fatalf("Failed to add host: %v", err)
+	}
+	host.ID = hostID
+
+	now := time.Now()
+
+	// Create a recurring silence (daily 23:00-06:00)
+	recurringSilence := &models.NotificationSilence{
+		HostID:           &host.ID,
+		ContainerPattern: "night-*",
+		SilencedUntil:    time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC), // Far future for recurring
+		Reason:           "Nightly maintenance window",
+		IsRecurring:      true,
+		DailyStartTime:   "23:00",
+		DailyEndTime:     "06:00",
+		Timezone:         "UTC",
+	}
+
+	if err := db.SaveNotificationSilence(recurringSilence); err != nil {
+		t.Fatalf("SaveNotificationSilence (recurring) failed: %v", err)
+	}
+
+	if recurringSilence.ID == 0 {
+		t.Error("Expected silence ID to be set after save")
+	}
+
+	// Create a one-time silence for comparison
+	onetimeSilence := &models.NotificationSilence{
+		HostID:           &host.ID,
+		ContainerPattern: "onetime-*",
+		SilencedUntil:    now.Add(1 * time.Hour),
+		Reason:           "Temporary maintenance",
+		IsRecurring:      false,
+	}
+
+	if err := db.SaveNotificationSilence(onetimeSilence); err != nil {
+		t.Fatalf("SaveNotificationSilence (one-time) failed: %v", err)
+	}
+
+	// Get active silences
+	active, err := db.GetActiveSilences()
+	if err != nil {
+		t.Fatalf("GetActiveSilences failed: %v", err)
+	}
+
+	if len(active) != 2 {
+		t.Errorf("Expected 2 active silences, got %d", len(active))
+	}
+
+	// Verify recurring silence fields are retrieved correctly
+	var foundRecurring *models.NotificationSilence
+	for i := range active {
+		if active[i].ContainerPattern == "night-*" {
+			foundRecurring = &active[i]
+			break
+		}
+	}
+
+	if foundRecurring == nil {
+		t.Fatal("Recurring silence not found in active list")
+	}
+
+	if !foundRecurring.IsRecurring {
+		t.Error("Expected IsRecurring to be true")
+	}
+	if foundRecurring.DailyStartTime != "23:00" {
+		t.Errorf("Expected DailyStartTime '23:00', got '%s'", foundRecurring.DailyStartTime)
+	}
+	if foundRecurring.DailyEndTime != "06:00" {
+		t.Errorf("Expected DailyEndTime '06:00', got '%s'", foundRecurring.DailyEndTime)
+	}
+	if foundRecurring.Timezone != "UTC" {
+		t.Errorf("Expected Timezone 'UTC', got '%s'", foundRecurring.Timezone)
+	}
+}
+
+// TestRecurringSilenceWithExpiry tests recurring silences with overall expiry
+func TestRecurringSilenceWithExpiry(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create host
+	host := models.Host{Name: "expiry-host", Address: "unix:///", Enabled: true}
+	hostID, err := db.AddHost(host)
+	if err != nil {
+		t.Fatalf("Failed to add host: %v", err)
+	}
+	host.ID = hostID
+
+	now := time.Now()
+
+	// Create recurring silence with future expiry
+	futureExpiry := now.Add(7 * 24 * time.Hour) // Expires in 1 week
+	activeRecurring := &models.NotificationSilence{
+		HostID:             &host.ID,
+		ContainerPattern:   "active-recurring-*",
+		SilencedUntil:      time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC),
+		Reason:             "Active recurring with expiry",
+		IsRecurring:        true,
+		DailyStartTime:     "09:00",
+		DailyEndTime:       "17:00",
+		Timezone:           "America/New_York",
+		RecurringExpiresAt: &futureExpiry,
+	}
+
+	if err := db.SaveNotificationSilence(activeRecurring); err != nil {
+		t.Fatalf("SaveNotificationSilence failed: %v", err)
+	}
+
+	// Create recurring silence with past expiry
+	pastExpiry := now.Add(-1 * time.Hour) // Expired 1 hour ago
+	expiredRecurring := &models.NotificationSilence{
+		HostID:             &host.ID,
+		ContainerPattern:   "expired-recurring-*",
+		SilencedUntil:      time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC),
+		Reason:             "Expired recurring",
+		IsRecurring:        true,
+		DailyStartTime:     "09:00",
+		DailyEndTime:       "17:00",
+		Timezone:           "UTC",
+		RecurringExpiresAt: &pastExpiry,
+	}
+
+	if err := db.SaveNotificationSilence(expiredRecurring); err != nil {
+		t.Fatalf("SaveNotificationSilence failed: %v", err)
+	}
+
+	// Get active silences - should only include the one with future expiry
+	active, err := db.GetActiveSilences()
+	if err != nil {
+		t.Fatalf("GetActiveSilences failed: %v", err)
+	}
+
+	if len(active) != 1 {
+		t.Errorf("Expected 1 active silence (expired one should be filtered), got %d", len(active))
+	}
+
+	// Verify the active one has RecurringExpiresAt set correctly
+	if len(active) > 0 {
+		if active[0].RecurringExpiresAt == nil {
+			t.Error("Expected RecurringExpiresAt to be set")
+		} else {
+			// Allow some time drift for comparison
+			diff := active[0].RecurringExpiresAt.Sub(futureExpiry)
+			if diff > time.Minute || diff < -time.Minute {
+				t.Errorf("RecurringExpiresAt mismatch: got %v, expected ~%v", active[0].RecurringExpiresAt, futureExpiry)
+			}
+		}
+	}
+}
+
+// TestRecurringSilenceIndefinite tests recurring silences without expiry
+func TestRecurringSilenceIndefinite(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Create host
+	host := models.Host{Name: "indefinite-host", Address: "unix:///", Enabled: true}
+	hostID, err := db.AddHost(host)
+	if err != nil {
+		t.Fatalf("Failed to add host: %v", err)
+	}
+	host.ID = hostID
+
+	// Create indefinite recurring silence (no expiry)
+	indefiniteSilence := &models.NotificationSilence{
+		HostID:             &host.ID,
+		ContainerPattern:   "forever-*",
+		SilencedUntil:      time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC),
+		Reason:             "Indefinite recurring",
+		IsRecurring:        true,
+		DailyStartTime:     "22:00",
+		DailyEndTime:       "07:00",
+		Timezone:           "Europe/London",
+		RecurringExpiresAt: nil, // No expiry
+	}
+
+	if err := db.SaveNotificationSilence(indefiniteSilence); err != nil {
+		t.Fatalf("SaveNotificationSilence failed: %v", err)
+	}
+
+	// Get active silences - indefinite should always be included
+	active, err := db.GetActiveSilences()
+	if err != nil {
+		t.Fatalf("GetActiveSilences failed: %v", err)
+	}
+
+	if len(active) != 1 {
+		t.Errorf("Expected 1 active silence, got %d", len(active))
+	}
+
+	if len(active) > 0 && active[0].RecurringExpiresAt != nil {
+		t.Error("Expected RecurringExpiresAt to be nil for indefinite silence")
+	}
+}
+
 // TestGetLastNotificationTime tests cooldown tracking
 func TestGetLastNotificationTime(t *testing.T) {
 	db := setupTestDB(t)

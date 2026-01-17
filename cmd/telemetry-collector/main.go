@@ -352,7 +352,7 @@ func (s *Server) handleVersionCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Record this version check (upsert)
+	// Record this version check (upsert for latest state)
 	_, err := s.db.Exec(`
 		INSERT INTO version_checks (installation_id, current_version, checked_at)
 		VALUES ($1, $2, NOW())
@@ -363,6 +363,16 @@ func (s *Server) handleVersionCheck(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("[VERSION CHECK] Error recording to DB: %v", err)
 		// Continue anyway - don't fail the check
+	}
+
+	// Also record to history table for accurate daily tracking
+	_, err = s.db.Exec(`
+		INSERT INTO version_check_history (installation_id, current_version, checked_at)
+		VALUES ($1, $2, NOW())
+	`, req.InstallationID, req.CurrentVersion)
+
+	if err != nil {
+		log.Printf("[VERSION CHECK] Error recording history: %v", err)
 	}
 
 	// Check GitHub API (using existing version package logic)
@@ -1058,11 +1068,13 @@ func (s *Server) handleActiveInstalls(w http.ResponseWriter, r *http.Request) {
 	`).Scan(&totalInstalls)
 
 	// Query daily active installs for chart (last 30 days)
+	// Uses history table for accurate daily counts (each check is recorded)
+	// Note: History table was added later, so early data may be incomplete
 	rows, err := s.db.Query(`
 		SELECT
 			DATE(checked_at) as check_date,
 			COUNT(DISTINCT installation_id) as count
-		FROM version_checks
+		FROM version_check_history
 		WHERE checked_at >= NOW() - INTERVAL '30 days'
 		GROUP BY DATE(checked_at)
 		ORDER BY check_date ASC
@@ -1147,17 +1159,12 @@ func (s *Server) handleRegistries(w http.ResponseWriter, r *http.Request) {
 // Get agent version distribution
 func (s *Server) handleVersions(w http.ResponseWriter, r *http.Request) {
 	query := `
-		SELECT version, COUNT(DISTINCT installation_id) as installations
-		FROM (
-			SELECT DISTINCT ON (installation_id)
-				installation_id,
-				version
-			FROM telemetry_reports
-			WHERE timestamp >= NOW() - INTERVAL '30 days'
-			ORDER BY installation_id, timestamp DESC
-		) latest_reports
-		WHERE version IS NOT NULL AND version != ''
-		GROUP BY version
+		SELECT current_version as version, COUNT(DISTINCT installation_id) as installations
+		FROM version_checks
+		WHERE checked_at >= NOW() - INTERVAL '30 days'
+		  AND current_version IS NOT NULL
+		  AND current_version != ''
+		GROUP BY current_version
 		ORDER BY installations DESC
 		LIMIT 10
 	`
@@ -1587,6 +1594,17 @@ func initSchema(db *sql.DB) error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_version_checks_checked_at ON version_checks(checked_at);
+
+	-- Version check history for accurate daily active installation tracking
+	CREATE TABLE IF NOT EXISTS version_check_history (
+		id SERIAL PRIMARY KEY,
+		installation_id VARCHAR(255) NOT NULL,
+		current_version VARCHAR(50) NOT NULL,
+		checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_version_check_history_checked_at ON version_check_history(checked_at);
+	CREATE INDEX IF NOT EXISTS idx_version_check_history_installation_id ON version_check_history(installation_id);
 	`
 
 	_, err := db.Exec(schema)
@@ -2068,6 +2086,21 @@ func (s *Server) cleanupOldVersionChecks() {
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected > 0 {
 		log.Printf("Cleaned up %d old version check records (>60 days)", rowsAffected)
+	}
+
+	// Also clean up history table (keep 90 days for charts)
+	result, err = s.db.Exec(`
+		DELETE FROM version_check_history
+		WHERE checked_at < NOW() - INTERVAL '90 days'
+	`)
+	if err != nil {
+		log.Printf("Error cleaning up old version check history: %v", err)
+		return
+	}
+
+	rowsAffected, _ = result.RowsAffected()
+	if rowsAffected > 0 {
+		log.Printf("Cleaned up %d old version check history records (>90 days)", rowsAffected)
 	}
 }
 
