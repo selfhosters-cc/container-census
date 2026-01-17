@@ -977,14 +977,15 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 	`
 
 	type Summary struct {
-		Installations          int     `json:"installations"`
-		TotalSubmissions       int     `json:"total_submissions"`
-		TotalContainers        int     `json:"total_containers"`
-		AvgContainersPerInstall float64 `json:"avg_containers_per_install"`
-		TotalHosts             int     `json:"total_hosts"`
-		TotalAgents            int     `json:"total_agents"`
-		UniqueImages           int     `json:"unique_images"`
-		ActiveInstalls30d      int     `json:"active_installs_30d"`
+		Installations            int     `json:"installations"`
+		TotalSubmissions         int     `json:"total_submissions"`
+		TotalContainers          int     `json:"total_containers"`
+		AvgContainersPerInstall  float64 `json:"avg_containers_per_install"`
+		TotalHosts               int     `json:"total_hosts"`
+		TotalAgents              int     `json:"total_agents"`
+		UniqueImages             int     `json:"unique_images"`
+		ActiveInstalls30d        int     `json:"active_installs_30d"`
+		TelemetryParticipants30d int     `json:"telemetry_participants_30d"`
 	}
 
 	var summary Summary
@@ -1031,6 +1032,16 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// If table doesn't exist yet or query fails, default to 0
 		summary.ActiveInstalls30d = 0
+	}
+
+	// Get telemetry participants count (last 30 days from telemetry_reports)
+	err = s.db.QueryRow(`
+		SELECT COUNT(DISTINCT installation_id)
+		FROM telemetry_reports
+		WHERE timestamp >= NOW() - INTERVAL '30 days'
+	`).Scan(&summary.TelemetryParticipants30d)
+	if err != nil {
+		summary.TelemetryParticipants30d = 0
 	}
 
 	respondJSON(w, http.StatusOK, summary)

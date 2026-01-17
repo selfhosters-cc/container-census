@@ -476,6 +476,9 @@ func performScan(ctx context.Context, db *storage.DB, scan *scanner.Scanner) {
 		return
 	}
 
+	// Track scan statistics for summary
+	var successCount, failCount, totalContainers int
+
 	for _, host := range hosts {
 		if !host.Enabled {
 			continue
@@ -493,25 +496,23 @@ func performScan(ctx context.Context, db *storage.DB, scan *scanner.Scanner) {
 		if err != nil {
 			result.Success = false
 			result.Error = err.Error()
+			failCount++
 			log.Printf("Scan failed for host %s: %v", host.Name, err)
 
 			// Update agent status if this is an auth failure
 			if host.HostType == "agent" && strings.Contains(err.Error(), "401") {
 				host.AgentStatus = "auth_failed"
-				if updateErr := db.UpdateHost(host); updateErr != nil {
-					log.Printf("Failed to update host status for %s: %v", host.Name, updateErr)
-				}
+				db.UpdateHost(host)
 			} else if host.HostType == "agent" {
 				// Other failure - mark as offline
 				host.AgentStatus = "offline"
-				if updateErr := db.UpdateHost(host); updateErr != nil {
-					log.Printf("Failed to update host status for %s: %v", host.Name, updateErr)
-				}
+				db.UpdateHost(host)
 			}
 		} else {
 			result.Success = true
 			result.ContainersFound = len(containers)
-			log.Printf("Scan completed for host %s: found %d containers", host.Name, len(containers))
+			successCount++
+			totalContainers += len(containers)
 
 			// Update agent status and version on successful scan
 			if host.HostType == "agent" {
@@ -528,9 +529,7 @@ func performScan(ctx context.Context, db *storage.DB, scan *scanner.Scanner) {
 				}
 
 				if needsUpdate {
-					if updateErr := db.UpdateHost(host); updateErr != nil {
-						log.Printf("Failed to update host status for %s: %v", host.Name, updateErr)
-					}
+					db.UpdateHost(host)
 				}
 			}
 
@@ -546,16 +545,19 @@ func performScan(ctx context.Context, db *storage.DB, scan *scanner.Scanner) {
 
 			// Process notifications for this host
 			if notificationServiceGlobal != nil {
-				if err := notificationServiceGlobal.ProcessEvents(ctx, host.ID); err != nil {
-					log.Printf("Failed to process notifications for host %s: %v", host.Name, err)
-				}
+				notificationServiceGlobal.ProcessEvents(ctx, host.ID)
 			}
 		}
 
 		// Save scan result
-		if _, err := db.SaveScanResult(result); err != nil {
-			log.Printf("Failed to save scan result for host %s: %v", host.Name, err)
-		}
+		db.SaveScanResult(result)
+	}
+
+	// Log summary
+	if failCount > 0 {
+		log.Printf("Scan complete: %d hosts OK, %d failed, %d containers total", successCount, failCount, totalContainers)
+	} else {
+		log.Printf("Scan complete: %d hosts, %d containers", successCount, totalContainers)
 	}
 }
 
@@ -621,43 +623,28 @@ func runDailyDatabaseCleanup(ctx context.Context, db *storage.DB) {
 // checkForUpdates performs a version check via the telemetry collector
 // This runs asynchronously on startup (non-blocking)
 func checkForUpdates(ctx context.Context, db *storage.DB) {
-	currentVersion := version.Get()
-	log.Printf("Version check: Starting version check (current version: %s)...", currentVersion)
-
 	// Get installation ID
 	installationID, err := getInstallationID(db)
 	if err != nil {
-		log.Printf("Version check: failed to get installation ID: %v", err)
 		return
 	}
-	log.Printf("Version check: Installation ID: %s", installationID)
 
 	// Get collector URL for version checking
-	// Always use community collector unless overridden by env var
 	collectorURL := os.Getenv("VERSION_CHECK_COLLECTOR_URL")
 	if collectorURL == "" {
 		collectorURL = "https://cc-telemetry.selfhosters.cc"
 	}
-	log.Printf("Version check: Collector URL: %s", collectorURL)
 
 	// Perform version check
-	log.Printf("Version check: Calling collector at %s/api/version/check...", collectorURL)
 	updateInfo := version.CheckViaCollector(collectorURL, installationID)
 	if updateInfo.Error != nil {
-		log.Printf("Version check: ERROR: %v", updateInfo.Error)
 		return
 	}
 
-	// Log the response details
-	log.Printf("Version check: Response - Current: %s, Latest: %s, Update Available: %v",
-		updateInfo.CurrentVersion, updateInfo.LatestVersion, updateInfo.UpdateAvailable)
-
-	// Log update availability
+	// Only log if update is available
 	if updateInfo.UpdateAvailable {
 		log.Printf("⚠️  UPDATE AVAILABLE: Container Census %s → %s", updateInfo.CurrentVersion, updateInfo.LatestVersion)
 		log.Printf("   Download: %s", updateInfo.ReleaseURL)
-	} else {
-		log.Printf("Version check: ✓ Running latest version %s", updateInfo.CurrentVersion)
 	}
 }
 

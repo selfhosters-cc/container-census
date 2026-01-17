@@ -138,7 +138,9 @@ func (s *Scanner) ScanHost(ctx context.Context, host models.Host) ([]models.Cont
 		var startedAt time.Time
 
 		containerJSON, err := dockerClient.ContainerInspect(ctx, c.ID)
-		if err == nil {
+		if err != nil {
+			log.Printf("Warning: ContainerInspect failed for %s: %v", name, err)
+		} else {
 			restartCount = containerJSON.RestartCount
 
 			// Extract StartedAt for uptime tracking
@@ -274,11 +276,6 @@ func (s *Scanner) ScanHost(ctx context.Context, host models.Host) ([]models.Cont
 					numCPUs = 1
 				}
 
-				// Debug logging for CPU calculation
-				log.Printf("DEBUG %s: cpuDelta=%.0f, systemDelta=%.0f, numCPUs=%d, OnlineCPUs=%d, PercpuLen=%d",
-					containerName, cpuDelta, systemDelta, numCPUs,
-					current.CPUStats.OnlineCPUs, len(current.CPUStats.CPUUsage.PercpuUsage))
-
 				var cpuPercent float64
 				if systemDelta > 0 && cpuDelta > 0 {
 					cpuPercent = (cpuDelta / systemDelta) * float64(numCPUs) * 100.0
@@ -291,10 +288,6 @@ func (s *Scanner) ScanHost(ctx context.Context, host models.Host) ([]models.Cont
 				if current.MemoryStats.Limit > 0 {
 					memoryPercent = float64(current.MemoryStats.Usage) / float64(current.MemoryStats.Limit) * 100.0
 				}
-
-				// Debug logging
-				log.Printf("Stats collected for %s on %s: CPU=%.2f%%, Memory=%dMB/%dMB (%.1f%%)",
-					containerName, host.Name, cpuPercent, memoryUsage/1024/1024, memoryLimit/1024/1024, memoryPercent)
 
 				// Update the container in the result slice (thread-safe)
 				mu.Lock()

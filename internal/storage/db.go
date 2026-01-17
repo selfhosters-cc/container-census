@@ -90,6 +90,7 @@ func (db *DB) initSchema() error {
 		host_id INTEGER NOT NULL,
 		host_name TEXT NOT NULL,
 		scanned_at TIMESTAMP NOT NULL,
+		started_at TIMESTAMP,
 		networks TEXT,
 		volumes TEXT,
 		links TEXT,
@@ -579,6 +580,21 @@ func (db *DB) runMigrations() error {
 		}
 	}
 
+	// Check if started_at column exists in containers table (for uptime tracking)
+	var startedAtExists int
+	err = db.conn.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('containers') WHERE name = 'started_at'`).Scan(&startedAtExists)
+	if err != nil {
+		return err
+	}
+
+	if startedAtExists == 0 {
+		if _, err := db.conn.Exec(`ALTER TABLE containers ADD COLUMN started_at TIMESTAMP`); err != nil {
+			if !isSQLiteColumnExistsError(err) {
+				return err
+			}
+		}
+	}
+
 	// Check if is_recurring column exists in notification_silences (for recurring silences)
 	var isRecurringExists int
 	err = db.conn.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('notification_silences') WHERE name = 'is_recurring'`).Scan(&isRecurringExists)
@@ -809,8 +825,8 @@ func (db *DB) SaveContainers(containers []models.Container) error {
 
 	stmt, err := tx.Prepare(`
 		INSERT INTO containers
-		(id, name, image, image_id, image_digest, image_tags, state, status, ports, labels, created, host_id, host_name, scanned_at, networks, volumes, links, compose_project, cpu_percent, memory_usage, memory_limit, memory_percent, update_available, last_update_check)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, name, image, image_id, image_digest, image_tags, state, status, ports, labels, created, host_id, host_name, scanned_at, started_at, networks, volumes, links, compose_project, cpu_percent, memory_usage, memory_limit, memory_percent, update_available, last_update_check)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return err
@@ -859,8 +875,6 @@ func (db *DB) SaveContainers(containers []models.Container) error {
 			memoryUsage = sql.NullInt64{Int64: c.MemoryUsage, Valid: true}
 			memoryLimit = sql.NullInt64{Int64: c.MemoryLimit, Valid: true}
 			memoryPercent = sql.NullFloat64{Float64: c.MemoryPercent, Valid: true}
-			log.Printf("DB: Saving stats for container %s (id=%s, host_id=%d, scanned_at=%v): CPU=%.2f%%, Memory=%dMB",
-				c.Name, c.ID, c.HostID, c.ScannedAt, c.CPUPercent, c.MemoryUsage/1024/1024)
 		}
 
 		// Handle nullable update tracking fields
@@ -869,10 +883,16 @@ func (db *DB) SaveContainers(containers []models.Container) error {
 			lastUpdateCheck = sql.NullTime{Time: c.LastUpdateCheck, Valid: true}
 		}
 
+		// Handle nullable started_at field
+		var startedAt sql.NullTime
+		if !c.StartedAt.IsZero() {
+			startedAt = sql.NullTime{Time: c.StartedAt, Valid: true}
+		}
+
 		_, err = stmt.Exec(
 			c.ID, c.Name, c.Image, c.ImageID, c.ImageDigest, string(imageTagsJSON), c.State, c.Status,
 			string(portsJSON), string(labelsJSON), c.Created,
-			c.HostID, c.HostName, c.ScannedAt,
+			c.HostID, c.HostName, c.ScannedAt, startedAt,
 			string(networksJSON), string(volumesJSON), string(linksJSON), c.ComposeProject,
 			cpuPercent, memoryUsage, memoryLimit, memoryPercent,
 			c.UpdateAvailable, lastUpdateCheck,
@@ -889,7 +909,7 @@ func (db *DB) SaveContainers(containers []models.Container) error {
 func (db *DB) GetLatestContainers() ([]models.Container, error) {
 	query := `
 		SELECT c.id, c.name, c.image, c.image_id, c.image_digest, c.image_tags, c.state, c.status,
-		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at,
+		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at, c.started_at,
 		       c.networks, c.volumes, c.links, c.compose_project,
 		       c.cpu_percent, c.memory_usage, c.memory_limit, c.memory_percent,
 		       c.update_available, c.last_update_check
@@ -915,7 +935,7 @@ func (db *DB) GetLatestContainers() ([]models.Container, error) {
 func (db *DB) GetContainersByHost(hostID int64) ([]models.Container, error) {
 	query := `
 		SELECT c.id, c.name, c.image, c.image_id, c.image_digest, c.image_tags, c.state, c.status,
-		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at,
+		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at, c.started_at,
 		       c.networks, c.volumes, c.links, c.compose_project,
 		       c.cpu_percent, c.memory_usage, c.memory_limit, c.memory_percent,
 		       c.update_available, c.last_update_check
@@ -942,7 +962,7 @@ func (db *DB) GetContainersByHost(hostID int64) ([]models.Container, error) {
 func (db *DB) GetContainerByID(hostID int64, containerID string) (*models.Container, error) {
 	query := `
 		SELECT c.id, c.name, c.image, c.image_id, c.image_digest, c.image_tags, c.state, c.status,
-		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at,
+		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at, c.started_at,
 		       c.networks, c.volumes, c.links, c.compose_project,
 		       c.cpu_percent, c.memory_usage, c.memory_limit, c.memory_percent,
 		       c.update_available, c.last_update_check
@@ -975,7 +995,7 @@ func (db *DB) GetContainerByID(hostID int64, containerID string) (*models.Contai
 func (db *DB) GetContainersHistory(start, end time.Time) ([]models.Container, error) {
 	query := `
 		SELECT id, name, image, image_id, image_digest, image_tags, state, status,
-		       ports, labels, created, host_id, host_name, scanned_at,
+		       ports, labels, created, host_id, host_name, scanned_at, started_at,
 		       networks, volumes, links, compose_project,
 		       cpu_percent, memory_usage, memory_limit, memory_percent,
 		       update_available, last_update_check
@@ -1004,12 +1024,12 @@ func (db *DB) scanContainers(rows *sql.Rows) ([]models.Container, error) {
 		var composeProject sql.NullString
 		var cpuPercent, memoryPercent sql.NullFloat64
 		var memoryUsage, memoryLimit sql.NullInt64
-		var lastUpdateCheck sql.NullTime
+		var lastUpdateCheck, startedAt sql.NullTime
 
 		err := rows.Scan(
 			&c.ID, &c.Name, &c.Image, &c.ImageID, &imageDigest, &imageTagsJSON, &c.State, &c.Status,
 			&portsJSON, &labelsJSON, &c.Created,
-			&c.HostID, &c.HostName, &c.ScannedAt,
+			&c.HostID, &c.HostName, &c.ScannedAt, &startedAt,
 			&networksJSON, &volumesJSON, &linksJSON, &composeProject,
 			&cpuPercent, &memoryUsage, &memoryLimit, &memoryPercent,
 			&c.UpdateAvailable, &lastUpdateCheck,
@@ -1075,6 +1095,11 @@ func (db *DB) scanContainers(rows *sql.Rows) ([]models.Container, error) {
 		// Populate update tracking fields
 		if lastUpdateCheck.Valid {
 			c.LastUpdateCheck = lastUpdateCheck.Time
+		}
+
+		// Populate started_at for uptime tracking
+		if startedAt.Valid {
+			c.StartedAt = startedAt.Time
 		}
 
 		containers = append(containers, c)
@@ -1809,10 +1834,8 @@ func (db *DB) GetContainerStats(containerID string, hostID int64, hoursBack int)
 
 	// Create LIKE pattern for short ID match (first 12 chars)
 	shortIDPattern := containerID[:12] + "%"
-	log.Printf("GetContainerStats: Querying for containerID='%s' (or '%s'), hostID=%d, startTime=%v", containerID, shortIDPattern, hostID, startTime)
 	rows, err := db.conn.Query(granularQuery, containerID, shortIDPattern, hostID, startTime)
 	if err != nil {
-		log.Printf("GetContainerStats: Query error: %v", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -1848,8 +1871,6 @@ func (db *DB) GetContainerStats(containerID string, hostID int64, hoursBack int)
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
-
-	log.Printf("GetContainerStats: Found %d granular data points for containerID='%s', hostID=%d", rowCount, containerID, hostID)
 
 	// Get aggregated data if looking back more than 1 hour
 	if hoursBack == 0 || hoursBack > 1 {
@@ -2722,7 +2743,7 @@ func (db *DB) SaveContainerUpdateStatus(containerID string, hostID int64, availa
 func (db *DB) GetContainersWithUpdates() ([]models.Container, error) {
 	query := `
 		SELECT c.id, c.name, c.image, c.image_id, c.image_digest, c.image_tags, c.state, c.status,
-		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at,
+		       c.ports, c.labels, c.created, c.host_id, c.host_name, c.scanned_at, c.started_at,
 		       c.networks, c.volumes, c.links, c.compose_project,
 		       c.cpu_percent, c.memory_usage, c.memory_limit, c.memory_percent,
 		       c.update_available, c.last_update_check

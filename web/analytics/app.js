@@ -874,6 +874,7 @@ async function loadSummary() {
 
         // Use active_installs_30d if available, fallback to installations
         document.getElementById('totalInstallations').textContent = formatNumber(data.active_installs_30d || data.installations);
+        document.getElementById('telemetryParticipants').textContent = formatNumber(data.telemetry_participants_30d || 0);
         document.getElementById('totalSubmissions').textContent = formatNumber(data.total_submissions);
         document.getElementById('totalContainers').textContent = formatNumber(data.total_containers);
         document.getElementById('avgContainers').textContent = data.avg_containers_per_install ? data.avg_containers_per_install.toFixed(1) : '-';

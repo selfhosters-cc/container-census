@@ -33,6 +33,10 @@
                 <div class="card-label">Active Installations (30d)</div>
             </div>
             <div class="card">
+                <div class="card-value" id="telemetryParticipants">-</div>
+                <div class="card-label">Telemetry Participants (30d)</div>
+            </div>
+            <div class="card">
                 <div class="card-value" id="totalSubmissions">-</div>
                 <div class="card-label">Total Submissions</div>
             </div>
@@ -85,13 +89,14 @@
         </div>
 
         <div class="chart-container">
-            <h2>Installation Growth Over Time</h2>
+            <h2>Telemetry Participation Over Time</h2>
+            <p class="chart-subtitle">Unique installations submitting telemetry each day</p>
             <canvas id="growthChart"></canvas>
         </div>
 
         <div class="chart-container">
             <h2>Active Installations (Daily)</h2>
-            <p class="chart-subtitle">Unique installations checking for updates each day</p>
+            <p class="chart-subtitle">Unique installations checking for version updates each day</p>
             <canvas id="activeInstallsChart"></canvas>
         </div>
 
